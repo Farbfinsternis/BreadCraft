@@ -1,0 +1,50 @@
+import { describe, it, expect } from 'vitest'
+import { indicesToBytesHires, bytesToIndicesHires } from './charsetBytes'
+
+describe('charset hi-res byte conversion', () => {
+  it('packs an empty grid to 8 zero bytes', () => {
+    const bytes = indicesToBytesHires(new Uint8Array(64))
+    expect(Array.from(bytes)).toEqual([0, 0, 0, 0, 0, 0, 0, 0])
+  })
+
+  it('packs the leftmost pixel of row 0 as bit 7 (0x80)', () => {
+    const cells = new Uint8Array(64)
+    cells[0] = 1 // (x=0, y=0)
+    const bytes = indicesToBytesHires(cells)
+    expect(bytes[0]).toBe(0x80)
+  })
+
+  it('packs the rightmost pixel of row 0 as bit 0 (0x01)', () => {
+    const cells = new Uint8Array(64)
+    cells[7] = 1 // (x=7, y=0)
+    expect(indicesToBytesHires(cells)[0]).toBe(0x01)
+  })
+
+  it('packs a full top row as 0xFF', () => {
+    const cells = new Uint8Array(64)
+    for (let x = 0; x < 8; x++) cells[x] = 1
+    expect(indicesToBytesHires(cells)[0]).toBe(0xff)
+  })
+
+  it('treats any non-zero index as set (hi-res is 1-bit)', () => {
+    const cells = new Uint8Array(64)
+    cells[0] = 3 // an MC index still reads as "set" in hi-res
+    cells[1] = 2
+    expect(indicesToBytesHires(cells)[0]).toBe(0xc0) // bits 7 and 6
+  })
+
+  it('round-trips bytes → indices → bytes', () => {
+    const bytes = new Uint8Array([0b10000001, 0x00, 0xff, 0x18, 0x24, 0x42, 0x81, 0x7e])
+    const cells = bytesToIndicesHires(bytes)
+    const back = indicesToBytesHires(cells)
+    expect(Array.from(back)).toEqual(Array.from(bytes))
+  })
+
+  it('unpack yields only 0/1 indices', () => {
+    const cells = bytesToIndicesHires(new Uint8Array([0xff, 0xaa, 0x55, 0, 0, 0, 0, 0]))
+    expect(cells.every((v) => v === 0 || v === 1)).toBe(true)
+    // row 1 (0xAA = 10101010) → leftmost set, alternating
+    expect(cells[8]).toBe(1)
+    expect(cells[9]).toBe(0)
+  })
+})

@@ -1,0 +1,31 @@
+// Public surface of the .crumb parser.
+export { parse } from './parser'
+export type { ParseError, ParseResult } from './parser'
+export type {
+  Program,
+  Statement,
+  CommandStmt,
+  AssignStmt,
+  GlobalStmt,
+  ConstStmt,
+  DimStmt,
+  TypeDecl,
+  FieldDecl,
+  IndexExpr,
+  FieldExpr,
+  IfStmt,
+  ElseIfClause,
+  WhileStmt,
+  RepeatStmt,
+  ForStmt,
+  ExitStmt,
+  Expr,
+  NumberLit,
+  StringLit,
+  ConstantRef,
+  Identifier,
+  Unary,
+  Binary,
+  Grouping,
+  CallExpr
+} from './ast'

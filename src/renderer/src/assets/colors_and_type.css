@@ -1,0 +1,293 @@
+/* =========================================================================
+   BreadCraft — Colors & Type
+   Advanced Retro-Tech. Dark navy plates, copper rivets, electric-blue arcs.
+   ========================================================================= */
+
+/* ---------- Fonts ---------- */
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter_18pt-Light.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter_18pt-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter_18pt-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter_18pt-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter_18pt-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Display cut — Inter 28pt — used for headlines */
+@font-face {
+  font-family: "Inter Display";
+  src: url("./fonts/Inter_28pt-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter Display";
+  src: url("./fonts/Inter_28pt-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter Display";
+  src: url("./fonts/Inter_28pt-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter Display";
+  src: url("./fonts/Inter_28pt-ExtraBold.ttf") format("truetype");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter Display";
+  src: url("./fonts/Inter_28pt-Black.ttf") format("truetype");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- Color tokens ---------- */
+:root {
+  /* Dark navy "plate" base — the dimensional steel behind everything */
+  --bc-navy-1000: #05080F;   /* deepest, page background */
+  --bc-navy-900:  #0A101D;   /* base canvas */
+  --bc-navy-800:  #0F1828;   /* card / surface 1 */
+  --bc-navy-700:  #16213A;   /* surface 2 / raised */
+  --bc-navy-600:  #1E2D4D;   /* hover surface */
+  --bc-navy-500:  #2A3E66;   /* border bright / divider */
+  --bc-navy-400:  #3A537F;   /* muted UI */
+  --bc-navy-300:  #5A7AA8;   /* dim text / metadata */
+
+  /* Electric-blue arc — the glowing tubes & gear core */
+  --bc-arc-100:   #DFF5FF;   /* halo / glow tint */
+  --bc-arc-200:   #A6E1FF;   /* light text on dark */
+  --bc-arc-300:   #5EC4FF;   /* primary accent on dark */
+  --bc-arc-400:   #2AA7FF;   /* link / active */
+  --bc-arc-500:   #0E89E8;   /* primary brand blue */
+  --bc-arc-600:   #0769BD;   /* press / deep */
+  --bc-arc-glow:  #5EC4FF;   /* alias for filter/glow use */
+
+  /* Copper / brass — the gear rims & rivets */
+  --bc-copper-100: #FBE5CF;
+  --bc-copper-200: #F5C291;
+  --bc-copper-300: #E69A55;  /* primary copper accent */
+  --bc-copper-400: #C97A33;
+  --bc-copper-500: #A65A1E;  /* deep brass */
+  --bc-copper-600: #7A3F12;
+
+  /* Filament orange — the vacuum-tube glow ($ and S tubes) */
+  --bc-filament:   #FF8A3D;
+  --bc-filament-glow: #FFB57A;
+
+  /* Light grey text — the canonical body color */
+  --bc-text-100:  #F2F4F8;   /* highest contrast */
+  --bc-text-200:  #D7DBE3;   /* primary body */
+  --bc-text-300:  #A9B1C0;   /* secondary */
+  --bc-text-400:  #7C8597;   /* tertiary / labels */
+  --bc-text-500:  #555E70;   /* disabled */
+
+  /* Semantic */
+  --bc-success:   #4ED39A;
+  --bc-warning:   #FFB547;
+  --bc-danger:    #FF5C6B;
+  --bc-info:      var(--bc-arc-400);
+
+  /* Borders */
+  --bc-border-subtle: rgba(94, 196, 255, 0.08);
+  --bc-border:        rgba(94, 196, 255, 0.16);
+  --bc-border-strong: rgba(94, 196, 255, 0.32);
+  --bc-border-copper: rgba(230, 154, 85, 0.35);
+
+  /* Gradients — bluish, with copper edge-lighting */
+  --bc-grad-plate:    linear-gradient(180deg, #16213A 0%, #0A101D 100%);
+  --bc-grad-arc:      linear-gradient(135deg, #2AA7FF 0%, #0769BD 100%);
+  --bc-grad-arc-soft: linear-gradient(135deg, rgba(94,196,255,0.18) 0%, rgba(7,105,189,0.04) 100%);
+  --bc-grad-copper:   linear-gradient(180deg, #F5C291 0%, #C97A33 55%, #7A3F12 100%);
+  --bc-grad-filament: radial-gradient(circle at 50% 50%, #FFB57A 0%, #FF8A3D 35%, rgba(255,138,61,0) 70%);
+  --bc-grad-night:    radial-gradient(ellipse at 50% 0%, #1E2D4D 0%, #05080F 70%);
+
+  /* Shadows — inner depth + outer glow */
+  --bc-shadow-1: 0 1px 0 rgba(255,255,255,0.04) inset, 0 1px 2px rgba(0,0,0,0.4);
+  --bc-shadow-2: 0 1px 0 rgba(255,255,255,0.05) inset, 0 4px 16px rgba(0,0,0,0.55);
+  --bc-shadow-3: 0 1px 0 rgba(255,255,255,0.06) inset, 0 12px 32px rgba(0,0,0,0.65);
+  --bc-glow-arc: 0 0 0 1px rgba(94,196,255,0.35), 0 0 24px rgba(94,196,255,0.25);
+  --bc-glow-copper: 0 0 0 1px rgba(230,154,85,0.45), 0 0 18px rgba(255,138,61,0.30);
+  --bc-bevel: inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.45);
+
+  /* Radii — rivets are round; plates are tight */
+  --bc-radius-xs: 2px;
+  --bc-radius-sm: 4px;
+  --bc-radius-md: 6px;
+  --bc-radius-lg: 10px;
+  --bc-radius-xl: 16px;
+  --bc-radius-pill: 999px;
+
+  /* Spacing */
+  --bc-space-1: 4px;
+  --bc-space-2: 8px;
+  --bc-space-3: 12px;
+  --bc-space-4: 16px;
+  --bc-space-5: 24px;
+  --bc-space-6: 32px;
+  --bc-space-7: 48px;
+  --bc-space-8: 64px;
+
+  /* Type families */
+  --bc-font-sans:    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --bc-font-display: "Inter Display", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --bc-font-mono:    ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* Semantic text */
+  --bc-fg:        var(--bc-text-200);
+  --bc-fg-strong: var(--bc-text-100);
+  --bc-fg-muted:  var(--bc-text-300);
+  --bc-fg-dim:    var(--bc-text-400);
+  --bc-fg-on-copper: #1A0E04;
+
+  /* Semantic surfaces */
+  --bc-bg:        var(--bc-navy-900);
+  --bc-bg-elev-1: var(--bc-navy-800);
+  --bc-bg-elev-2: var(--bc-navy-700);
+  --bc-bg-elev-3: var(--bc-navy-600);
+  --bc-link:      var(--bc-arc-300);
+  --bc-link-hover: var(--bc-arc-200);
+}
+
+/* ---------- Base type ---------- */
+html, body {
+  font-family: var(--bc-font-sans);
+  color: var(--bc-fg);
+  background: var(--bc-bg);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Display headings — tighter tracking, Inter 28pt cut */
+.bc-h1, h1.bc {
+  font-family: var(--bc-font-display);
+  font-weight: 800;
+  font-size: 64px;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  color: var(--bc-fg-strong);
+}
+.bc-h2, h2.bc {
+  font-family: var(--bc-font-display);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--bc-fg-strong);
+}
+.bc-h3, h3.bc {
+  font-family: var(--bc-font-display);
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--bc-fg-strong);
+}
+.bc-h4, h4.bc {
+  font-family: var(--bc-font-sans);
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: var(--bc-fg-strong);
+}
+
+/* Body */
+.bc-body, p.bc {
+  font-family: var(--bc-font-sans);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--bc-fg);
+  text-wrap: pretty;
+}
+.bc-body-sm { font-size: 14px; line-height: 1.5; color: var(--bc-fg-muted); }
+.bc-body-lg { font-size: 18px; line-height: 1.55; color: var(--bc-fg); }
+
+/* Labels — slight tracking + uppercase, the "engraved plaque" look */
+.bc-label, .bc-eyebrow {
+  font-family: var(--bc-font-sans);
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bc-copper-300);
+}
+.bc-overline {
+  font-family: var(--bc-font-sans);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bc-fg-dim);
+}
+
+/* Quote / pull */
+.bc-quote {
+  font-family: var(--bc-font-display);
+  font-weight: 500;
+  font-style: italic;
+  font-size: 26px;
+  line-height: 1.35;
+  color: var(--bc-fg-strong);
+}
+
+/* Mono — terminal / readouts */
+.bc-mono, code.bc {
+  font-family: var(--bc-font-mono);
+  font-size: 13px;
+  color: var(--bc-arc-200);
+  background: rgba(94,196,255,0.06);
+  border: 1px solid var(--bc-border-subtle);
+  padding: 2px 6px;
+  border-radius: var(--bc-radius-sm);
+}
+
+/* Links */
+a.bc, .bc-link {
+  color: var(--bc-link);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(94,196,255,0.35);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+a.bc:hover, .bc-link:hover {
+  color: var(--bc-link-hover);
+  border-bottom-color: var(--bc-link-hover);
+}

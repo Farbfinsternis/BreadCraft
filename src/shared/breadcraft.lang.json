@@ -1,0 +1,1811 @@
+{
+  "$schemaVersion": "0.1.0",
+  "$comment": "SINGLE SOURCE OF TRUTH (SSOT) für die BreadCraft-Sprache. Transpiler, Monaco-Editor (Intellisense/Hints/Auto-Casing) und Doku-Generator ziehen ihr GESAMTES Sprachwissen ausschließlich aus dieser Datei. Niemals Sprachwissen woanders hartcodieren — wenn es hier nicht steht, existiert es in BreadCraft nicht. Texte stehen NICHT hier (Lokalisierung): jeder Eintrag verweist über i18n-Keys auf separate Sprachdateien (i18n/de.json, i18n/en.json …). Quelle der Inhalte: _plans/BREADCRAFT_SPRACHDEFINITION.md (formale Referenz) + BREADCRAFT_SPRACHE.md (Philosophie).",
+  "$schema": {
+    "$comment": "Selbst-Dokumentation: was jedes Feld bedeutet. Maschinell ignorierbar ($-Prefix), für Menschen, die die Datei pflegen.",
+    "caseInsensitive": "true: Die Sprache matcht Bezeichner case-insensitiv (joystick == Joystick == JOYSTICK). Der Editor normalisiert getippte Namen IMMER auf die hier hinterlegte 'name'-Schreibweise (canonical casing), damit der Source lesbar bleibt.",
+    "enumDefinition": {
+      "id": "Eindeutiger Enum-Bezeichner (z.B. 'Color', 'JoyDir', 'Key').",
+      "i18nKey": "Lokalisierungs-Key für die Enum-Beschreibung (z.B. 'enum.color').",
+      "values": "Liste der Konstanten. Jede: { name (canonical UPPERCASE), value (numerisch/intern), i18nKey, since, aliases? }."
+    },
+    "entry": {
+      "id": "Stabiler, eindeutiger Schlüssel (kebab-case, ändert sich NIE — i18n-Keys & Referenzen hängen daran). Nicht der Anzeigename.",
+      "name": "KANONISCHE Schreibweise (die der Editor anbietet/erzwingt). z.B. 'Joystick', 'VWait', 'EndIf'.",
+      "kind": "Art des Eintrags: 'function' (gibt Wert zurück → Klammern PFLICHT) | 'command' (kein Rückgabewert → Klammern optional) | 'keyword' (Kontrollstruktur/Deklaration) | 'operator' | 'type' | 'constant'.",
+      "category": "Gruppierung für Editor/Doku: 'branch' | 'loop' | 'declaration' | 'graphics-setup' | 'tiles' | 'sprites' | 'input' | 'frame' | 'math' | 'string' | 'flow' | 'operator' | 'type' | 'escape'. 'escape' = Hardware-Ventil (roher 6502-Asm); der Editor markiert diese Zone als 'hier endet der BreadCraft-Schutz' (kein frameSafe/cost-Check möglich, weil die Sprache nicht hineinschaut).",
+      "i18nKey": "Lokalisierungs-Key der Kurzbeschreibung (z.B. 'cmd.joystick'). KEIN Text hier — der Text liegt in den i18n/*-Dateien.",
+      "returns": "Nur bei kind=function: { type: '.b'|'.w'|'$'|enumId, i18nKey? }. Bei command/keyword: null oder weggelassen.",
+      "params": "Liste der Parameter (Reihenfolge = Aufrufreihenfolge). Jeder: siehe $schema.param. Leer/weggelassen wenn keine.",
+      "frameSafe": "true = darf in der Frame-Schleife (While 1) laufen | false = Setup-only → Transpiler WARNT bei Verwendung in einer Schleife (Leitsatz 1). null = nicht zutreffend (Keywords).",
+      "cost": "Kosten-Klasse für Hardware-ehrliche Hints: 'free' | 'cheap' | 'medium' | 'expensive'. expensive im Frame → Transpiler-Warnung (z.B. Division). Quelle: c64-math-cost-model.",
+      "since": "Phase, ab der es existiert: 'phase1' | 'later'. Editor/Transpiler können 'later'-Einträge ausgrauen/sperren.",
+      "proven": "true = im _preflight-cc65-Code real verifiziert (Referenz-Implementierung existiert). false = geplant, noch nicht erprobt.",
+      "transpile": "Hinweis fürs C-Mapping (cc65). Freitext-Kurzform, z.B. 'waitvsync()' oder Verweis auf _preflight/<datei>.c. Für den Transpiler-Bauer, nicht lokalisiert.",
+      "exampleId": "Optionaler Verweis auf ein Code-Snippet (Hover-Doku). Snippets liegen sprachneutral (Code ist Code) — Key in examples-Block am Dateiende.",
+      "requiresMode": "Optional: Grafikmodus-Voraussetzung (z.B. 'TEXT,MULTICOLOR' für farbige Tiles). Editor/Transpiler kann warnen, wenn Modus nicht gesetzt.",
+      "aliases": "Optional: erlaubte alternative Schreibweisen, die der Editor auf 'name' normalisiert (z.B. 'EndIf' ← 'End If')."
+    },
+    "param": {
+      "name": "Parametername (für Signatur-Hint im Editor, z.B. 'x', 'farbe').",
+      "type": "'.b' | '.w' | '$' | '$[N]' | enumId (z.B. 'Color') | 'any' (typlos, Transpiler reserviert .w).",
+      "i18nKey": "Lokalisierungs-Key der Parameterbeschreibung.",
+      "default": "Optional: Default-Wert, wenn der Parameter weggelassen werden darf (z.B. 'OFF'). Fehlt = Pflichtparameter.",
+      "optional": "true wenn weglassbar. (Meist impliziert durch vorhandenes 'default'.)",
+      "variant": "Optional: für überladene Formen (z.B. Sprite n,x,y  vs  Sprite n,OFF) — Gruppen-Tag."
+    }
+  },
+  "types": [
+    {
+      "id": "byte",
+      "name": ".b",
+      "kind": "type",
+      "category": "type",
+      "i18nKey": "type.byte",
+      "cMapping": "unsigned char",
+      "range": [
+        0,
+        255
+      ],
+      "since": "phase1"
+    },
+    {
+      "id": "word",
+      "name": ".w",
+      "kind": "type",
+      "category": "type",
+      "i18nKey": "type.word",
+      "cMapping": "unsigned int",
+      "range": [
+        0,
+        65535
+      ],
+      "since": "phase1"
+    },
+    {
+      "id": "strbuf",
+      "name": "$[N]",
+      "kind": "type",
+      "category": "type",
+      "i18nKey": "type.strbuf",
+      "cMapping": "char[N+1]",
+      "since": "phase1",
+      "$note": "Fixer Puffer: N Zeichen + 1 Längenbyte. Variabel (Reassign/Concat/Truncate ok)."
+    },
+    {
+      "id": "strconst",
+      "name": "$",
+      "kind": "type",
+      "category": "type",
+      "i18nKey": "type.strconst",
+      "cMapping": "const char[]",
+      "since": "phase1",
+      "$note": "Ohne [N] direkt zugewiesen = String-KONSTANTE (exakt Literal-Länge, zweite Zuweisung = Compile-Fehler)."
+    }
+  ],
+  "enums": [
+    {
+      "id": "Color",
+      "i18nKey": "enum.color",
+      "$note": "Die 16 festen C64-Farben. Überall als Farb-Argument nutzbar; rohe Zahl 0–15 gleichwertig. cMapping: cc65 COLOR_*.",
+      "values": [
+        {
+          "name": "BLACK",
+          "value": 0,
+          "i18nKey": "color.black",
+          "since": "phase1"
+        },
+        {
+          "name": "WHITE",
+          "value": 1,
+          "i18nKey": "color.white",
+          "since": "phase1"
+        },
+        {
+          "name": "RED",
+          "value": 2,
+          "i18nKey": "color.red",
+          "since": "phase1"
+        },
+        {
+          "name": "CYAN",
+          "value": 3,
+          "i18nKey": "color.cyan",
+          "since": "phase1"
+        },
+        {
+          "name": "PURPLE",
+          "value": 4,
+          "i18nKey": "color.purple",
+          "since": "phase1"
+        },
+        {
+          "name": "GREEN",
+          "value": 5,
+          "i18nKey": "color.green",
+          "since": "phase1"
+        },
+        {
+          "name": "BLUE",
+          "value": 6,
+          "i18nKey": "color.blue",
+          "since": "phase1"
+        },
+        {
+          "name": "YELLOW",
+          "value": 7,
+          "i18nKey": "color.yellow",
+          "since": "phase1"
+        },
+        {
+          "name": "ORANGE",
+          "value": 8,
+          "i18nKey": "color.orange",
+          "since": "phase1"
+        },
+        {
+          "name": "BROWN",
+          "value": 9,
+          "i18nKey": "color.brown",
+          "since": "phase1"
+        },
+        {
+          "name": "LIGHTRED",
+          "value": 10,
+          "i18nKey": "color.lightred",
+          "since": "phase1"
+        },
+        {
+          "name": "GRAY1",
+          "value": 11,
+          "i18nKey": "color.gray1",
+          "since": "phase1"
+        },
+        {
+          "name": "GRAY2",
+          "value": 12,
+          "i18nKey": "color.gray2",
+          "since": "phase1"
+        },
+        {
+          "name": "LIGHTGREEN",
+          "value": 13,
+          "i18nKey": "color.lightgreen",
+          "since": "phase1"
+        },
+        {
+          "name": "LIGHTBLUE",
+          "value": 14,
+          "i18nKey": "color.lightblue",
+          "since": "phase1"
+        },
+        {
+          "name": "GRAY3",
+          "value": 15,
+          "i18nKey": "color.gray3",
+          "since": "phase1"
+        }
+      ]
+    },
+    {
+      "id": "JoyDir",
+      "i18nKey": "enum.joydir",
+      "$note": "Joystick-Richtungen/Button als bool-Abfrage (5-bit, C64-ehrlich — keine Achsenwerte).",
+      "values": [
+        {
+          "name": "LEFT",
+          "value": "JOY_LEFT",
+          "i18nKey": "joy.left",
+          "since": "phase1"
+        },
+        {
+          "name": "RIGHT",
+          "value": "JOY_RIGHT",
+          "i18nKey": "joy.right",
+          "since": "phase1"
+        },
+        {
+          "name": "UP",
+          "value": "JOY_UP",
+          "i18nKey": "joy.up",
+          "since": "phase1"
+        },
+        {
+          "name": "DOWN",
+          "value": "JOY_DOWN",
+          "i18nKey": "joy.down",
+          "since": "phase1"
+        },
+        {
+          "name": "FIRE",
+          "value": "JOY_FIRE",
+          "i18nKey": "joy.fire",
+          "since": "phase1"
+        }
+      ]
+    },
+    {
+      "id": "Key",
+      "i18nKey": "enum.key",
+      "$note": "Tastatur-Konstanten mit KEY_-Prefix. Jede kapselt ihre Matrix-Zeile/Spalte (User sieht keine Matrix-Bits). Liste hier exemplarisch — vollständige Belegung folgt.",
+      "values": [
+        {
+          "name": "KEY_SPACE",
+          "value": "KB_SPACE",
+          "i18nKey": "key.space",
+          "since": "phase1"
+        },
+        {
+          "name": "KEY_RETURN",
+          "value": "KB_RETURN",
+          "i18nKey": "key.return",
+          "since": "phase1"
+        },
+        {
+          "name": "KEY_A",
+          "value": "KB_A",
+          "i18nKey": "key.a",
+          "since": "phase1"
+        }
+      ]
+    },
+    {
+      "id": "GfxArea",
+      "i18nKey": "enum.gfxarea",
+      "$note": "Erste Achse des Graphics-Befehls.",
+      "values": [
+        {
+          "name": "TEXT",
+          "value": "TEXT",
+          "i18nKey": "gfx.text",
+          "since": "phase1"
+        },
+        {
+          "name": "BITMAP",
+          "value": "BITMAP",
+          "i18nKey": "gfx.bitmap",
+          "since": "phase1"
+        }
+      ]
+    },
+    {
+      "id": "GfxColor",
+      "i18nKey": "enum.gfxcolor",
+      "$note": "Zweite Achse des Graphics-Befehls.",
+      "values": [
+        {
+          "name": "HIRES",
+          "value": "HIRES",
+          "i18nKey": "gfx.hires",
+          "since": "phase1"
+        },
+        {
+          "name": "MULTICOLOR",
+          "value": "MULTICOLOR",
+          "i18nKey": "gfx.multicolor",
+          "since": "phase1"
+        }
+      ]
+    },
+    {
+      "id": "SpriteState",
+      "i18nKey": "enum.spritestate",
+      "$note": "Für Sprite n, OFF (Variante).",
+      "values": [
+        {
+          "name": "OFF",
+          "value": "OFF",
+          "i18nKey": "spritestate.off",
+          "since": "phase1"
+        }
+      ]
+    }
+  ],
+  "entries": [
+    {
+      "$group": "B./§E Kontrollstrukturen (Keywords) — alle billig, alle aus BlitzBasic übernommen",
+      "id": "kw-if",
+      "name": "If",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.if",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "EndIf",
+      "blockKeywords": [
+        "Then",
+        "ElseIf",
+        "Else"
+      ],
+      "aliases": []
+    },
+    {
+      "id": "kw-then",
+      "name": "Then",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.then",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Einzeiliges If: 'If <bedingung> Then <anweisung>'. Bei der mehrzeiligen Block-Form (… EndIf) entfällt Then."
+    },
+    {
+      "id": "kw-elseif",
+      "name": "ElseIf",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.elseif",
+      "since": "phase1",
+      "proven": true,
+      "aliases": [
+        "Else If"
+      ]
+    },
+    {
+      "id": "kw-else",
+      "name": "Else",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.else",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-endif",
+      "name": "EndIf",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.endif",
+      "since": "phase1",
+      "proven": true,
+      "aliases": [
+        "End If"
+      ]
+    },
+    {
+      "id": "kw-while",
+      "name": "While",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.while",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "Wend",
+      "blockKeywords": [
+        "Exit"
+      ]
+    },
+    {
+      "id": "kw-wend",
+      "name": "Wend",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.wend",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-repeat",
+      "name": "Repeat",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.repeat",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "Until",
+      "blockKeywords": [
+        "Exit"
+      ]
+    },
+    {
+      "id": "kw-until",
+      "name": "Until",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.until",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-for",
+      "name": "For",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.for",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "Next",
+      "blockKeywords": [
+        "To",
+        "Step",
+        "Exit"
+      ]
+    },
+    {
+      "id": "kw-next",
+      "name": "Next",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.next",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-to",
+      "name": "To",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.to",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Teil von For … To … (Obergrenze der Zählschleife)."
+    },
+    {
+      "id": "kw-step",
+      "name": "Step",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.step",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Optionale Schrittweite in For … To … Step …; ohne Step ist der Schritt 1."
+    },
+    {
+      "id": "kw-exit",
+      "name": "Exit",
+      "kind": "keyword",
+      "category": "loop",
+      "i18nKey": "kw.exit",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Einziges Schleifen-Break-Wort für alle 3 Schleifen."
+    },
+    {
+      "id": "kw-select",
+      "name": "Select",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.select",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "EndSelect",
+      "blockKeywords": [
+        "Case",
+        "Default"
+      ]
+    },
+    {
+      "id": "kw-case",
+      "name": "Case",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.case",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-default",
+      "name": "Default",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.default",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-endselect",
+      "name": "EndSelect",
+      "kind": "keyword",
+      "category": "branch",
+      "i18nKey": "kw.endselect",
+      "since": "phase1",
+      "proven": true,
+      "aliases": [
+        "End Select"
+      ]
+    },
+    {
+      "id": "kw-function",
+      "name": "Function",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.function",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "EndFunction",
+      "blockKeywords": [
+        "Return"
+      ]
+    },
+    {
+      "id": "kw-return",
+      "name": "Return",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.return",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-endfunction",
+      "name": "EndFunction",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.endfunction",
+      "since": "phase1",
+      "proven": true,
+      "aliases": [
+        "End Function"
+      ]
+    },
+    {
+      "id": "kw-global",
+      "name": "Global",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.global",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Pflicht-Init: Global name.b = …"
+    },
+    {
+      "id": "kw-const",
+      "name": "Const",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.const",
+      "since": "phase1",
+      "proven": true,
+      "cost": "free"
+    },
+    {
+      "id": "kw-dim",
+      "name": "Dim",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.dim",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Fixe Arrays, 1D + 2D. Dim feld.b[40,25]."
+    },
+    {
+      "id": "kw-data",
+      "name": "Data",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.data",
+      "since": "phase1",
+      "proven": true,
+      "cost": "free",
+      "transpile": "static const arrays"
+    },
+    {
+      "id": "kw-read",
+      "name": "Read",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.read",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-restore",
+      "name": "Restore",
+      "kind": "command",
+      "category": "flow",
+      "i18nKey": "cmd.restore",
+      "since": "phase1",
+      "proven": true,
+      "frameSafe": true,
+      "$note": "Data-Lesezeiger zurücksetzen.",
+      "params": [
+        {
+          "name": "label",
+          "type": "any",
+          "i18nKey": "param.restore.label",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "kw-type",
+      "name": "Type",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.type",
+      "since": "phase1",
+      "proven": true,
+      "blockEnd": "EndType",
+      "blockKeywords": [
+        "Field"
+      ],
+      "transpile": "struct"
+    },
+    {
+      "id": "kw-field",
+      "name": "Field",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.field",
+      "since": "phase1",
+      "proven": true
+    },
+    {
+      "id": "kw-endtype",
+      "name": "EndType",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.endtype",
+      "since": "phase1",
+      "proven": true,
+      "aliases": [
+        "End Type"
+      ]
+    },
+    {
+      "id": "kw-include",
+      "name": "Include",
+      "kind": "keyword",
+      "category": "declaration",
+      "i18nKey": "kw.include",
+      "since": "phase1",
+      "proven": false,
+      "cost": "free",
+      "$note": "Preprocessor-Text-Include (nur .crumb-Quellcode, kein Asset). 0 Runtime-Kosten."
+    },
+    {
+      "$group": "§E Grafik / Setup — alle Setup-only (frameSafe:false → Warnung in Schleife)"
+    },
+    {
+      "id": "cmd-graphics",
+      "name": "Graphics",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.graphics",
+      "frameSafe": false,
+      "cost": "expensive",
+      "since": "phase1",
+      "proven": true,
+      "transpile": "setzt $D011/$D016/$D018 — Referenz _preflight/tilemap.c",
+      "$note": "Phase 1: TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR. Der Textmodus IST die Tilemap-Engine (Font=Tileset).",
+      "params": [
+        {
+          "name": "flaeche",
+          "type": "GfxArea",
+          "i18nKey": "param.graphics.area"
+        },
+        {
+          "name": "farbe",
+          "type": "GfxColor",
+          "i18nKey": "param.graphics.colormode"
+        }
+      ]
+    },
+    {
+      "id": "cmd-cls",
+      "name": "Cls",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.cls",
+      "frameSafe": false,
+      "cost": "expensive",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Löscht UND füllt mit FARBE (untrennbar — die Hintergrundfarbe ist Parameter von Cls). In Bitmap-Modus ~1 Frame teuer.",
+      "params": [
+        {
+          "name": "farbe",
+          "type": "Color",
+          "i18nKey": "param.cls.color"
+        }
+      ]
+    },
+    {
+      "id": "cmd-bordercolor",
+      "name": "BorderColor",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.bordercolor",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "transpile": "$D020 live-Register",
+      "params": [
+        {
+          "name": "farbe",
+          "type": "Color",
+          "i18nKey": "param.bordercolor.color"
+        }
+      ]
+    },
+    {
+      "id": "cmd-usesprite",
+      "name": "UseSprite",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.usesprite",
+      "frameSafe": false,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Asset wird zur Compile-Zeit eingebacken (NICHT von Disk geladen).",
+      "params": [
+        {
+          "name": "id",
+          "type": "$",
+          "i18nKey": "param.usesprite.id"
+        }
+      ]
+    },
+    {
+      "id": "cmd-usetileset",
+      "name": "UseTileset",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.usetileset",
+      "frameSafe": false,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Lädt den Zeichensatz = die Tile-Palette (256 Tiles à 8×8 = 2 KB). Darstellung nach gewähltem Graphics TEXT,…-Modus.",
+      "params": [
+        {
+          "name": "id",
+          "type": "$",
+          "i18nKey": "param.usetileset.id"
+        }
+      ]
+    },
+    {
+      "id": "cmd-useimage",
+      "name": "UseImage",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.useimage",
+      "frameSafe": false,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "params": [
+        {
+          "name": "id",
+          "type": "$",
+          "i18nKey": "param.useimage.id"
+        }
+      ]
+    },
+    {
+      "id": "cmd-drawmap",
+      "name": "DrawMap",
+      "kind": "command",
+      "category": "tiles",
+      "i18nKey": "cmd.drawmap",
+      "frameSafe": false,
+      "cost": "expensive",
+      "since": "phase1",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "Data-Block von Tile-Nummern → Screen-RAM (1000 Zellen). Referenz _preflight/tilemap.c",
+      "$note": "Zeichnet alle 1000 Zellen → im Frame teuer (Warnung). Statische Welt: einmal aufbauen.",
+      "params": [
+        {
+          "name": "id",
+          "type": "$",
+          "i18nKey": "param.drawmap.id"
+        }
+      ]
+    },
+    {
+      "id": "cmd-drawimage",
+      "name": "DrawImage",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.drawimage",
+      "frameSafe": false,
+      "cost": "expensive",
+      "since": "phase1",
+      "proven": false,
+      "requiresMode": "BITMAP,MULTICOLOR",
+      "params": [
+        {
+          "name": "id",
+          "type": "$",
+          "i18nKey": "param.drawimage.id"
+        }
+      ]
+    },
+    {
+      "id": "cmd-text",
+      "name": "DrawText",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.text",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Billig in TEXT-Modus, teuer in BITMAP-Modus. HUD/Setup. Name DrawText (NICHT 'Text'): 'Text' kollidierte case-insensitiv mit der Grafikmodus-Konstante TEXT (Graphics TEXT,…), sodass Lexer/Editor sie kontextfrei nicht trennen konnten. DrawText reiht sich in DrawMap/DrawImage ein. KEIN 'Text'-Alias — der würde die Kollision zurückholen.",
+      "params": [
+        {
+          "name": "x",
+          "type": ".b",
+          "i18nKey": "param.text.x"
+        },
+        {
+          "name": "y",
+          "type": ".b",
+          "i18nKey": "param.text.y"
+        },
+        {
+          "name": "ausdruck",
+          "type": "any",
+          "i18nKey": "param.text.value"
+        }
+      ]
+    },
+    {
+      "$group": "§E Tiles dynamisch (Frame-tauglich)"
+    },
+    {
+      "id": "cmd-settile",
+      "name": "SetTile",
+      "kind": "command",
+      "category": "tiles",
+      "i18nKey": "cmd.settile",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "1 Byte Screen-RAM + 1 Byte Color-RAM",
+      "$note": "LOW-LEVEL: setzt EINE 8×8-Zelle per Tile-NUMMER + Farbe. Das Gegenstück zu Sprite n,x,y für die Tile-Welt. Für bewegte Gegner/wachsende Pflanzen. Bleibt das bewiesene Modell für das Latent-Object-Muster `SetTile c,r, GetTile(c,r,1), farbe` (s. _preflight/sokoban_push.c). Für aus mehreren Zeichen zusammengesetzte Kacheln → SetMetaTile.",
+      "params": [
+        {
+          "name": "spalte",
+          "type": ".b",
+          "i18nKey": "param.settile.col"
+        },
+        {
+          "name": "zeile",
+          "type": ".b",
+          "i18nKey": "param.settile.row"
+        },
+        {
+          "name": "tile",
+          "type": ".b",
+          "i18nKey": "param.settile.tile"
+        },
+        {
+          "name": "farbe",
+          "type": "Color",
+          "i18nKey": "param.settile.color"
+        }
+      ]
+    },
+    {
+      "id": "cmd-setmetatile",
+      "name": "SetMetaTile",
+      "kind": "command",
+      "category": "tiles",
+      "i18nKey": "cmd.setmetatile",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "Compile-Zeit aus .bread aufgelöst: rollt für ein N×M-MetaTile N·M Poke-Paare aus (Screen-RAM + Color-RAM je Zelle). KEINE Laufzeit-Größenerkennung — die MetaTile-Geometrie ist beim Transpilieren bekannt. 1×1-MetaTile = 1 Zelle (identisch zu SetTile). Referenz: _preflight/sokoban_meta.c (set_metatile schreibt alle 4 Zellen; in VICE statisch verifiziert, mon_check_meta.py).",
+      "$note": "BENANNT/high-level: setzt ein im Tileset-Editor definiertes MetaTile (Komposition aus N×M Zeichen, Default 2×2 = 16×16) als EINE Einheit. spalte,zeile = Zell-Koordinate der oberen-linken Ecke (KEIN zweites Koordinatensystem — die ganze Sprache bleibt 40×25-zellbasiert). Die Farben kommen aus dem MetaTile (4 Color-RAM-Werte im 2×2-Fall) — daher KEIN farbe-Argument (Abgrenzung zu SetTile). Löst das Sokoban-Problem: eine 4-Zeichen-Kiste wird komplett ersetzt, nie halb. Name = bewusst identisch zum Tileset-/Tilemap-Editor-Begriff (Sprache↔IDE konsistent). Kosten sichtbar in der IDE: ~N·M× so viele Pokes wie SetTile (immer noch billig, vorhersehbar).",
+      "params": [
+        {
+          "name": "spalte",
+          "type": ".b",
+          "i18nKey": "param.setmetatile.col"
+        },
+        {
+          "name": "zeile",
+          "type": ".b",
+          "i18nKey": "param.setmetatile.row"
+        },
+        {
+          "name": "metatile",
+          "type": "$",
+          "i18nKey": "param.setmetatile.id",
+          "$note": "MetaTile-Name (String-ID wie Asset-IDs); IDE-Autocomplete bietet die im Tileset definierten Namen an, Transpiler löst über .bread auf."
+        }
+      ]
+    },
+    {
+      "id": "fn-gettile",
+      "name": "GetTile",
+      "kind": "function",
+      "category": "tiles",
+      "i18nKey": "fn.gettile",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.gettile.returns"
+      },
+      "$note": "ZELL-basiert (Gitter-Koordinaten). Abgrenzung zu TileAt/TileSolid (pixel-basiert). 2-LAYER-MAP: layer 0 = Anzeige (Screen-RAM, was der VIC zeigt), layer 1 = unsichtbarer DATEN-Layer darunter (vom Tilemap-Editor gemalt, hält Tile-Nummern für den 'Untergrund'/'was-kommt-danach'-Wert). Beide Layer halten NUR Tile-Nummern. Der C64 zeigt physikalisch nur 1 Ebene — layer 1 wird NIE gezeichnet, nur abgefragt (1 Array-Offset, billig). Muster 'latentes Objekt': ein als Tile platzierter Gegner/Kiste erwacht zum Sprite, dann `SetTile c,r, GetTile(c,r,1), farbe` deckt den vom Designer gemalten Untergrund auf — ersetzt das selbstgebaute ground[]-Array (s. _preflight/sokoban_push.c).",
+      "params": [
+        {
+          "name": "spalte",
+          "type": ".b",
+          "i18nKey": "param.gettile.col"
+        },
+        {
+          "name": "zeile",
+          "type": ".b",
+          "i18nKey": "param.gettile.row"
+        },
+        {
+          "name": "layer",
+          "type": ".b",
+          "i18nKey": "param.gettile.layer",
+          "default": "0",
+          "optional": true,
+          "$note": "0 = Anzeige (Default), 1 = Daten-Layer. Phase 1: genau diese zwei."
+        }
+      ]
+    },
+    {
+      "id": "fn-getmetatile",
+      "name": "GetMetaTile",
+      "kind": "function",
+      "category": "tiles",
+      "i18nKey": "fn.getmetatile",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": "$",
+        "i18nKey": "fn.getmetatile.returns",
+        "$note": "MetaTile-Name (String-ID) der Zelle bzw. \"\" wenn die Zelle zu keinem bekannten MetaTile gehört."
+      },
+      "$note": "BENANNTes Gegenstück zu GetTile: liefert die MetaTile-IDENTITÄT einer Zelle — auch wenn man eine innere Zelle (z. B. unten-rechts eines 2×2) abfragt, kommt der Name des ganzen MetaTiles zurück. Das ist, was der Designer erwartet, wenn er fragt 'was liegt da?'. Optionaler layer wie bei GetTile (0 = Anzeige, 1 = Daten-Layer). Macht das Latent-Object-Muster MetaTile-tauglich: `SetMetaTile c,r, GetMetaTile(c,r,1)` deckt einen ganzen vom Designer gemalten N×M-Untergrund auf (das Pendant zu `SetTile c,r, GetTile(c,r,1), farbe` für Einzelzeichen).",
+      "params": [
+        {
+          "name": "spalte",
+          "type": ".b",
+          "i18nKey": "param.getmetatile.col"
+        },
+        {
+          "name": "zeile",
+          "type": ".b",
+          "i18nKey": "param.getmetatile.row"
+        },
+        {
+          "name": "layer",
+          "type": ".b",
+          "i18nKey": "param.getmetatile.layer",
+          "default": "0",
+          "optional": true,
+          "$note": "0 = Anzeige (Default), 1 = Daten-Layer."
+        }
+      ]
+    },
+    {
+      "$group": "§E Sprites (Frame-tauglich)"
+    },
+    {
+      "id": "cmd-sprite",
+      "name": "Sprite",
+      "kind": "command",
+      "category": "sprites",
+      "i18nKey": "cmd.sprite",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Positionieren, NICHT zeichnen (VIC zeichnet alle 8 in Hardware). Zwei Varianten: n,x,y ODER n,OFF.",
+      "params": [
+        {
+          "name": "n",
+          "type": ".b",
+          "i18nKey": "param.sprite.n",
+          "variant": "pos"
+        },
+        {
+          "name": "x",
+          "type": ".w",
+          "i18nKey": "param.sprite.x",
+          "variant": "pos",
+          "$note": "X braucht 9 Bit (0-319, VIC-MSB) → .w."
+        },
+        {
+          "name": "y",
+          "type": ".b",
+          "i18nKey": "param.sprite.y",
+          "variant": "pos"
+        }
+      ],
+      "variants": [
+        {
+          "id": "pos",
+          "params": [
+            "n",
+            "x",
+            "y"
+          ],
+          "i18nKey": "cmd.sprite.variant.pos"
+        },
+        {
+          "id": "off",
+          "i18nKey": "cmd.sprite.variant.off",
+          "params": [
+            {
+              "name": "n",
+              "type": ".b",
+              "i18nKey": "param.sprite.n"
+            },
+            {
+              "name": "state",
+              "type": "SpriteState",
+              "i18nKey": "param.sprite.state",
+              "default": "OFF"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cmd-showsprite",
+      "name": "ShowSprite",
+      "kind": "command",
+      "category": "sprites",
+      "i18nKey": "cmd.showsprite",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "params": [
+        {
+          "name": "n",
+          "type": ".b",
+          "i18nKey": "param.showsprite.n"
+        }
+      ]
+    },
+    {
+      "id": "cmd-hidesprite",
+      "name": "HideSprite",
+      "kind": "command",
+      "category": "sprites",
+      "i18nKey": "cmd.hidesprite",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "params": [
+        {
+          "name": "n",
+          "type": ".b",
+          "i18nKey": "param.hidesprite.n"
+        }
+      ]
+    },
+    {
+      "id": "fn-spritehit",
+      "name": "SpriteHit",
+      "kind": "function",
+      "category": "sprites",
+      "i18nKey": "fn.spritehit",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.spritehit.returns"
+      },
+      "$note": "HW-Bit, grob (nur DASS, nicht WELCHE Seite — s. Asteroids-Lektion). Rückgabe als bool (0/1).",
+      "params": [
+        {
+          "name": "a",
+          "type": ".b",
+          "i18nKey": "param.spritehit.a"
+        },
+        {
+          "name": "b",
+          "type": ".b",
+          "i18nKey": "param.spritehit.b"
+        }
+      ]
+    },
+    {
+      "id": "fn-tilesolid",
+      "name": "TileSolid",
+      "kind": "function",
+      "category": "tiles",
+      "i18nKey": "fn.tilesolid",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.tilesolid.returns"
+      },
+      "transpile": "Software: pixel→cell + Solid-Tabelle. Referenz _preflight/tilecollide.c",
+      "$note": "PIXEL-basiert (Sprite-Kollision). bool. Origin-Offset SPR_X0=24/SPR_Y0=50 abziehen, dann >>3.",
+      "params": [
+        {
+          "name": "px",
+          "type": ".w",
+          "i18nKey": "param.tilesolid.px"
+        },
+        {
+          "name": "py",
+          "type": ".b",
+          "i18nKey": "param.tilesolid.py"
+        }
+      ]
+    },
+    {
+      "id": "fn-tileat",
+      "name": "TileAt",
+      "kind": "function",
+      "category": "tiles",
+      "i18nKey": "fn.tileat",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.tileat.returns"
+      },
+      "$note": "PIXEL-basiert → rohe Tile-Nr.",
+      "params": [
+        {
+          "name": "px",
+          "type": ".w",
+          "i18nKey": "param.tileat.px"
+        },
+        {
+          "name": "py",
+          "type": ".b",
+          "i18nKey": "param.tileat.py"
+        }
+      ]
+    },
+    {
+      "$group": "§E Eingabe (nicht-blockierend, Frame)"
+    },
+    {
+      "id": "fn-joystick",
+      "name": "Joystick",
+      "kind": "function",
+      "category": "input",
+      "i18nKey": "fn.joystick",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.joystick.returns"
+      },
+      "transpile": "joy_read(JOY_2) — bereits in _preflight",
+      "params": [
+        {
+          "name": "richtung",
+          "type": "JoyDir",
+          "i18nKey": "param.joystick.dir"
+        }
+      ]
+    },
+    {
+      "id": "fn-keydown",
+      "name": "KeyDown",
+      "kind": "function",
+      "category": "input",
+      "i18nKey": "fn.keydown",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.keydown.returns"
+      },
+      "$note": "Gehalten (true solange gedrückt — kontinuierliche Aktionen).",
+      "params": [
+        {
+          "name": "key",
+          "type": "Key",
+          "i18nKey": "param.keydown.key"
+        }
+      ]
+    },
+    {
+      "id": "fn-keyhit",
+      "name": "KeyHit",
+      "kind": "function",
+      "category": "input",
+      "i18nKey": "fn.keyhit",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.keyhit.returns"
+      },
+      "$note": "Neu gedrückt (true einmal pro Druck). Braucht auto-getrackten last-frame-Zustand.",
+      "params": [
+        {
+          "name": "key",
+          "type": "Key",
+          "i18nKey": "param.keyhit.key"
+        }
+      ]
+    },
+    {
+      "$group": "§E Frame"
+    },
+    {
+      "id": "cmd-vwait",
+      "name": "VWait",
+      "kind": "command",
+      "category": "frame",
+      "i18nKey": "cmd.vwait",
+      "frameSafe": true,
+      "cost": "free",
+      "since": "phase1",
+      "proven": true,
+      "transpile": "waitvsync()",
+      "$note": "Frame-Sync (PAL 50Hz). Pflicht in der Frame-Schleife — Transpiler WARNT, wenn While 1 ohne VWait."
+    },
+    {
+      "$group": "§E Mathe / Helfer — alle billig, Integer (kein Float)"
+    },
+    {
+      "id": "fn-abs",
+      "name": "Abs",
+      "kind": "function",
+      "category": "math",
+      "i18nKey": "fn.abs",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".w",
+        "i18nKey": "fn.abs.returns"
+      },
+      "params": [
+        {
+          "name": "n",
+          "type": ".w",
+          "i18nKey": "param.abs.n"
+        }
+      ]
+    },
+    {
+      "id": "fn-min",
+      "name": "Min",
+      "kind": "function",
+      "category": "math",
+      "i18nKey": "fn.min",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".w",
+        "i18nKey": "fn.min.returns"
+      },
+      "params": [
+        {
+          "name": "a",
+          "type": ".w",
+          "i18nKey": "param.min.a"
+        },
+        {
+          "name": "b",
+          "type": ".w",
+          "i18nKey": "param.min.b"
+        }
+      ]
+    },
+    {
+      "id": "fn-max",
+      "name": "Max",
+      "kind": "function",
+      "category": "math",
+      "i18nKey": "fn.max",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".w",
+        "i18nKey": "fn.max.returns"
+      },
+      "params": [
+        {
+          "name": "a",
+          "type": ".w",
+          "i18nKey": "param.max.a"
+        },
+        {
+          "name": "b",
+          "type": ".w",
+          "i18nKey": "param.max.b"
+        }
+      ]
+    },
+    {
+      "id": "fn-random",
+      "name": "Random",
+      "kind": "function",
+      "category": "math",
+      "i18nKey": "fn.random",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".w",
+        "i18nKey": "fn.random.returns"
+      },
+      "transpile": "SID voice 3 noise / LFSR",
+      "$note": "0..n-1.",
+      "params": [
+        {
+          "name": "n",
+          "type": ".w",
+          "i18nKey": "param.random.n"
+        }
+      ]
+    },
+    {
+      "$group": "§E String — Funktionen geben Wert zurück (Klammern Pflicht)"
+    },
+    {
+      "id": "fn-len",
+      "name": "Len",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.len",
+      "frameSafe": true,
+      "cost": "free",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.len.returns"
+      },
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.len.s"
+        }
+      ]
+    },
+    {
+      "id": "fn-left",
+      "name": "Left$",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.left",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": "$",
+        "i18nKey": "fn.left.returns"
+      },
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.left.s"
+        },
+        {
+          "name": "n",
+          "type": ".b",
+          "i18nKey": "param.left.n"
+        }
+      ]
+    },
+    {
+      "id": "fn-right",
+      "name": "Right$",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.right",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": "$",
+        "i18nKey": "fn.right.returns"
+      },
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.right.s"
+        },
+        {
+          "name": "n",
+          "type": ".b",
+          "i18nKey": "param.right.n"
+        }
+      ]
+    },
+    {
+      "id": "fn-mid",
+      "name": "Mid$",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.mid",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": "$",
+        "i18nKey": "fn.mid.returns"
+      },
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.mid.s"
+        },
+        {
+          "name": "p",
+          "type": ".b",
+          "i18nKey": "param.mid.p"
+        },
+        {
+          "name": "n",
+          "type": ".b",
+          "i18nKey": "param.mid.n"
+        }
+      ]
+    },
+    {
+      "id": "fn-find",
+      "name": "Find",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.find",
+      "frameSafe": true,
+      "cost": "medium",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.find.returns"
+      },
+      "$note": "Position; Kosten ∝ Länge (Scan).",
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.find.s"
+        },
+        {
+          "name": "t",
+          "type": "$",
+          "i18nKey": "param.find.t"
+        }
+      ]
+    },
+    {
+      "id": "fn-int",
+      "name": "Int",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.int",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".w",
+        "i18nKey": "fn.int.returns"
+      },
+      "$note": "String→Zahl. Zieltyp (.b/.w) aus Zuweisung inferiert. Ungültig → 0.",
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.int.s"
+        }
+      ]
+    },
+    {
+      "id": "fn-str",
+      "name": "Str$",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.str",
+      "frameSafe": true,
+      "cost": "medium",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": "$",
+        "i18nKey": "fn.str.returns"
+      },
+      "$note": "Zahl→String (÷10-Schleife, etwas teurer als Int). Zielpuffer nach Max-Typ dimensionieren!",
+      "params": [
+        {
+          "name": "n",
+          "type": ".w",
+          "i18nKey": "param.str.n"
+        }
+      ]
+    },
+    {
+      "id": "fn-chr",
+      "name": "Chr$",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.chr",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": "$",
+        "i18nKey": "fn.chr.returns"
+      },
+      "params": [
+        {
+          "name": "code",
+          "type": ".b",
+          "i18nKey": "param.chr.code"
+        }
+      ]
+    },
+    {
+      "id": "fn-asc",
+      "name": "Asc",
+      "kind": "function",
+      "category": "string",
+      "i18nKey": "fn.asc",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": false,
+      "returns": {
+        "type": ".b",
+        "i18nKey": "fn.asc.returns"
+      },
+      "params": [
+        {
+          "name": "s",
+          "type": "$",
+          "i18nKey": "param.asc.s"
+        }
+      ]
+    },
+    {
+      "$group": "§F Hardware-Ventil — roher 6502-Asm für Fortgeschrittene (hier endet der BreadCraft-Schutz)"
+    },
+    {
+      "id": "kw-asm",
+      "name": "Asm",
+      "kind": "keyword",
+      "category": "escape",
+      "i18nKey": "kw.asm",
+      "frameSafe": null,
+      "cost": null,
+      "since": "later",
+      "proven": false,
+      "blockEnd": "EndAsm",
+      "transpile": "Block-Inhalt 1:1 in cc65 __asm__(...) durchreichen — der Transpiler interpretiert NICHTS davon.",
+      "$note": "BASSM-DNA (BASIC+ASSM): das Ventil für alles, was die sichere Sprache bewusst weglässt — Sprite-Multiplexing (>8 Sprites via Raster-IRQ), eigene Raster-Effekte, FLI. PHILOSOPHIE: versteckt keine Kosten, es legt sie MAXIMAL offen — wer Asm schreibt, weiß, dass er auf Hardware-Ebene ist (kein Cls-Trugschluss). Der Artist-Nutzer sieht das nie. WARNUNGEN für die Doku: (1) 6502, NICHT 68k — Asm-Blöcke sind NICHT von BASSM-Amiga portierbar. (2) Muss cc65-Konventionen respektieren (A/X/Y + freie ZP-Adressen) sonst korrumpiert es den umgebenden C-Code. (3) Frame-Safety/Health-Bars können nicht hineinschauen — innerhalb des Blocks gilt kein Schutz. Block-Konstrukt: Asm … EndAsm (wie If/EndIf).",
+      "aliases": []
+    },
+    {
+      "id": "kw-endasm",
+      "name": "EndAsm",
+      "kind": "keyword",
+      "category": "escape",
+      "i18nKey": "kw.endasm",
+      "frameSafe": null,
+      "cost": null,
+      "since": "later",
+      "proven": false,
+      "$note": "Schließt den Asm-Block.",
+      "aliases": [
+        "End Asm"
+      ]
+    },
+    {
+      "$group": "§E Programmfluss"
+    },
+    {
+      "id": "cmd-end",
+      "name": "End",
+      "kind": "command",
+      "category": "flow",
+      "i18nKey": "cmd.end",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "transpile": "game_cleanup: IRQ/Modus zurück → BASIC"
+    }
+  ],
+  "operators": [
+    {
+      "id": "op-add",
+      "name": "+",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.add",
+      "cost": "free",
+      "since": "phase1"
+    },
+    {
+      "id": "op-sub",
+      "name": "-",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.sub",
+      "cost": "free",
+      "since": "phase1"
+    },
+    {
+      "id": "op-mul",
+      "name": "*",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.mul",
+      "cost": "medium",
+      "since": "phase1",
+      "$note": "Zweierpotenz → Shift (free); var*var → cc65-Routine."
+    },
+    {
+      "id": "op-div",
+      "name": "/",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.div",
+      "cost": "expensive",
+      "since": "phase1",
+      "frameWarn": true,
+      "$note": "Division im Frame → Warnung (Tabelle erwägen)."
+    },
+    {
+      "id": "op-mod",
+      "name": "Mod",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.mod",
+      "cost": "expensive",
+      "since": "phase1",
+      "frameWarn": true
+    },
+    {
+      "id": "op-and",
+      "name": "And",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.and",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-or",
+      "name": "Or",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.or",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-xor",
+      "name": "Xor",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.xor",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-not",
+      "name": "Not",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.not",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-shl",
+      "name": "Shl",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.shl",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-shr",
+      "name": "Shr",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.shr",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-eq",
+      "name": "=",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.eq",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-ne",
+      "name": "<>",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.ne",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-lt",
+      "name": "<",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.lt",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-gt",
+      "name": ">",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.gt",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-le",
+      "name": "<=",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.le",
+      "cost": "cheap",
+      "since": "phase1"
+    },
+    {
+      "id": "op-ge",
+      "name": ">=",
+      "kind": "operator",
+      "category": "operator",
+      "i18nKey": "op.ge",
+      "cost": "cheap",
+      "since": "phase1"
+    }
+  ],
+  "examples": {
+    "$comment": "Code-Snippets für Hover-Doku. Code ist sprachneutral (nicht lokalisiert). Verweis via entry.exampleId.",
+    "joystick.basic": "If Joystick(LEFT) Then px = px - 1",
+    "graphics.tiles": "Graphics TEXT, MULTICOLOR\nUseTileset \"cave\"\nDrawMap \"level1\"",
+    "frameloop": "While 1\n    Sprite \"Player\", px, py\n    VWait\nWend",
+    "asm.escape": "' Hardware-Ventil: roher 6502-Asm für das, was die Sprache bewusst weglässt\n' (z.B. Raster-IRQ für Sprite-Multiplexing → mehr als 8 Sprites)\nAsm\n    sei\n    lda #<irq\n    sta $0314\n    lda #>irq\n    sta $0315\n    cli\nEndAsm"
+  }
+}

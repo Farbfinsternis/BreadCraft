@@ -1,0 +1,26 @@
+# electron-builder packaging config for BreadCraft.
+# Turns the electron-vite output in out/ into a distributable app.
+appId: com.breadcraft.ide
+productName: BreadCraft
+
+# What goes INTO the app bundle (the compiled app code).
+directories:
+  output: dist
+files:
+  - out/**/*
+  - package.json
+
+# Ship the bundled cc65 toolchain (zlib-licensed) alongside the app. At runtime
+# these land in <resourcesPath>/cc65, which src/main/toolchain.ts (cc65Root)
+# resolves when app.isPackaged. See memory: breadcraft-cc65-bundling.
+# 'samples' and 'html' from the cc65 snapshot are intentionally NOT bundled.
+extraResources:
+  - from: resources/cc65
+    to: cc65
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - nsis      # installer
+    - portable  # single self-contained .exe
