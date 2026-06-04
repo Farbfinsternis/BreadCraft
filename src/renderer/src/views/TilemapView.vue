@@ -78,6 +78,14 @@ function cellColorHex(col: number, row: number): string {
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let ctx: CanvasRenderingContext2D | null = null
 
+// ---- hover preview (a transparent overlay canvas on top of the map) ----
+// A separate canvas so the ghost never touches the committed map render — drawn
+// on pointer move, cleared on leave. Shows the active tile half-transparent at the
+// cell under the cursor, so you see WHERE a click will paint before committing.
+const overlayRef = ref<HTMLCanvasElement | null>(null)
+let octx: CanvasRenderingContext2D | null = null
+let hoverIndex = -1 // row*MAP_W+col currently ghosted, or -1 when none
+
 /** Draw one map cell (its tile's 8×8 char) at column/row. */
 function drawCell(col: number, row: number): void {
   if (!ctx) return
@@ -136,6 +144,31 @@ function cellFromEvent(ev: PointerEvent): { col: number; row: number } | null {
   return { col, row }
 }
 
+/** Show the half-transparent active tile at (col,row) on the overlay (clearing any
+ *  previous ghost). The preview uses the active Color-RAM colour, so it matches what
+ *  a click will commit. No-op if the same cell is already ghosted. */
+function showGhost(col: number, row: number): void {
+  if (!octx) return
+  const idx = row * MAP_W + col
+  if (idx === hoverIndex) return
+  clearGhost()
+  hoverIndex = idx
+  octx.save()
+  octx.globalAlpha = 0.5
+  const ramHex = C64_PALETTE[activeColor.value]?.hex ?? C64_PALETTE[15].hex
+  drawChar(octx, charset.chars[selectedTile.value], col * CHAR_PX, row * CHAR_PX, 1, indexPalette.value, isMC.value, ramHex)
+  octx.restore()
+}
+
+/** Remove the current ghost from the overlay. */
+function clearGhost(): void {
+  if (!octx || hoverIndex < 0) return
+  const col = hoverIndex % MAP_W
+  const row = Math.floor(hoverIndex / MAP_W)
+  octx.clearRect(col * CHAR_PX, row * CHAR_PX, CHAR_PX, CHAR_PX)
+  hoverIndex = -1
+}
+
 function paintAt(ev: PointerEvent): void {
   const c = cellFromEvent(ev)
   if (!c) return
@@ -151,15 +184,23 @@ function paintAt(ev: PointerEvent): void {
 
 function onPointerDown(ev: PointerEvent): void {
   ev.preventDefault()
-  canvasRef.value?.setPointerCapture(ev.pointerId)
+  // Capture on the overlay (the element receiving the events) so a fast drag keeps
+  // delivering moves even if the cursor briefly leaves the canvas.
+  overlayRef.value?.setPointerCapture(ev.pointerId)
   painting = true
   paintAt(ev)
 }
 function onPointerMove(ev: PointerEvent): void {
   if (painting) paintAt(ev)
+  const c = cellFromEvent(ev)
+  if (c) showGhost(c.col, c.row)
+  else clearGhost()
 }
 function onPointerUp(): void {
   painting = false
+}
+function onPointerLeave(): void {
+  clearGhost()
 }
 
 // Single-cell paints redraw their own cell (paintAt → scheduleDraw(false, …)), so
@@ -177,6 +218,9 @@ watch(
   () => scheduleDraw(true),
   { deep: true }
 )
+// A changed tile/colour/palette makes any shown ghost stale → drop it; the next
+// pointer move redraws it fresh.
+watch([selectedTile, activeColor, indexPalette], () => clearGhost())
 
 function initCanvas(): void {
   const canvas = canvasRef.value
@@ -184,6 +228,12 @@ function initCanvas(): void {
   canvas.width = CANVAS_W
   canvas.height = CANVAS_H
   ctx = canvas.getContext('2d')
+  const overlay = overlayRef.value
+  if (overlay) {
+    overlay.width = CANVAS_W
+    overlay.height = CANVAS_H
+    octx = overlay.getContext('2d')
+  }
   redrawAll()
 }
 
@@ -291,13 +341,19 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
       <!-- Karte (40×25 canvas) -->
       <FloatPanel :scope="SCOPE" id="map" :title="t('tilemap.panel.map')" :min-width="300" :min-height="240">
         <div class="tm-map-wrap">
-          <canvas
-            ref="canvasRef"
-            class="tm-map-canvas"
-            @pointerdown="onPointerDown"
-            @pointermove="onPointerMove"
-            @contextmenu.prevent
-          />
+          <div class="tm-map-stack">
+            <canvas ref="canvasRef" class="tm-map-canvas" />
+            <!-- transparent hover-preview overlay; sits exactly on the map and takes
+                 the pointer events (the map canvas underneath is purely the render) -->
+            <canvas
+              ref="overlayRef"
+              class="tm-map-canvas tm-map-overlay"
+              @pointerdown="onPointerDown"
+              @pointermove="onPointerMove"
+              @pointerleave="onPointerLeave"
+              @contextmenu.prevent
+            />
+          </div>
         </div>
       </FloatPanel>
 
@@ -508,13 +564,21 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
   height: 100%;
   min-height: 0;
 }
-/* The canvas is 320×200 internally (the real C64 picture); CSS scales it to fit
-   the panel while keeping the 8:5 aspect, and `pixelated` keeps tile edges crisp. */
-.tm-map-canvas {
-  width: auto;
+/* The stack shrinks to the (auto-sized) map canvas so the overlay can sit exactly
+   on top of it, same scaled rect. */
+.tm-map-stack {
+  position: relative;
   height: 100%;
   max-width: 100%;
   max-height: 100%;
+  aspect-ratio: 320 / 200;
+}
+/* The canvas is 320×200 internally (the real C64 picture); CSS scales it to fit
+   the panel while keeping the 8:5 aspect, and `pixelated` keeps tile edges crisp. */
+.tm-map-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
   aspect-ratio: 320 / 200;
   image-rendering: pixelated;
   background: #000;
@@ -522,6 +586,13 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
   cursor: crosshair;
   touch-action: none;
   user-select: none;
+}
+/* The hover-preview overlay lies on top of the map, transparent, same size. */
+.tm-map-overlay {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* ---- tools ---- */

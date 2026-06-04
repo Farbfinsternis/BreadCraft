@@ -8,6 +8,11 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Vorschau in den Editoren: man sieht, wohin man malt.** Fährt man im Tilemap-Editor mit
+  der Maus über die Karte, erscheint die ausgewählte Kachel schon halbtransparent auf der Zelle
+  unter dem Zeiger — in der gerade gewählten Zellfarbe. Im PETSCII-Editor leuchtet das Pixel unter
+  dem Zeiger in der aktiven Stiftfarbe auf. So weiß man vor dem Klick genau, was wohin kommt; die
+  Vorschau verändert das gemalte Bild nicht.
 - **Die Tile-Welt lebt: Kacheln setzen, lesen, auf sie treten.** Der Übersetzer versteht jetzt
   die vier Kachel-Befehle für bewegtes Spielgeschehen: **SetTile** (eine Zelle auf eine Kachel +
   Farbe setzen — z. B. ein Gegner, der über die Karte wandert), **GetTile** (nachschauen, welche

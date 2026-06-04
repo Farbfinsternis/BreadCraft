@@ -82,6 +82,13 @@ const cellAspect = computed(() => `${props.pixelAspect} / 1`)
 
 let painting = false
 
+// Hover preview: the cell index under the cursor (-1 = none). The active pen colour
+// is shown half-transparent over that cell's real colour, so you see what the next
+// click paints — without touching the pixel data (PETSCII counterpart of the tilemap
+// ghost). The right mouse button erases (rightIndex), so while a right-drag is held
+// the preview shows that pen instead.
+const hoverCell = ref(-1)
+
 function cellFromEvent(ev: PointerEvent): { x: number; y: number } | null {
   const host = ev.currentTarget as HTMLElement
   const rect = host.getBoundingClientRect()
@@ -110,8 +117,9 @@ function onPointerDown(ev: PointerEvent): void {
 }
 
 function onPointerMove(ev: PointerEvent): void {
-  if (!painting) return
   const cell = cellFromEvent(ev)
+  hoverCell.value = cell ? cell.y * props.width + cell.x : -1
+  if (!painting) return
   if (!cell) return
   engine.move(props.tool, cell.x, cell.y, penFor(ev.buttons & 2 ? 2 : 0))
   syncView()
@@ -123,6 +131,29 @@ function onPointerUp(): void {
   painting = false
   engine.end()
   emitHistory()
+}
+
+function onPointerLeave(): void {
+  hoverCell.value = -1
+  onPointerUp()
+}
+
+/** The active pen colour as a CSS rgba with 50% alpha, for the hover ghost. The pen
+ *  is leftIndex (the left-button colour — the common case for the preview). */
+const ghostColor = computed(() => {
+  const hex = props.palette[props.leftIndex] ?? props.palette[0] ?? '#000'
+  return hexToRgba(hex, 0.5)
+})
+
+/** A `#rgb`/`#rrggbb` hex to an `rgba(…)` string at the given alpha. */
+function hexToRgba(hex: string, alpha: number): string {
+  let h = hex.replace('#', '')
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('')
+  const n = parseInt(h, 16)
+  const r = (n >> 16) & 0xff
+  const g = (n >> 8) & 0xff
+  const b = n & 0xff
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function undo(): void {
@@ -160,14 +191,19 @@ function sameCells(a: Uint8Array, b: Uint8Array): boolean {
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @pointerleave="onPointerUp"
+    @pointerleave="onPointerLeave"
     @contextmenu.prevent
   >
     <i
       v-for="(idx, i) in view"
       :key="i"
       class="pc-px"
-      :style="{ background: palette[idx] ?? palette[0] }"
+      :class="{ 'is-hover': i === hoverCell }"
+      :style="
+        i === hoverCell
+          ? { background: `linear-gradient(${ghostColor}, ${ghostColor}), ${palette[idx] ?? palette[0]}` }
+          : { background: palette[idx] ?? palette[0] }
+      "
     />
   </div>
 </template>
@@ -192,5 +228,10 @@ function sameCells(a: Uint8Array, b: Uint8Array): boolean {
   aspect-ratio: var(--cell-aspect);
   border-radius: 1px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+/* Hover preview: a faint ring so the ghosted cell reads even when the pen colour is
+   close to the cell's current colour. */
+.pc-px.is-hover {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 </style>
