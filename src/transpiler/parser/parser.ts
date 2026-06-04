@@ -83,6 +83,28 @@ class Parser {
     this.errors.push({ message, line: at.line, col: at.col })
   }
 
+  /**
+   * Token types that are word-shaped and so may serve as a USER-DEFINED NAME in a
+   * declaration position (Const/Global/Dim/Type/field). The lexer classifies a word
+   * purely from the SSOT — `MAX` becomes the Max function, `LEFT` the direction
+   * constant — but after `Const`/`Dim`/… that same word is the thing being declared.
+   * The parser, which DOES have context, takes the name regardless of the lexer's
+   * class (fixes the Const-vs-function collision, M3.T0a). Built-in punctuation/
+   * literals are not names, so they still error.
+   */
+  private static readonly NAME_TOKENS: ReadonlySet<TokenType> = new Set([
+    TokenType.Identifier,
+    TokenType.Function,
+    TokenType.Constant,
+    TokenType.Command,
+    TokenType.Keyword
+  ])
+
+  /** True if the current token can be used as a user-defined name here. */
+  private isName(t: Token): boolean {
+    return Parser.NAME_TOKENS.has(t.type)
+  }
+
   /** True when the current token ends a statement (newline, ':', or EOF). */
   private atStatementEnd(): boolean {
     const t = this.peek().type
@@ -328,7 +350,7 @@ class Parser {
   private parseConst(): Statement | null {
     const kw = this.advance() // Const
     const nameTok = this.peek()
-    if (nameTok.type !== TokenType.Identifier) {
+    if (!this.isName(nameTok)) {
       this.error("Name erwartet nach 'Const'", nameTok)
       return null
     }
@@ -387,7 +409,7 @@ class Parser {
   private parseType(): Statement | null {
     const kw = this.advance() // Type
     const nameTok = this.peek()
-    if (nameTok.type !== TokenType.Identifier) {
+    if (!this.isName(nameTok)) {
       this.error("Name erwartet nach 'Type'", nameTok)
       return null
     }
@@ -398,7 +420,7 @@ class Parser {
       if (this.atKeyword('field')) {
         this.advance() // Field
         const fNameTok = this.peek()
-        if (fNameTok.type === TokenType.Identifier) {
+        if (this.isName(fNameTok)) {
           this.advance()
           let suffix: string | undefined
           if (this.peek().type === TokenType.TypeSuffix) suffix = this.advance().value
@@ -550,11 +572,13 @@ class Parser {
       const indices = this.parseBracketList()
       base = { kind: 'IndexExpr', name: id.name, indices, line: id.line, col: id.col }
     }
-    // Record field access: base\field (Sprachdef §C).
+    // Record field access: base\field (Sprachdef §C). The field name may collide
+    // with an SSOT word (e.g. \len, \type) — after '\' it is always a field name,
+    // so take it regardless of the lexer's class (M3.T0b, same fix as Const).
     if (this.peek().type === TokenType.Backslash) {
       this.advance() // '\'
       const fieldTok = this.peek()
-      if (fieldTok.type === TokenType.Identifier) {
+      if (this.isName(fieldTok)) {
         this.advance()
         return { kind: 'FieldExpr', base, field: fieldTok.value, line: id.line, col: id.col }
       }

@@ -5,8 +5,10 @@ import rawSsot from '@shared/breadcraft.lang.json'
 import { buildVocabulary } from '../shared/vocabulary'
 import type { Ssot } from '../shared/ssot-types'
 import { compile } from '../transpiler'
+import type { AssetContext } from '../transpiler'
 import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
+import { listAssets, readAsset } from './project'
 import type { BuildLogLine, BuildResult } from '../shared/ipc'
 
 // Build & Run: the last mile. Compiles the given .crumb source to C, invokes the
@@ -36,9 +38,14 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
     log.push({ level, text })
   }
 
-  // 1) .crumb → C
+  // 1) .crumb → C. Hand the transpiler the project's asset bridge so tile/sprite
+  // commands can bake real C64 bytes from the .bread (resolved at compile time).
   add('info', 'Transpiliere .crumb → C …')
-  const { code, errors } = compile(source, vocabulary)
+  const assets: AssetContext = {
+    manifest: listAssets(projectDir),
+    readFile: (rel: string) => readAsset(projectDir, rel)
+  }
+  const { code, errors } = compile(source, vocabulary, assets)
   for (const e of errors) {
     const level = e.severity === 'warn' ? 'warn' : 'error'
     add(level, `${e.stage} ${e.line}:${e.col}: ${e.message}`)

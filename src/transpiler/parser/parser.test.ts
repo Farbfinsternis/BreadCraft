@@ -171,6 +171,21 @@ describe('parser: declarations (Global / Const)', () => {
     expect(s.value.kind).toBe('NumberLit')
   })
 
+  it('parses  Const MAX = 5  even though MAX collides with the Max function (M3.T0a)', () => {
+    // The lexer classifies MAX as the Max function (SSOT), but after `Const` it is a
+    // user name. The parser must take the name regardless of the lexer's class.
+    const s = firstStmt('Const MAX = 5') as ConstStmt
+    expect(s.kind).toBe('ConstStmt')
+    expect(s.name).toBe('MAX')
+    expect(s.value.kind).toBe('NumberLit')
+  })
+
+  it('parses  Const LEFT = 1  (collides with the LEFT direction constant, M3.T0a)', () => {
+    const s = firstStmt('Const LEFT = 1') as ConstStmt
+    expect(s.kind).toBe('ConstStmt')
+    expect(s.name).toBe('LEFT')
+  })
+
   it('parses a 1D  Dim punkte.b[10]', () => {
     const s = firstStmt('Dim punkte.b[10]') as DimStmt
     expect(s.kind).toBe('DimStmt')
@@ -248,6 +263,24 @@ describe('parser: records (Type/Field/EndType, backslash access)', () => {
     const target = assign.target as FieldExpr
     expect(target.kind).toBe('FieldExpr')
     expect(target.field).toBe('count')
+  })
+
+  it('allows field names that collide with SSOT words (M3.T0b)', () => {
+    // `len` is the Len function, `type` the Type keyword — as FIELD names (declared
+    // and accessed) they must parse, not be swallowed by the lexer's classification.
+    const src = ['Type Slot', '  Field len.b', '  Field type.b', 'EndType', 't[0]\\len = 2'].join('\n')
+    const { program, errors } = parseSrc(src)
+    expect(errors).toEqual([])
+    const decl = program.body.find((st) => st.kind === 'TypeDecl') as TypeDecl
+    expect(decl.fields.map((f) => f.name)).toEqual(['len', 'type'])
+    const assign = program.body.find((st) => st.kind === 'AssignStmt') as AssignStmt
+    expect((assign.target as FieldExpr).field).toBe('len')
+  })
+
+  it('allows a record type name that collides with an SSOT word (M3.T0b)', () => {
+    // `End` is a keyword; as a Type NAME after `Type` it is a user identifier.
+    const { errors } = parseSrc(['Type End', '  Field x.b', 'EndType'].join('\n'))
+    expect(errors).toEqual([])
   })
 })
 

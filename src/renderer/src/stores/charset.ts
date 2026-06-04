@@ -1,24 +1,25 @@
 import { reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { CHARSET_FILE, parseCharset, serializeCharset } from './assetIo'
+import { CHARSET_FILE, parseCharset, serializeCharset, pixelsPerChar } from './assetIo'
+import { useProjectStore } from './project'
 
 /**
  * The pixels of the 256 characters drawn in the PETSCII editor.
  *
  * A pixel stores a COLOUR INDEX 0–3 (the pixel-engine's data model, memory
  * breadcraft-pixel-engine): 0 = background, 1 = shared 1, 2 = shared 2, 3 = free.
- * Each char is a flat Uint8Array of 64 indices (8×8, row-major). Sparse: only
- * edited chars are stored; unedited read as all-0 (background).
+ * Each char is a flat Uint8Array of index cells, row-major. The grid SIZE follows
+ * the project's graphics mode: hi-res 8×8 = 64 cells, MC 4×8 = 32 double-pixels
+ * (pixelsPerChar). Sparse: only edited chars are stored; unedited read as all-0.
  *
  * PERSISTENCE (ASSET_IO.md): the charset now lives on disk as the project's
  * `.petscii` asset, referenced from the `.bread` manifest — project-bound, not
  * the old app-global localStorage (closes memory breadcraft-asset-io-debt). The
- * raw 8-bytes-per-char file is the C64 truth; index↔bytes conversion lives in
- * stores/assetIo.ts. Auto-saved (debounced) + a manual save(); a dirty flag
- * drives the editor's save indicator.
+ * raw 8-bytes-per-char file is the C64 truth; index↔bytes conversion follows the
+ * mode (MC keeps all 4 colours — fixes the data-loss bug) and lives in
+ * stores/assetIo.ts. Saving is explicit (button / Ctrl+S); a dirty flag drives
+ * the editor's save indicator.
  */
-
-const PIXELS = 64
 
 export const useCharsetStore = defineStore('charset', () => {
   // Sparse: only edited chars are stored; unedited read as all-'0' (background).
@@ -29,9 +30,14 @@ export const useCharsetStore = defineStore('charset', () => {
   let projectDir: string | null = null
   let assetRel: string = CHARSET_FILE
 
-  /** Pixels of a character (always 64; lazily created on first access). */
+  /** Cells per char for the active project mode (64 hi-res / 32 MC). */
+  function cellsPerChar(): number {
+    return pixelsPerChar(useProjectStore().graphicsMode)
+  }
+
+  /** Pixels of a character (mode-sized; lazily created on first access). */
   function pixels(charIndex: number): Uint8Array {
-    if (!chars[charIndex]) chars[charIndex] = new Uint8Array(PIXELS)
+    if (!chars[charIndex]) chars[charIndex] = new Uint8Array(cellsPerChar())
     return chars[charIndex]
   }
 
@@ -39,7 +45,7 @@ export const useCharsetStore = defineStore('charset', () => {
    *  Marks dirty only — saving is EXPLICIT (button / Ctrl+S), never automatic
    *  (ASSET_DOCUMENTS.md §2.5: unsaved edits are lost on restart, by design). */
   function setPixels(charIndex: number, cells: Uint8Array): void {
-    if (cells.length !== PIXELS) return
+    if (cells.length !== cellsPerChar()) return
     chars[charIndex] = cells.slice()
     dirty.value = true
   }
@@ -67,14 +73,15 @@ export const useCharsetStore = defineStore('charset', () => {
     if (!rel) return // no charset asset yet — start empty
     const text = await window.breadcraft.assets.read(dir, rel)
     if (!text) return
-    const parsed = parseCharset(text)
+    const parsed = parseCharset(text, useProjectStore().graphicsMode)
     if (parsed) for (const [k, v] of Object.entries(parsed)) chars[Number(k)] = v
   }
 
   /** Write the charset to disk (explicit save: button / Ctrl+S). */
   async function save(): Promise<void> {
     if (!projectDir) return
-    await window.breadcraft.assets.write(projectDir, 'charset', assetRel, serializeCharset(chars))
+    const text = serializeCharset(chars, useProjectStore().graphicsMode)
+    await window.breadcraft.assets.write(projectDir, 'charset', assetRel, text)
     dirty.value = false
   }
 

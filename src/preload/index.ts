@@ -4,6 +4,7 @@ import type {
   AssetKind,
   BreadAssets,
   BuildResult,
+  GraphicsMode,
   Locale,
   OpenedProject,
   ProjectFile,
@@ -18,6 +19,7 @@ export type {
   AssetKind,
   BreadAssets,
   BuildResult,
+  GraphicsMode,
   Locale,
   OpenedProject,
   ProjectFile,
@@ -42,8 +44,12 @@ const api = {
     startup: (): Promise<OpenedProject | null> => ipcRenderer.invoke('project:startup'),
     recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
     createTemp: (): Promise<OpenedProject> => ipcRenderer.invoke('project:createTemp'),
-    create: (name: string): Promise<OpenedProject> =>
-      ipcRenderer.invoke('project:create', name),
+    create: (
+      name: string,
+      graphicsMode: GraphicsMode,
+      withBoilerplate: boolean
+    ): Promise<OpenedProject> =>
+      ipcRenderer.invoke('project:create', name, graphicsMode, withBoilerplate),
     open: (breadPath: string): Promise<OpenedProject> =>
       ipcRenderer.invoke('project:open', breadPath),
     openDialog: (): Promise<OpenedProject | null> =>

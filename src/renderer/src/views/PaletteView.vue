@@ -1,16 +1,23 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   usePaletteStore,
+  slotsForMode,
   C64_PALETTE,
-  SLOTS,
   type SlotKey,
   type C64Color
 } from '../stores/palette'
+import { useProjectStore } from '../stores/project'
 
 const { t } = useI18n()
 const palette = usePaletteStore()
+const project = useProjectStore()
+
+// Slots shown follow the project's graphics mode (PALETTE_EDITOR.md §4): hi-res
+// uses only the background; multicolor uses all three shared registers.
+const slots = computed(() => slotsForMode(project.graphicsMode))
+const isHires = computed(() => project.graphicsMode === 'TEXT_HIRES')
 
 // Ctrl/Cmd+S saves the palette (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
 function onKeydown(e: KeyboardEvent): void {
@@ -25,6 +32,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 /** Which slot is currently armed for a click-assign (newbie path: pick slot, then
  *  click a colour). Defaults to the first slot so a click always lands somewhere. */
 const activeSlot = ref<SlotKey>('background')
+
+// If the mode hides the armed slot (e.g. switching to hi-res while shared1 is
+// active), snap back to a visible slot so a colour click never lands on a hidden one.
+watch(slots, (visible) => {
+  if (!visible.some((s) => s.key === activeSlot.value)) {
+    activeSlot.value = visible[0]?.key ?? 'background'
+  }
+})
 
 /** Source colour index during a drag (nerd path: drag a swatch onto a slot). */
 const dragIndex = ref<number | null>(null)
@@ -69,11 +84,12 @@ function onDrop(key: SlotKey): void {
     </header>
 
     <div class="pe-grid">
-      <!-- The three shared slots -->
+      <!-- The shared slots relevant to the current graphics mode -->
       <section class="pe-slots">
         <span class="bc-overline">{{ t('palette.sharedColors') }}</span>
+        <p v-if="isHires" class="bc-body-sm pe-mode-note">{{ t('palette.hiresNote') }}</p>
         <article
-          v-for="slot in SLOTS"
+          v-for="slot in slots"
           :key="slot.key"
           class="pe-slot"
           :class="{ 'is-active': activeSlot === slot.key, 'is-drop': dropTarget === slot.key }"
@@ -214,6 +230,10 @@ function onDrop(key: SlotKey): void {
   display: flex;
   flex-direction: column;
   gap: var(--bc-space-3);
+}
+.pe-mode-note {
+  margin: 0;
+  color: var(--bc-fg-muted);
 }
 
 /* ---- Slot cards (canonical BreadCraft card) ---- */

@@ -13,11 +13,19 @@ import type {
   FieldDecl,
   IndexExpr,
   FieldExpr,
+  CallExpr,
   IfStmt,
   WhileStmt,
   RepeatStmt,
   ForStmt
 } from '../parser/ast'
+import {
+  resolveCharset,
+  resolveTilemap,
+  AssetResolveError,
+  type AssetManifest,
+  type AssetReader
+} from '../assets'
 
 // CodeGen: AST → cc65-C source. The mappings follow Sprachdef §I and the proven
 // reference in _preflight/game.c (conio: bordercolor/bgcolor/clrscr/cputsxy,
@@ -44,6 +52,17 @@ export interface CodeGenError extends Pos {
 export interface CodeGenResult {
   code: string
   errors: CodeGenError[]
+}
+
+/**
+ * The compile-time asset context: how the code generator resolves an asset id
+ * (`UseTileset "main"`) to its real C64 bytes. The `.bread` manifest names the
+ * files; `readFile` reads one. Optional — without it, asset commands report an
+ * honest "no project" error instead of crashing. See src/transpiler/assets.
+ */
+export interface AssetContext {
+  manifest: AssetManifest
+  readFile: AssetReader
 }
 
 /** A BreadCraft numeric/string type, inferred from a `.b`/`.w`/`$` suffix. */
@@ -165,6 +184,26 @@ class Generator {
   /** The display area set by the last `Graphics` (TEXT/BITMAP); drives requiresMode checks. */
   private gfxArea: 'TEXT' | 'BITMAP' | undefined
 
+  // ---- baked assets (UseTileset / DrawMap) ----
+  /** File-scope `static const` data blocks baked from resolved assets (charset bytes,
+   *  map tiles). Emitted between the arrays and main(), like Dim arrays. */
+  private readonly bakedData: string[] = []
+  /** True once a charset has been baked → the $D018/VIC.addr + memory-map #defines
+   *  are needed in the header and a tileset is "active" for DrawMap. */
+  private activeTileset: string | undefined
+
+  // ---- tile world (M3.T1): SetTile / GetTile / TileAt / TileSolid ----
+  /** Any tile-world primitive used → emit the screen memory-map + geometry defines. */
+  private usesTileWorld = false
+  /** GetTile(…, 1) used → bake the (currently empty) data layer BC_DATA[]. */
+  private usesDataLayer = false
+  /** TileSolid used → bake the default solid table + the pixel→cell→solid helper. */
+  private usesTileSolid = false
+  /** TileAt used → emit the pixel→cell→tile helper. */
+  private usesTileAt = false
+
+  constructor(private readonly assets?: AssetContext) {}
+
   private emit(line: string): void {
     this.lines.push('  '.repeat(this.indent) + line)
   }
@@ -187,6 +226,24 @@ class Generator {
       '#include <cbm.h> /* waitvsync() */',
       ''
     ]
+    // Tile-world memory map. Same layout proven in _preflight/tilemap.c: screen
+    // $0400, our charset $3000 (free RAM above $0801). The charset pointer is only
+    // needed once a tileset is baked; the screen + geometry whenever the tile-world
+    // primitives (SetTile/GetTile/TileAt/TileSolid) or DrawMap touch the grid.
+    if (this.activeTileset) {
+      header.push('#define BC_CHARSET ((unsigned char*)0x3000) /* our tileset */')
+    }
+    if (this.activeTileset || this.usesTileWorld) {
+      header.push(
+        '#define BC_SCREEN  ((unsigned char*)0x0400) /* tile-number grid (40x25) */',
+        '#define BC_SCR_W   40',
+        // VIC sprite coordinate origin of the top-left visible cell (the pixel→cell
+        // offset, _preflight/tilecollide.c) — used by TileAt/TileSolid.
+        '#define BC_SPR_X0  24',
+        '#define BC_SPR_Y0  50',
+        ''
+      )
+    }
     // Const → #define (compile-time, free at runtime, Sprachdef §C).
     const defines: string[] = []
     for (const [name, value] of this.consts) {
@@ -230,11 +287,19 @@ class Generator {
     if (globalDecls.length > 0) globalDecls.push('')
     if (localDecls.length > 0) localDecls.push('')
 
+    // Baked asset data (charset bytes, map tiles) — file scope, like Dim arrays.
+    const baked = this.bakedData.length > 0 ? [...this.bakedData, ''] : []
+
+    // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
+    const tileWorld = this.tileWorldDecls()
+
     const code = [
       ...header,
       ...defines,
       ...structDecls,
       ...arrayDecls,
+      ...baked,
+      ...tileWorld,
       ...globalDecls,
       'int main(void) {',
       ...localDecls,
@@ -245,6 +310,52 @@ class Generator {
       ''
     ].join('\n')
     return { code, errors: this.errors }
+  }
+
+  /**
+   * File-scope declarations for the tile-world primitives (M3.T1), emitted only for
+   * what the program actually uses. Mirrors _preflight/tilecollide.c:
+   *   - BC_DATA[]: the invisible data layer GetTile(…,1) reads. No editor paints it
+   *     yet (the META-layer is a later milestone), so it's all-zero = "nothing
+   *     beneath" — the latent-object pattern stays writable and compiles today.
+   *   - bc_tile_solid[]: default solidity (tile 0 passable, the rest solid) until a
+   *     per-tile solid attribute exists in the tileset editor.
+   *   - bc_tile_at / bc_tile_solid_at: the pixel→cell→tile(/solid) helpers, so
+   *     TileAt/TileSolid are plain C expressions.
+   */
+  private tileWorldDecls(): string[] {
+    const out: string[] = []
+    if (this.usesDataLayer) {
+      out.push(
+        '/* data layer (GetTile layer 1): all-zero until the META-layer milestone paints it */',
+        'static unsigned char BC_DATA[40 * 25];',
+        ''
+      )
+    }
+    if (this.usesTileAt || this.usesTileSolid) {
+      out.push(
+        '/* pixel position → tile number at that cell (0 outside the field) */',
+        'static unsigned char bc_tile_at(unsigned int px, unsigned char py) {',
+        '  unsigned char col, row;',
+        '  if (px < BC_SPR_X0 || py < BC_SPR_Y0) return 0;',
+        '  col = (unsigned char)((px - BC_SPR_X0) >> 3);',
+        '  row = (unsigned char)((py - BC_SPR_Y0) >> 3);',
+        '  if (col >= BC_SCR_W || row >= 25) return 0;',
+        '  return BC_SCREEN[row * BC_SCR_W + col];',
+        '}',
+        ''
+      )
+    }
+    if (this.usesTileSolid) {
+      out.push(
+        '/* default solidity: tile 0 = empty/passable, every other tile = solid */',
+        'static unsigned char bc_tile_solid_at(unsigned int px, unsigned char py) {',
+        '  return bc_tile_at(px, py) != 0;',
+        '}',
+        ''
+      )
+    }
+    return out
   }
 
   // ---- declaration collection (first pass) ----
@@ -427,6 +538,15 @@ class Generator {
         // Frame sync (PAL 50Hz) — the proven cbm.h call (Sprachdef §F, _preflight/game.c).
         this.emit('waitvsync();')
         break
+      case 'usetileset':
+        this.genUseTileset(s)
+        break
+      case 'drawmap':
+        this.genDrawMap(s)
+        break
+      case 'settile':
+        this.genSetTile(s)
+        break
       case 'bordercolor':
         this.emit(`bordercolor(${this.colorArg(a[0])});`)
         break
@@ -487,6 +607,120 @@ class Generator {
   /** Read a bare constant name (TEXT, MULTICOLOR) from an arg, upper-cased; else ''. */
   private constArg(e: Expr | undefined): string {
     return e && e.kind === 'ConstantRef' ? e.name.toUpperCase() : ''
+  }
+
+  /** Read a string-literal arg (an asset id like "main"); undefined if not a string. */
+  private stringArg(e: Expr | undefined): string | undefined {
+    return e && e.kind === 'StringLit' ? e.value : undefined
+  }
+
+  /**
+   * `UseTileset "id"` → bake the painted charset bytes into C, point the VIC at our
+   * charset ($3000) + screen ($0400), and set the MC-text shared colours. The proven
+   * pattern is _preflight/tilemap.c (Z.32/50/88–95). This is the $D018 piece that
+   * `Graphics` deliberately left out. Without an asset context (no project), an honest
+   * error — the bytes can't be resolved.
+   */
+  private genUseTileset(s: CommandStmt): void {
+    const id = this.stringArg(s.args[0])
+    if (!id) {
+      this.err('UseTileset erwartet einen Tileset-Namen in Anführungszeichen, z. B. UseTileset "main"', s)
+      return
+    }
+    if (!this.assets) {
+      this.err(`UseTileset "${id}": kein Projekt-Kontext — Assets können nur in einem Projekt aufgelöst werden`, s)
+      return
+    }
+    let bytes: Uint8Array
+    try {
+      bytes = resolveCharset(id, this.assets.manifest, this.assets.readFile).bytes
+    } catch (e) {
+      this.err(e instanceof AssetResolveError ? e.message : String(e), s)
+      return
+    }
+
+    const dataName = `tileset_${safeAssetName(id)}`
+    this.bakedData.push(
+      `static const unsigned char ${dataName}[${bytes.length}] = {`,
+      byteRows(bytes),
+      '};'
+    )
+    this.activeTileset = id
+
+    this.emit(`/* UseTileset "${id}" */`)
+    this.emit(`{ unsigned int _i; for (_i = 0; _i < ${bytes.length}; ++_i) BC_CHARSET[_i] = ${dataName}[_i]; }`)
+    // Point VIC at screen $0400 + charset $3000 (VIC.addr = 0x1C), proven in tilemap.c.
+    this.emit('VIC.addr = 0x1C;')
+    // MC-text shared colours (the "00/01/10" pairs); the "11" pair is per-cell Color-RAM.
+    this.emit('VIC.bgcolor[0] = COLOR_BLACK;')
+    this.emit('VIC.bgcolor[1] = COLOR_BROWN;')
+    this.emit('VIC.bgcolor[2] = COLOR_ORANGE;')
+  }
+
+  /**
+   * `DrawMap "id"` → bake the painted 40×25 tile numbers and copy them into screen
+   * RAM, so the VIC draws the map for free (proven _preflight/tilemap.c Z.103–119).
+   * Needs an active tileset (the chars to draw) — otherwise an honest error.
+   */
+  private genDrawMap(s: CommandStmt): void {
+    const id = this.stringArg(s.args[0])
+    if (!id) {
+      this.err('DrawMap erwartet einen Karten-Namen in Anführungszeichen, z. B. DrawMap "level1"', s)
+      return
+    }
+    if (!this.assets) {
+      this.err(`DrawMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`, s)
+      return
+    }
+    if (!this.activeTileset) {
+      this.err(`DrawMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`, s)
+      return
+    }
+    let tiles: Uint8Array
+    try {
+      tiles = resolveTilemap(id, this.assets.manifest, this.assets.readFile).tiles
+    } catch (e) {
+      this.err(e instanceof AssetResolveError ? e.message : String(e), s)
+      return
+    }
+
+    const cName = `map_${safeAssetName(id)}`
+    this.bakedData.push(
+      `static const unsigned char ${cName}[${tiles.length}] = {`,
+      byteRows(tiles),
+      '};'
+    )
+
+    this.emit(`/* DrawMap "${id}" */`)
+    // Copy tile numbers to screen RAM; give every cell a multicolor per-cell colour
+    // (bit 3 set = multicolor in MC-text). A fixed light grey for now — per-cell colour
+    // arrives with MetaTiles (TILEMAP_EDITOR.md).
+    this.emit(
+      `{ unsigned int _c; for (_c = 0; _c < ${tiles.length}; ++_c) { BC_SCREEN[_c] = ${cName}[_c]; COLOR_RAM[_c] = COLOR_GRAY1 | 8; } }`
+    )
+  }
+
+  /**
+   * `SetTile col, row, tile, color` → poke one cell: the tile number into Screen-RAM
+   * and the colour into Color-RAM at offset row*40+col (Sprachdef §E, the proven
+   * single-cell write of _preflight/sokoban_push.c). Multicolor-text needs bit 3 set
+   * in Color-RAM (| 8) for the cell to read as multicolor.
+   */
+  private genSetTile(s: CommandStmt): void {
+    const a = s.args
+    if (a.length < 4) {
+      this.err('SetTile erwartet spalte, zeile, tile, farbe', s)
+      this.emit('/* SetTile: zu wenige Argumente */')
+      return
+    }
+    this.usesTileWorld = true
+    const col = this.expr(a[0])
+    const row = this.expr(a[1])
+    const tile = this.expr(a[2])
+    const color = this.colorArg(a[3])
+    const off = `(${row}) * BC_SCR_W + (${col})`
+    this.emit(`BC_SCREEN[${off}] = ${tile};`)
+    this.emit(`COLOR_RAM[${off}] = (${color}) | 8;`)
   }
 
   private genAssign(s: AssignStmt): void {
@@ -653,9 +887,60 @@ class Generator {
       case 'FieldExpr':
         return this.fieldExpr(e)
       case 'CallExpr':
+        return this.callExpr(e)
+    }
+  }
+
+  /** Map a BreadCraft function call to its C expression. Tile-world reads (M3.T1)
+   *  are wired here; the rest still report an honest "no C-mapping yet". */
+  private callExpr(e: CallExpr): string {
+    const name = e.callee.toLowerCase()
+    const a = e.args
+    switch (name) {
+      case 'gettile': {
+        // GetTile(col, row[, layer]) — layer 0 = display (Screen-RAM), 1 = data layer.
+        if (a.length < 2) {
+          this.err('GetTile erwartet spalte, zeile [, layer]', e)
+          return '/* GetTile: zu wenige Argumente */ 0'
+        }
+        this.usesTileWorld = true
+        const off = `(${this.expr(a[1])}) * BC_SCR_W + (${this.expr(a[0])})`
+        const layer = a.length >= 3 ? this.constLayer(a[2]) : 0
+        if (layer === 1) {
+          this.usesDataLayer = true
+          return `BC_DATA[${off}]`
+        }
+        return `BC_SCREEN[${off}]`
+      }
+      case 'tileat':
+        if (a.length < 2) {
+          this.err('TileAt erwartet px, py', e)
+          return '/* TileAt: zu wenige Argumente */ 0'
+        }
+        this.usesTileWorld = true
+        this.usesTileAt = true
+        return `bc_tile_at(${this.expr(a[0])}, ${this.expr(a[1])})`
+      case 'tilesolid':
+        if (a.length < 2) {
+          this.err('TileSolid erwartet px, py', e)
+          return '/* TileSolid: zu wenige Argumente */ 0'
+        }
+        this.usesTileWorld = true
+        this.usesTileSolid = true
+        this.usesTileAt = true // bc_tile_solid_at builds on bc_tile_at
+        return `bc_tile_solid_at(${this.expr(a[0])}, ${this.expr(a[1])})`
+      default:
         this.err(`Funktion '${e.callee}' hat in diesem Schritt noch kein C-Mapping`, e)
         return `/* TODO ${e.callee}() */ 0`
     }
+  }
+
+  /** Read a literal layer index (0/1) from a GetTile layer arg; non-literal → 0 with
+   *  an honest note (the data layer is a compile-time choice in Phase 1). */
+  private constLayer(e: Expr): number {
+    if (e.kind === 'NumberLit' && e.base === 'dec') return e.raw === '1' ? 1 : 0
+    this.err('GetTile: layer muss 0 oder 1 sein (fester Wert)', e)
+    return 0
   }
 }
 
@@ -697,7 +982,24 @@ function cName(name: string): string {
   return name.replace(/[$]/g, '_str').replace(/[.]/g, '_')
 }
 
-/** Generate cc65-C from a parsed program. Never throws; errors are collected. */
-export function generate(program: Program): CodeGenResult {
-  return new Generator().generate(program)
+/** A C-identifier-safe slug for an asset id (used in baked data names). */
+function safeAssetName(id: string): string {
+  const slug = id.replace(/[^A-Za-z0-9_]/g, '_')
+  return /^[A-Za-z_]/.test(slug) ? slug : `a_${slug}`
+}
+
+/** Format a byte array as indented C initializer rows (16 per line, readable). */
+function byteRows(bytes: Uint8Array): string {
+  const rows: string[] = []
+  for (let i = 0; i < bytes.length; i += 16) {
+    const row = Array.from(bytes.slice(i, i + 16)).join(', ')
+    rows.push('  ' + row + (i + 16 < bytes.length ? ',' : ''))
+  }
+  return rows.join('\n')
+}
+
+/** Generate cc65-C from a parsed program. Never throws; errors are collected.
+ *  `assets` lets tile/sprite commands bake real C64 bytes from the .bread. */
+export function generate(program: Program, assets?: AssetContext): CodeGenResult {
+  return new Generator(assets).generate(program)
 }

@@ -9,16 +9,22 @@ import {
 } from 'fs'
 import { readConfig, writeConfig } from './config'
 import { TEMP_DIRNAME, PROJECTS_DIRNAME } from './workspace'
-import { DEFAULT_SETTINGS } from '../shared/ipc'
+import rawSsot from '../shared/breadcraft.lang.json'
+import { DEFAULT_SETTINGS, DEFAULT_GRAPHICS_MODE } from '../shared/ipc'
+import { graphicsCommandFor } from '../shared/graphics-mode'
+import type { Ssot } from '../shared/ssot-types'
 import type {
   AssetKind,
   BreadAssets,
+  GraphicsMode,
   OpenedProject,
   ProjectFile,
   RecentProject
 } from '../shared/ipc'
 
-export type { OpenedProject, ProjectFile, AssetKind, BreadAssets }
+const SSOT = rawSsot as unknown as Ssot
+
+export type { OpenedProject, ProjectFile, AssetKind, BreadAssets, GraphicsMode }
 
 // ---- .bread project format ----
 // NOTE: the .bread *format* is officially "later/open" (SPRACHE.md §7.3). This
@@ -34,6 +40,12 @@ export interface BreadProjectFile {
   name: string
   /** Entry crumb (the main.crumb with the frame loop), relative to project dir. */
   entry: string
+  /**
+   * Project-wide graphics mode (IDE.md §2.1). Optional in the type for forward/
+   * backward compatibility: old `.bread` files predate the field and read as the
+   * DEFAULT_GRAPHICS_MODE (see normalizeGraphicsMode).
+   */
+  graphicsMode?: GraphicsMode
   /** All crumb source files, relative to the project dir. */
   crumbs: string[]
   /** Asset manifest. See BreadAssets; older files may have a flat/empty map. */
@@ -41,6 +53,13 @@ export interface BreadProjectFile {
 }
 
 const EMPTY_ASSETS: BreadAssets = { palette: null, charsets: [], tilemaps: [] }
+
+const GRAPHICS_MODES: readonly GraphicsMode[] = ['TEXT_HIRES', 'TEXT_MULTICOLOR', 'BITMAP_MULTICOLOR']
+
+/** Coerce any persisted `graphicsMode` to a valid mode; old/invalid files → default. */
+function normalizeGraphicsMode(raw: unknown): GraphicsMode {
+  return GRAPHICS_MODES.includes(raw as GraphicsMode) ? (raw as GraphicsMode) : DEFAULT_GRAPHICS_MODE
+}
 
 /** Coerce any persisted `assets` value (old `{}`/flat map, or the new shape) to
  *  a stable BreadAssets — forward/backward compatible (ASSET_IO.md §2). */
@@ -54,16 +73,26 @@ function normalizeAssets(raw: unknown): BreadAssets {
   }
 }
 
-const SAMPLE_MAIN = `' main.crumb — neues BreadCraft-Projekt
-' Setup-Phase
+/** The starter main.crumb — its `Graphics …` line reflects the project's mode
+ *  (derived from the SSOT, never hardcoded; IDE.md §2.1, M1.T4). */
+function sampleMain(graphicsMode: GraphicsMode): string {
+  return `; main.crumb — neues BreadCraft-Projekt
+; Setup-Phase
 
-Graphics BITMAP, MULTICOLOR
+${graphicsCommandFor(SSOT, graphicsMode)}
 
-' --- Frame-Schleife ---
+; --- Frame-Schleife ---
 While 1
     VWait
 Wend
 `
+}
+
+/** The bare main.crumb when boilerplate is opted out: just the mode's `Graphics …`
+ *  line so the project still reflects its mode and transpiles, nothing more. */
+function bareMain(graphicsMode: GraphicsMode): string {
+  return `${graphicsCommandFor(SSOT, graphicsMode)}\n`
+}
 
 function workspaceRootOrThrow(): string {
   const root = readConfig().workspaceRoot
@@ -79,10 +108,11 @@ function writeBread(dir: string, data: BreadProjectFile): void {
   writeFileSync(breadPathFor(dir), JSON.stringify(data, null, 2), 'utf-8')
 }
 
-/** Read + parse a `.bread`, normalising the asset manifest to a stable shape. */
+/** Read + parse a `.bread`, normalising the asset manifest + graphics mode. */
 function readBread(dir: string): BreadProjectFile {
   const bread = JSON.parse(readFileSync(breadPathFor(dir), 'utf-8')) as BreadProjectFile
   bread.assets = normalizeAssets(bread.assets)
+  bread.graphicsMode = normalizeGraphicsMode(bread.graphicsMode)
   return bread
 }
 
@@ -111,6 +141,7 @@ function readProject(dir: string, temporary: boolean): OpenedProject {
     entry: bread.entry,
     files,
     temporary,
+    graphicsMode: normalizeGraphicsMode(bread.graphicsMode),
     assets: bread.assets
   }
 }
@@ -130,29 +161,42 @@ export function recentProjects(): RecentProject[] {
   return alive
 }
 
-/** Scaffold a fresh project (dir + .bread + entry crumb) and return it opened. */
-function scaffold(dir: string, name: string, temporary: boolean): OpenedProject {
+/** Scaffold a fresh project (dir + .bread + entry crumb) and return it opened.
+ *  `withBoilerplate` (default true, A.8) writes the commented frame-loop starter;
+ *  off writes a bare `Graphics …` stub. */
+function scaffold(
+  dir: string,
+  name: string,
+  temporary: boolean,
+  graphicsMode: GraphicsMode = DEFAULT_GRAPHICS_MODE,
+  withBoilerplate = true
+): OpenedProject {
   mkdirSync(dir, { recursive: true })
   const entry = 'main.crumb'
-  writeFileSync(join(dir, entry), SAMPLE_MAIN, 'utf-8')
+  const content = withBoilerplate ? sampleMain(graphicsMode) : bareMain(graphicsMode)
+  writeFileSync(join(dir, entry), content, 'utf-8')
   writeBread(dir, {
     $format: 'bread',
     $version: BREAD_VERSION,
     name,
     entry,
+    graphicsMode,
     crumbs: [entry],
     assets: { ...EMPTY_ASSETS }
   })
   return readProject(dir, temporary)
 }
 
-/** Create a uniquely-named temporary project under <workspace>/temp. */
+/** Create a uniquely-named temporary project under <workspace>/temp. A temp
+ *  project asks no questions (memory breadcraft-ide-architecture), so the graphics
+ *  mode is the silent Phase-1 default (TEXT_MULTICOLOR) — passed EXPLICITLY here so
+ *  the choice is visible and not coupled to scaffold's parameter default. */
 export function createTempProject(): OpenedProject {
   const tempRoot = join(workspaceRootOrThrow(), TEMP_DIRNAME)
   mkdirSync(tempRoot, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const name = `temp-${stamp}`
-  return scaffold(join(tempRoot, name), name, true)
+  return scaffold(join(tempRoot, name), name, true, DEFAULT_GRAPHICS_MODE)
 }
 
 /** Open a project from its .bread file path. */
@@ -195,15 +239,21 @@ export async function openProjectViaDialog(
   return openProject(result.filePaths[0])
 }
 
-/** Create a new permanent project under <workspace>/projects. */
-export function createProject(name: string): OpenedProject {
+/** Create a new permanent project under <workspace>/projects. The graphics mode
+ *  (chosen in the New-Project dialog, M1.T6) is persisted into the `.bread`; the
+ *  boilerplate flag (default on, A.8) chooses starter vs. bare main.crumb. */
+export function createProject(
+  name: string,
+  graphicsMode: GraphicsMode = DEFAULT_GRAPHICS_MODE,
+  withBoilerplate = true
+): OpenedProject {
   const projectsRoot = join(workspaceRootOrThrow(), PROJECTS_DIRNAME)
   mkdirSync(projectsRoot, { recursive: true })
   const safe = name.trim().replace(/[^A-Za-z0-9 _-]/g, '').trim() || 'Projekt'
   let dir = join(projectsRoot, safe)
   let n = 2
   while (existsSync(dir)) dir = join(projectsRoot, `${safe} ${n++}`)
-  return scaffold(dir, basename(dir), false)
+  return scaffold(dir, basename(dir), false, normalizeGraphicsMode(graphicsMode), withBoilerplate)
 }
 
 /** Write a single crumb file's content back to disk. */

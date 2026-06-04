@@ -3,12 +3,15 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@renderer/stores/project'
+import { useUiStore } from '@renderer/stores/ui'
+import { buildNewProjectRequest } from '@renderer/components/newProjectRequest'
 import type { RecentProject } from '@shared/ipc'
 import logoUrl from '@renderer/assets/breadcraft-logo.png'
 
 const { t } = useI18n()
 const router = useRouter()
 const project = useProjectStore()
+const ui = useUiStore()
 const recents = ref<RecentProject[]>([])
 
 onMounted(async () => {
@@ -26,9 +29,13 @@ async function openRecent(breadPath: string): Promise<void> {
 }
 
 async function newProject(): Promise<void> {
-  const name = window.prompt(t('welcome.prompt.newProjectName'))
-  if (!name) return
-  const opened = await window.breadcraft.project.create(name)
+  const choice = await ui.askNewProject(buildNewProjectRequest(t))
+  if (!choice) return
+  const opened = await window.breadcraft.project.create(
+    choice.name,
+    choice.graphicsMode,
+    choice.withBoilerplate
+  )
   project.load(opened)
   router.push({ name: 'code' })
 }

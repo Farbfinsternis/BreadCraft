@@ -7,6 +7,7 @@ import { useProjectStore } from '@renderer/stores/project'
 import { useSettingsStore } from '@renderer/stores/settings'
 import { useOutputStore } from '@renderer/stores/output'
 import { useUiStore } from '@renderer/stores/ui'
+import { buildNewProjectRequest } from '@renderer/components/newProjectRequest'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -89,23 +90,41 @@ function openEditor(name: string): void {
 }
 
 async function newProject(): Promise<void> {
-  const name = window.prompt(t('toolbar.prompt.newProjectName'))
-  if (!name) return
-  const opened = await window.breadcraft.project.create(name)
+  const choice = await ui.askNewProject(buildNewProjectRequest(t))
+  if (!choice) return
+  const opened = await window.breadcraft.project.create(
+    choice.name,
+    choice.graphicsMode,
+    choice.withBoilerplate
+  )
   project.load(opened)
   if (router.currentRoute.value.name !== 'code') router.push({ name: 'code' })
 }
 
 async function newFile(): Promise<void> {
-  if (!project.dir) return
-  const name = window.prompt(t('toolbar.prompt.newFileName'))
+  // No project open → spin up a temporary project (a FULL project under
+  // <workspace>/temp, with main.crumb) and drop into it: "new file → go", no name
+  // prompt. A temp project is a normal project at a temp location that the IDE
+  // expires unless converted (memory breadcraft-ide-architecture).
+  if (!project.dir) {
+    try {
+      const opened = await window.breadcraft.project.createTemp()
+      project.load(opened)
+      if (router.currentRoute.value.name !== 'code') router.push({ name: 'code' })
+    } catch (e) {
+      await ui.notify({ title: t('dialog.error'), message: String((e as Error).message ?? e) })
+    }
+    return
+  }
+  // A project is open → add a named file to it.
+  const name = await ui.ask({ title: t('toolbar.newFile'), label: t('toolbar.prompt.newFileName') })
   if (!name) return
   try {
     const file = await window.breadcraft.project.createFile(project.dir, name)
     project.addFile(file.rel, file.content)
     if (router.currentRoute.value.name !== 'code') router.push({ name: 'code' })
   } catch (e) {
-    window.alert(String((e as Error).message ?? e))
+    await ui.notify({ title: t('dialog.error'), message: String((e as Error).message ?? e) })
   }
 }
 

@@ -7,6 +7,107 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Die Tile-Welt lebt: Kacheln setzen, lesen, auf sie treten.** Der Übersetzer versteht jetzt
+  die vier Kachel-Befehle für bewegtes Spielgeschehen: **SetTile** (eine Zelle auf eine Kachel +
+  Farbe setzen — z. B. ein Gegner, der über die Karte wandert), **GetTile** (nachschauen, welche
+  Kachel an einer Zelle liegt — auch in einer unsichtbaren Datenebene „darunter", für das
+  Latent-Object-Muster), **TileAt** (welche Kachel liegt an einer Pixelposition — für Sprites) und
+  **TileSolid** (ist die Kachel an dieser Pixelposition fest? — die Basis für „läuft nicht durch
+  Wände"). Alle vier bauen end-to-end bis zur lauffähigen `.prg` (mit der gebündelten cc65 geprüft).
+  Noch nicht dabei: die unsichtbare Datenebene wird vorerst als leer angenommen, und „fest" gilt per
+  Voreinstellung für jede Kachel außer der leeren — beides bekommt später eigene Editor-Knöpfe.
+  Die zusammengesetzten MetaTiles (SetMetaTile) folgen mit dem MetaTiles-Editor.
+- **Freie Zellfarbe (Color-RAM) im Tilemap-Editor.** Jede Karten-Zelle bekommt im
+  Multicolor-Modus ihre eigene vierte Farbe — genau wie auf dem echten C64, wo diese Farbe
+  pro 8×8-Zelle frei im Color-RAM steht. Ein neuer 16-Farben-Picker (nur im Multicolor-Modus
+  sichtbar) wählt die Farbe, mit der der Stift malt; die Karte und die Kachel-Vorschau zeigen
+  sie sofort. Die `.tilemap`-Datei speichert diese Zellfarben mit; ältere Karten ohne sie laden
+  unverändert (jede Zelle startet dann auf Hellgrau). Vorher zeigte die vierte Farbe überall eine
+  feste Vorschaufarbe.
+- **Malen im Multicolor-Modus (Doppelpixel-Canvas).** Der PETSCII-Editor zeichnet im
+  Multicolor-Modus jetzt auf einem 4×8-Raster mit doppelt breiten Pixeln (Seitenverhältnis
+  2:1) — genau so, wie der C64 seine Multicolor-Pixel zeigt (WYSIWYG). In Hi-Res bleibt es das
+  scharfe 8×8-Raster. Der gemeinsame Zeichensatz-Renderer (Navigator-Vorschau, Tilemap-Karte,
+  Kachel-Palette) versteht beide Modi, sodass ein gemaltes Zeichen überall gleich aussieht.
+  Damit ist das Malen im Multicolor-Modus wieder möglich (die Daten-Reparatur davor hatte das
+  Pixelraster auf 4×8 umgestellt).
+- **Neues-Projekt-Dialog mit Grafikmodus-Wahl.** „Neues Projekt" fragt jetzt nicht mehr
+  nur stumpf nach einem Namen, sondern öffnet einen richtigen Dialog: Name, Grafikmodus und
+  ein Häkchen „Startgerüst anlegen" (per Default an). Alle drei Phase-1-Modi sind sichtbar,
+  damit man weiß, wohin die Reise geht — aber nur **Text, Multicolor** ist heute wählbar, die
+  beiden anderen tragen ein ehrliches „(kommt später)". Der gewählte Modus landet fest in der
+  `.bread`-Datei; ist das Häkchen aus, bekommt `main.crumb` nur die nackte `Graphics …`-Zeile
+  statt des kommentierten Frame-Schleifen-Gerüsts. Toolbar und Startseite öffnen denselben Dialog.
+- **Projekt-Grafikmodus wird gespeichert.** Ein Projekt hat jetzt einen festen
+  Grafikmodus (`TEXT_HIRES`, `TEXT_MULTICOLOR` oder `BITMAP_MULTICOLOR`), der in der
+  `.bread`-Projektdatei liegt — die eine Wahrheit, an der sich später Editoren (Pixel-
+  Seitenverhältnis, Palette) und der Transpiler (`Graphics …`) ausrichten. Bestehende
+  Projekte ohne dieses Feld werden automatisch als `TEXT_MULTICOLOR` gelesen, gehen also
+  nicht kaputt. Sicht- und auswählbar wird der Modus erst im Neues-Projekt-Dialog (folgt);
+  hier ist zunächst nur das Fundament gelegt. Die `Graphics …`-Zeile der Startvorlage wird
+  jetzt aus dem Modus abgeleitet (über die Sprach-SSOT, nicht mehr fest verdrahtet) — sobald
+  andere Modi wählbar sind, schreibt ein neues Projekt automatisch den passenden Befehl.
+  Der Paletten-Editor richtet sich ebenfalls nach dem Modus: in Hi-Res zeigt er nur den
+  Hintergrund (mit einer kurzen Erklärung, warum), in Multicolor alle drei geteilten Farben.
+  Im aktuellen Standardmodus (Multicolor) sieht man davon noch nichts — es greift, sobald
+  Hi-Res wählbar wird.
+- **Multicolor-Charsets werden verlustfrei gespeichert (Daten-Reparatur des MC-Bugs).**
+  Im Multicolor-Zeichenmodus speichert das Charset-Format jetzt alle vier Farben pro
+  Doppelpixel als eigenes 2-Bit-Paar (neuer Konverter `indicesToBytesMC`/`bytesToIndicesMC`,
+  4 Doppelpixel/Zeile, links = höchstwertig). Das Speichern/Laden richtet sich nach dem
+  Projekt-Grafikmodus — die rohen Charset-Bytes überleben den Roundtrip damit ohne Verlust.
+  Das ist die Wurzel-Reparatur für „mit 4 Farben gemaltes Charset zeigt nach Neustart nur
+  noch 2": der alte Pfad konnte nur 1 Bit/Pixel und ließ die Farben 2 und 3 kollabieren.
+  **Noch nicht durch:** das eigentliche *Malen* im Multicolor-Modus (4×8-Doppelpixel-Canvas)
+  folgt im nächsten Schritt — bis dahin ist hier nur die **Daten-Ebene** repariert, nicht der
+  Editor. Die Bit-Packung ist normativ festgeschrieben (`PETSCII_FORMAT.md` §1.1). (+11 Vitest.)
+- **„Neue Datei" ohne offenes Projekt legt ein temporäres Projekt an.** Klickt man in der
+  Toolbar auf „Neue Datei", während kein Projekt offen ist, passierte bisher nichts. Jetzt
+  entsteht sofort ein **temporäres Projekt** unter `<Arbeitsverzeichnis>/temp/` (ein vollwertiges
+  Projekt mit `main.crumb`, nur am temp-Ort + mit Ablauf) und der Code-Editor öffnet sich — „neue
+  Datei → los", ohne Namens-Dialog. Die Mechanik (`createTempProject`) gab es längst; sie war nur
+  nicht ans UI verdrahtet. Das ist das in [[breadcraft-ide-architecture]] festgehaltene
+  Temp-Projekt-Konzept, jetzt als konkretes Toolbar-Verhalten umgesetzt.
+
+### Behoben
+- **Namen, die wie ein Sprachwort aussehen, brachen den Übersetzer.** Hieß eine Konstante,
+  ein Record oder ein Record-Feld wie ein eingebautes Wort — etwa `Const MAX = 5` (`Max` ist
+  eine Funktion), `Const LEFT = 1` (`LEFT` eine Richtung) oder ein Feld `len`/`type` — scheiterte
+  die Übersetzung mit „Name erwartet" bzw. „Feldname erwartet". Grund: der Übersetzer erkannte das
+  Wort als Sprachwort, bevor er merkte, dass es hier ein selbst vergebener Name ist. Jetzt nimmt er
+  an einer Namensstelle (nach `Const`/`Type`/`Field` und beim Feldzugriff `…\feld`) den Namen so, wie
+  man ihn geschrieben hat. Beide Fälle bauen end-to-end bis zur lauffähigen `.prg` (mit der
+  gebündelten cc65 geprüft).
+- **Tilemap-Editor war unbenutzbar langsam.** Die 40×25-Karte wurde als DOM-Gitter
+  gerendert — **~64.000 `<i>`-Knoten** (1000 Zellen × 64 Mini-Pixel), bei jedem Mal-Klick
+  komplett neu aufgebaut. Jetzt zeichnet der Editor die Karte auf ein echtes **`<canvas>`** in
+  der nativen C64-Auflösung 320×200 (per CSS skaliert, `image-rendering: pixelated`): keine
+  DOM-Last, beim Malen wird **nur die geänderte Zelle** neu gezeichnet (rAF-coalesced), ein
+  Voll-Redraw nur bei Charset-/Palette-Wechsel oder Projekt-Laden → flüssig auch beim schnellen
+  Ziehen. Neuer gemeinsamer, getesteter Charset-Renderer (`pixel-engine/charsetRender.ts`,
+  `drawChar`) zeichnet ein 8×8-Zeichen aus den Index-Daten — von Karte UND Kachel-Palette
+  genutzt (DRY, ersetzt die kopierte Hex-Vorschau). Der gestaffelte Plan, **alle** grafischen
+  Editoren so umzubauen (PETSCII/Sprite/Bitmap folgen), steht in BREADCRAFT_IDE.md §3.0.1.
+  (+5 Vitest; 163 gesamt.)
+- **Neue Projekte starteten mit fehlerhaften Kommentaren.** Die `main.crumb`-Startvorlage
+  (und das `asm.escape`-Beispiel in der Hover-Doku) leiteten Kommentare mit `'` ein — aber
+  das BreadCraft-Kommentarzeichen ist `;` (Sprachdef §B); `'` ist ein Lexer-Fehler. Ein
+  frisch angelegtes (auch temporäres) Projekt war damit von Anfang an nicht transpilierbar.
+  Korrigiert auf `;`; die Startvorlage nutzt jetzt zudem `Graphics TEXT, MULTICOLOR` (der
+  gutmütige Tilemap-Normalfall, [[breadcraft-smooth-default-path]]) statt `BITMAP, MULTICOLOR`.
+  Die Vorlage transpiliert jetzt fehlerfrei.
+- **„Neues Projekt" / „Neue Datei" taten beim Klick nichts.** Diese Buttons (Startseite,
+  Toolbar, Explorer) holten den Namen per `window.prompt(…)` — das ist in **Electron-Fenstern
+  hart deaktiviert** und liefert immer `null`, worauf der Handler lautlos abbrach. Man kam gar
+  nicht erst in den Editor. Ersetzt durch einen **eigenen In-App-Eingabedialog** (`PromptModal`,
+  im BreadCraft-Design wie der Settings-Dialog): Titel + Textfeld + Abbrechen/Anlegen, **Enter**
+  bestätigt, **Esc**/Klick-außerhalb bricht ab. Promise-basierte API im `ui`-Store
+  (`ask`/`notify`) ersetzt alle 5 `window.prompt`/`window.alert`-Aufrufe; Fehlermeldungen
+  (z. B. doppelter Dateiname) erscheinen jetzt im selben Dialog statt im toten `alert`.
+  DE+EN lokalisiert. (Kein Test deckte das ab — `window.prompt` ist Browser-API, daher fiel
+  der Bug durch alle grünen Suiten; künftig per manuellem End-to-End-Klick geprüft.)
+
 ### Geändert
 - **Editoren brauchen jetzt ein offenes Projekt.** Ohne Projekt sind die Grafik-Editoren
   (Palette/PETSCII/…) nicht mehr erreichbar — das verhinderte „ins Leere malen", wo ein
@@ -19,6 +120,65 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   (Serialisierung, IPC, Manifest, Byte-Konverter) bleibt unverändert (ASSET_DOCUMENTS.md §2.5).
 
 ### Hinzugefügt
+- **Transpiler Stufe 2, Teil B: `UseTileset` + `DrawMap` — die gemalte Karte läuft im C64
+  (Teil C).** Das Erfolgserlebnis: ein im Editor gemaltes Charset + eine gemalte Karte werden
+  zur Compile-Zeit in C eingebacken und zeigen sich als Bild (Referenz `_preflight/tilemap.c`):
+  - **Asset-Brücke in den CodeGen eingestöpselt:** `generate`/`compile` nehmen einen optionalen
+    Projekt-Asset-Kontext; `build.ts` baut ihn aus `listAssets`/`readAsset`. Ohne Projekt-Kontext
+    melden die Befehle einen ehrlichen Fehler statt zu raten.
+  - **`UseTileset "main"`** löst das `.petscii` über die Brücke auf, backt die 256×8 Charset-Bytes
+    als `static const` ein, kopiert sie nach `$3000`, setzt `VIC.addr = $1C` (der `$D018`-Teil,
+    den `Graphics` bewusst ausließ) und die drei MC-Text-Shared-Farben.
+  - **`DrawMap "level1"`** löst das `.tilemap` auf (neue `resolveTilemap`, spiegelt
+    `resolveCharset`, gleiche strenge Eager-Fehler), backt die 1000 Kachel-Nummern ein und
+    kopiert sie ins Screen-RAM (VIC zeichnet die Karte gratis) + Color-RAM mit MC-Bit. Braucht
+    ein aktives Tileset — sonst ehrlicher Fehler.
+  - **Auf echter cc65 bewiesen:** ein Crumb mit `Graphics TEXT, MULTICOLOR` / `UseTileset` /
+    `DrawMap` / Frame-Loop baut mit dem gebündelten `cl65` zu einem gültigen **3590-Byte-`.prg`**
+    (gemaltes Charset + gemalte Map eingebacken).
+  - **Noch offen in Teil B:** per-Zelle-Farbe (fester Color-RAM-Wert vorerst), MetaTiles,
+    `UseSprite`/`UseImage`/`DrawImage`, `SetTile`/`SetMetaTile`.
+  (+6 CodeGen- +8 Resolver-Tests; 158 Vitest gesamt.)
+- **Tilemap-Editor (minimal, Teil B): Karten malen.** `TilemapView.vue` ist nicht mehr ein
+  Platzhalter, sondern ein echter Editor — man malt die **40×25-Karte**, indem man eine
+  **Kachel** (ein im PETSCII-Editor gemaltes Zeichen) in Zellen stempelt (Klick + Ziehen).
+  Drei schwebende Panels (Kachel-Palette / Karten-Raster / Werkzeug), gespiegeltes Chrome aus
+  dem PETSCII-Editor (FloatPanels, Speichern-Button + dirty-Punkt, Layout-Reset, **Strg+S**,
+  Watermark). Die Kachel-Vorschau nutzt **dieselbe** Zeichen→Farb-Logik wie der PETSCII-Editor —
+  eine Kachel sieht hier exakt aus wie dort. Phase 1 bewusst minimal: nur der sichtbare
+  Grafik-Layer + Einzel-Kachel-Stift; META-Layer, MetaTile-Pinsel und Geister-Overlay wachsen
+  additiv nach (TILEMAP_EDITOR.md). Zähler „gesetzte Zellen / 1000". DE+EN lokalisiert.
+- **Tilemap-Fundament: `.tilemap`-Format + Store (Teil A des Tilemap-Editors).** Der
+  Unterbau, damit eine gemalte Karte auf Disk lebt und beim Build aufgelöst werden kann
+  (TILEMAP_EDITOR.md):
+  - **`.tilemap`-Dateiformat** (`serializeTilemap`/`parseTilemap` in `assetIo.ts`): ein
+    40×25-Grafik-Layer aus 1000 Tile-Nummern (0–255). Die Form ist bereits ein **Layer-Array**
+    (`layers:[{type:'grafik',tiles:[…]}]`), nicht zwei hartkodierte Felder — so passen spätere
+    Layer (META-Daten, Parallax) **ohne Format-Umbau** dazu. Defensiv beim Lesen (kaputt/zu kurz
+    → leer statt Müll), per Roundtrip-Tests abgesichert.
+  - **Tilemap-Store** (`stores/tilemap.ts`, spiegelt den Charset-Store): dichtes
+    `Uint8Array(1000)`, `tileAt`/`setTile`, explizites `save()`/`loadForProject`, dirty-Flag.
+    Auf Disk als `main.tilemap`, im `.bread`-Manifest unter `tilemaps[]` (Manifest-/IO-Unterbau
+    war schon da — keine Main-Änderung nötig). Beim Projekt-Öffnen automatisch geladen.
+  (+8 Vitest; 144 gesamt. Vitest kennt jetzt auch den `@renderer`-Alias für Store-Tests.)
+- **Transpiler Stufe 2, Teil B (Fundament): die `.bread`-Asset-Brücke.** Das fehlende
+  Bindeglied zwischen dem PETSCII-Editor und dem Transpiler (BREADCRAFT_TRANSPILER_ROADMAP.md
+  Stufe 2 Teil B / §2.5). Tile-/Sprite-Befehle benennen ihre Grafik per String
+  (`UseTileset "main"`); diese Brücke übersetzt eine solche **Asset-ID → die echten
+  C64-Bytes**, die der Editor gemalt hat (das `.petscii` ist bereits C64-Wahrheit:
+  256 Slots × 8 rohe Bytes).
+  - **Streng & sofort (eager):** Auflösen prüft umgehend — unbekannte ID,
+    fehlende/kaputte Datei, falsches Format oder Byte-Layout sind ein **ehrlicher
+    Fehler an der Stelle des verursachenden Befehls**, lange bevor cc65 läuft. Kein
+    stiller Fallback (kosten-ehrliches Sicherheitsnetz). Unbekannte ID nennt zudem,
+    welche Tilesets das Projekt kennt.
+  - **Rein & IO-frei:** der Reader (Datei → Text) wird hereingereicht, der Resolver
+    fasst kein Dateisystem an und importiert keinen Renderer-Code — ohne Filesystem
+    unit-testbar, hält die Repo-Struktur-Trennung. Auflösung über den Dateinamen-Stamm
+    (`"main"` ↔ `main.petscii`).
+  - **Noch kein sichtbarer Output:** bewusst nur die Brücke — der `UseTileset`/`DrawMap`-
+    CodeGen (Bytes wirklich ins C einbacken, `$D018` setzen) ist der nächste Block.
+  (+12 Vitest; 136 Tests gesamt.)
 - **Transpiler Stufe 2, Teil A: Frame-Sync & Grafik-Modus-Umschaltung.** Der erste
   Schritt Richtung „sieht nach Spiel aus" — der echte Multicolor-Modus lässt sich jetzt
   schalten (BREADCRAFT_TRANSPILER_ROADMAP.md Stufe 2, Sprachdef §E/§F):

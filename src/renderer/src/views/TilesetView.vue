@@ -4,9 +4,11 @@ import { useI18n } from 'vue-i18n'
 import { usePaletteStore, C64_PALETTE } from '../stores/palette'
 import { usePanelsStore } from '../stores/panels'
 import { useCharsetStore } from '../stores/charset'
+import { useProjectStore } from '../stores/project'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelCanvas from '../components/PixelCanvas.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
+import { charPixelHexes } from '../pixel-engine/charsetRender'
 import type { PixelIndex, ToolId } from '../pixel-engine'
 
 const { t } = useI18n()
@@ -22,8 +24,18 @@ const { t } = useI18n()
 const palette = usePaletteStore()
 const panels = usePanelsStore()
 const charset = useCharsetStore()
+const project = useProjectStore()
 
 const SCOPE = 'petscii'
+
+// The character grid follows the project graphics mode (M2.T1, IDE.md §3.0):
+// hi-res = 8×8 square pixels; multicolor = 4×8 double-WIDE pixels (pixelAspect 2:1),
+// so the char is always 8 C64 pixels across. The store already sizes cells to match
+// (pixelsPerChar, M1.T5); here we just tell <PixelCanvas> the shape.
+const isMC = computed(() => project.graphicsMode === 'TEXT_MULTICOLOR')
+const gridW = computed(() => (isMC.value ? 4 : 8))
+const gridH = 8
+const pixelAspect = computed(() => (isMC.value ? 2 : 1))
 
 // The tools panel must always be tall enough to show every tool + undo/redo
 // without scrolling (4 tool buttons in 2 rows + the history row + chrome).
@@ -91,12 +103,12 @@ function onHistory(state: { canUndo: boolean; canRedo: boolean }): void {
   canRedo.value = state.canRedo
 }
 
-/** Per-cell hex list for a character's navigator mini-preview. */
+/** Per-C64-pixel hex list (always 64 = 8×8) for a character's navigator mini-preview.
+ *  MC cells expand double-wide so the 8×8 mini-grid stays correct (charPixelHexes). */
 function charPreview(charIndex: number): string[] {
   const p = charset.chars[charIndex]
   if (!p) return []
-  const pal = indexPalette.value
-  return Array.from(p, (idx) => pal[idx] ?? pal[0])
+  return charPixelHexes(p, indexPalette.value, isMC.value)
 }
 
 function resetLayout(): void {
@@ -189,9 +201,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <PixelCanvas
             ref="canvasRef"
             class="pt-canvas-host"
-            :width="8"
-            :height="8"
-            :pixel-aspect="1"
+            :width="gridW"
+            :height="gridH"
+            :pixel-aspect="pixelAspect"
             :cells="currentCells"
             :palette="indexPalette"
             :tool="activeTool"

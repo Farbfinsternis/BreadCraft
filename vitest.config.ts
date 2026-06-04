@@ -8,7 +8,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@shared': resolve(__dirname, 'src/shared'),
-      '@transpiler': resolve(__dirname, 'src/transpiler')
+      '@transpiler': resolve(__dirname, 'src/transpiler'),
+      '@renderer': resolve(__dirname, 'src/renderer/src')
     }
   },
   test: {

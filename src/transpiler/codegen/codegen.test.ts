@@ -3,20 +3,44 @@ import rawSsot from '@shared/breadcraft.lang.json'
 import { buildVocabulary } from '@shared/vocabulary'
 import type { Ssot, VocabItem } from '@shared/ssot-types'
 import { compile } from '../index'
+import type { AssetContext } from '../codegen'
 
 const vocab: VocabItem[] = buildVocabulary(rawSsot as unknown as Ssot)
 
-function gen(src: string): {
+function gen(
+  src: string,
+  assets?: AssetContext
+): {
   code: string
   errors: string[]
   warnings: string[]
 } {
-  const { code, errors } = compile(src, vocab)
+  const { code, errors } = compile(src, vocab, assets)
   const fmt = (e: (typeof errors)[number]): string => `${e.stage} ${e.line}:${e.col} ${e.message}`
   return {
     code,
     errors: errors.filter((e) => e.severity === 'error').map(fmt),
     warnings: errors.filter((e) => e.severity === 'warn').map(fmt)
+  }
+}
+
+/** A fake asset context: one charset ("main") + one tilemap ("level1"), in memory. */
+function fakeAssets(): AssetContext {
+  const charset = JSON.stringify({
+    format: 'breadcraft.petscii',
+    charCount: 256,
+    chars: Array.from({ length: 256 }, (_, i) =>
+      i === 1 ? [1, 2, 3, 4, 5, 6, 7, 8] : [0, 0, 0, 0, 0, 0, 0, 0]
+    )
+  })
+  const tilemap = JSON.stringify({
+    format: 'breadcraft.tilemap',
+    layers: [{ type: 'grafik', tiles: Array.from({ length: 1000 }, (_, i) => (i === 0 ? 1 : 0)) }]
+  })
+  const files: Record<string, string> = { 'main.petscii': charset, 'level1.tilemap': tilemap }
+  return {
+    manifest: { charsets: ['main.petscii'], tilemaps: ['level1.tilemap'] },
+    readFile: (rel: string) => (rel in files ? files[rel] : null)
   }
 }
 
@@ -145,6 +169,15 @@ describe('codegen: Const (§C)', () => {
     expect(code).toContain('#define MAXLIVES (3)')
     expect(code).toContain('leben = MAXLIVES;')
   })
+
+  it('accepts a Const whose name collides with an SSOT word (M3.T0a)', () => {
+    // MAX is the Max function in the SSOT; LEFT a direction constant. As Const names
+    // they must compile cleanly through lex → parse → codegen (no parse error).
+    const { code, errors } = gen('Const MAX = 5\nConst LEFT = 1')
+    expect(errors).toEqual([])
+    expect(code).toContain('#define MAX (5)')
+    expect(code).toContain('#define LEFT (1)')
+  })
 })
 
 describe('codegen: narrowing warning (.w → .b, §C.1)', () => {
@@ -250,6 +283,16 @@ describe('codegen: records (Type/Field/EndType, §C)', () => {
     const { errors } = gen(src)
     expect(errors.some((e) => /kein Feld 'nope'/.test(e))).toBe(true)
   })
+
+  it('compiles a field whose name collides with an SSOT word (M3.T0b)', () => {
+    // `len` collides with the Len function. Declared + assigned as a field, it must
+    // build through lex → parse → codegen, end-to-end, no errors.
+    const src = ['Type Slot', '  Field len.b', 'EndType', 'Dim tasche.Slot[20]', 'tasche[0]\\len = 2'].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('struct Slot {')
+    expect(code).toContain('tasche[0].len = 2;')
+  })
 })
 
 describe('codegen: Graphics mode + VWait (Stufe 2, §E/§F)', () => {
@@ -291,8 +334,98 @@ describe('codegen: Graphics mode + VWait (Stufe 2, §E/§F)', () => {
 
 describe('codegen: honest failure (no crash)', () => {
   it('reports a command without a C mapping yet, leaves a TODO marker', () => {
-    const { code, errors } = gen('SetTile 0, 0, 1, BLACK')
-    expect(errors.some((e) => /SetTile/.test(e))).toBe(true)
-    expect(code).toContain('/* TODO: SetTile')
+    // Sprite isn't mapped yet (M3.T2) — the honest "no mapping" path still works.
+    const { code, errors } = gen('Sprite 0, 100, 100')
+    expect(errors.some((e) => /Sprite/.test(e))).toBe(true)
+    expect(code).toContain('/* TODO: Sprite')
+  })
+})
+
+describe('codegen: tile world (M3.T1) — SetTile/GetTile/TileAt/TileSolid', () => {
+  it('SetTile pokes Screen-RAM + Color-RAM at row*40+col (multicolor bit set)', () => {
+    const { code, errors } = gen('SetTile 2, 3, 7, RED')
+    expect(errors).toEqual([])
+    expect(code).toContain('BC_SCREEN[(3) * BC_SCR_W + (2)] = 7;')
+    expect(code).toContain('COLOR_RAM[(3) * BC_SCR_W + (2)] = (COLOR_RED) | 8;')
+    expect(code).toContain('#define BC_SCREEN')
+  })
+
+  it('GetTile layer 0 reads Screen-RAM', () => {
+    const { code, errors } = gen('t.b = GetTile(4, 5)')
+    expect(errors).toEqual([])
+    expect(code).toContain('t = BC_SCREEN[(5) * BC_SCR_W + (4)];')
+  })
+
+  it('GetTile layer 1 reads the baked (all-zero) data layer', () => {
+    const { code, errors } = gen('t.b = GetTile(4, 5, 1)')
+    expect(errors).toEqual([])
+    expect(code).toContain('static unsigned char BC_DATA[40 * 25];')
+    expect(code).toContain('t = BC_DATA[(5) * BC_SCR_W + (4)];')
+  })
+
+  it('TileAt emits the pixel→cell→tile helper and calls it', () => {
+    const { code, errors } = gen('t.b = TileAt(120, 100)')
+    expect(errors).toEqual([])
+    expect(code).toContain('static unsigned char bc_tile_at(')
+    expect(code).toContain('t = bc_tile_at(120, 100);')
+  })
+
+  it('TileSolid emits the solid helper (default table) and calls it', () => {
+    const { code, errors } = gen('blocked.b = TileSolid(120, 100)')
+    expect(errors).toEqual([])
+    expect(code).toContain('static unsigned char bc_tile_solid_at(')
+    expect(code).toContain('return bc_tile_at(px, py) != 0;') // default: tile 0 passable
+    expect(code).toContain('blocked = bc_tile_solid_at(120, 100);')
+  })
+
+  it('does not emit tile-world helpers when unused', () => {
+    const { code } = gen('x.b = 1')
+    expect(code).not.toContain('bc_tile_at')
+    expect(code).not.toContain('BC_DATA')
+  })
+
+  it('reports too few args honestly', () => {
+    const { errors } = gen('SetTile 1, 2')
+    expect(errors.some((e) => /SetTile erwartet/.test(e))).toBe(true)
+  })
+})
+
+describe('codegen: UseTileset + DrawMap (tile world)', () => {
+  it('bakes the charset bytes, points VIC at $3000, sets MC colours', () => {
+    const { code, errors } = gen('UseTileset "main"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('static const unsigned char tileset_main[2048]')
+    expect(code).toMatch(/1, 2, 3, 4, 5, 6, 7, 8/) // char 1 bytes baked
+    expect(code).toContain('BC_CHARSET[_i] = tileset_main[_i]')
+    expect(code).toContain('VIC.addr = 0x1C;')
+    expect(code).toContain('#define BC_CHARSET')
+  })
+
+  it('bakes the map tiles and copies them into screen RAM', () => {
+    const { code, errors } = gen('UseTileset "main"\nDrawMap "level1"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('static const unsigned char map_level1[1000]')
+    expect(code).toContain('BC_SCREEN[_c] = map_level1[_c]')
+    expect(code).toContain('COLOR_RAM[_c]')
+  })
+
+  it('errors honestly when DrawMap has no active tileset', () => {
+    const { errors } = gen('DrawMap "level1"', fakeAssets())
+    expect(errors.some((e) => /kein Tileset aktiv/.test(e))).toBe(true)
+  })
+
+  it('errors on an unknown tileset id (strict, at the command)', () => {
+    const { errors } = gen('UseTileset "ghost"', fakeAssets())
+    expect(errors.some((e) => /unbekanntes Tileset .ghost./.test(e))).toBe(true)
+  })
+
+  it('errors when there is no project context at all', () => {
+    const { errors } = gen('UseTileset "main"')
+    expect(errors.some((e) => /kein Projekt-Kontext/.test(e))).toBe(true)
+  })
+
+  it('errors when UseTileset gets no string id', () => {
+    const { errors } = gen('UseTileset 5', fakeAssets())
+    expect(errors.some((e) => /Tileset-Namen in/.test(e))).toBe(true)
   })
 })

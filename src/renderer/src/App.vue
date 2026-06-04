@@ -8,6 +8,8 @@ import OutputConsole from '@renderer/components/OutputConsole.vue'
 import StatusBar from '@renderer/components/StatusBar.vue'
 import WorkspaceSetup from '@renderer/components/WorkspaceSetup.vue'
 import SettingsModal from '@renderer/components/SettingsModal.vue'
+import PromptModal from '@renderer/components/PromptModal.vue'
+import NewProjectModal from '@renderer/components/NewProjectModal.vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { EDITOR_ROUTE_NAMES } from '@renderer/router'
@@ -105,4 +107,11 @@ watch(
     <!-- Global settings modal: lives above the IDE, toggled from the toolbar. -->
     <SettingsModal />
   </div>
+
+  <!-- Global prompt dialog: name entry / messages, replacing Electron's dead
+       window.prompt/alert. Outside both branches so it's always available. -->
+  <PromptModal />
+
+  <!-- New-Project dialog: name + graphics mode + boilerplate (M1.T6). -->
+  <NewProjectModal />
 </template>

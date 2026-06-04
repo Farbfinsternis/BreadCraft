@@ -1806,6 +1806,6 @@
     "joystick.basic": "If Joystick(LEFT) Then px = px - 1",
     "graphics.tiles": "Graphics TEXT, MULTICOLOR\nUseTileset \"cave\"\nDrawMap \"level1\"",
     "frameloop": "While 1\n    Sprite \"Player\", px, py\n    VWait\nWend",
-    "asm.escape": "' Hardware-Ventil: roher 6502-Asm für das, was die Sprache bewusst weglässt\n' (z.B. Raster-IRQ für Sprite-Multiplexing → mehr als 8 Sprites)\nAsm\n    sei\n    lda #<irq\n    sta $0314\n    lda #>irq\n    sta $0315\n    cli\nEndAsm"
+    "asm.escape": "; Hardware-Ventil: roher 6502-Asm für das, was die Sprache bewusst weglässt\n; (z.B. Raster-IRQ für Sprite-Multiplexing → mehr als 8 Sprites)\nAsm\n    sei\n    lda #<irq\n    sta $0314\n    lda #>irq\n    sta $0315\n    cli\nEndAsm"
   }
 }

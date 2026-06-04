@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { PALETTE_FILE, parsePalette, serializePalette } from './assetIo'
+import type { GraphicsMode } from '@shared/ipc'
 
 /**
  * The ONE project palette (phase 1) — see _plans/_sprints/PALETTE_FORMAT.md and
@@ -83,6 +84,19 @@ export const SLOTS: readonly SlotMeta[] = [
     register: 'bgcolor2 ($D023) = spr_mcolor1 ($D026)'
   }
 ] as const
+
+/**
+ * Which palette slots the project's graphics mode actually uses (PALETTE_EDITOR.md
+ * §4, IDE.md §2.1). Hi-res chars have only 2 colours — a project-wide background
+ * plus a per-cell foreground (Color-RAM) — so the two SHARED multicolor registers
+ * are meaningless there: only `background` is relevant. Multicolor uses all three
+ * shared registers. The editor shows only the relevant slots so it never offers a
+ * knob that does nothing (cost-honesty, no fake controls).
+ */
+export function slotsForMode(mode: GraphicsMode): readonly SlotMeta[] {
+  if (mode === 'TEXT_HIRES') return SLOTS.filter((s) => s.key === 'background')
+  return SLOTS // TEXT_MULTICOLOR / BITMAP_MULTICOLOR → all three shared registers
+}
 
 export const usePaletteStore = defineStore('palette', () => {
   // Default to a readable, distinct trio (black bg, brown, light-blue) until a

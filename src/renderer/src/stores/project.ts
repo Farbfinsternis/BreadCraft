@@ -1,6 +1,7 @@
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { OpenedProject } from '@shared/ipc'
+import type { GraphicsMode, OpenedProject } from '@shared/ipc'
+import { DEFAULT_GRAPHICS_MODE } from '@shared/ipc'
 
 const STORAGE_KEY = 'breadcraft.project.ui'
 
@@ -36,6 +37,9 @@ export const useProjectStore = defineStore('project', () => {
   const projectName = ref('')
   const entry = ref('')
   const temporary = ref(false)
+  // Project-wide graphics mode (IDE.md §2.1); the editors read it for pixel
+  // aspect / palette layout, the asset IO for hi-res vs MC packing (M1.T5).
+  const graphicsMode = ref<GraphicsMode>(DEFAULT_GRAPHICS_MODE)
 
   // rel → current (possibly edited) content of each open file.
   const contents = reactive<Record<string, string>>({})
@@ -65,6 +69,7 @@ export const useProjectStore = defineStore('project', () => {
     projectName.value = project.name
     entry.value = project.entry
     temporary.value = project.temporary
+    graphicsMode.value = project.graphicsMode
     for (const key of Object.keys(contents)) delete contents[key]
     for (const key of Object.keys(dirty)) delete dirty[key]
     for (const f of project.files) contents[f.rel] = f.content
@@ -76,14 +81,17 @@ export const useProjectStore = defineStore('project', () => {
     void loadProjectAssets(project)
   }
 
-  /** Pull the project's palette + charset assets from disk into their stores. */
+  /** Pull the project's palette + charset + tilemap assets from disk into their stores. */
   async function loadProjectAssets(project: OpenedProject): Promise<void> {
     const { usePaletteStore } = await import('./palette')
     const { useCharsetStore } = await import('./charset')
+    const { useTilemapStore } = await import('./tilemap')
     const palette = usePaletteStore()
     const charset = useCharsetStore()
+    const tilemap = useTilemapStore()
     await palette.loadForProject(project.dir, project.assets.palette)
     await charset.loadForProject(project.dir, project.assets.charsets[0] ?? null)
+    await tilemap.loadForProject(project.dir, project.assets.tilemaps[0] ?? null)
   }
 
   function setActiveTab(rel: string): void {
@@ -113,6 +121,7 @@ export const useProjectStore = defineStore('project', () => {
     projectName,
     entry,
     temporary,
+    graphicsMode,
     contents,
     openFiles,
     activeRel,

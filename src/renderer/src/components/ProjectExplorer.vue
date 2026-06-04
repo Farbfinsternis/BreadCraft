@@ -10,13 +10,13 @@ const project = useProjectStore()
 
 async function newFile(): Promise<void> {
   if (!project.dir) return
-  const name = window.prompt(t('explorer.prompt.newFileName'))
+  const name = await ui.ask({ title: t('explorer.newFile'), label: t('explorer.prompt.newFileName') })
   if (!name) return
   try {
     const file = await window.breadcraft.project.createFile(project.dir, name)
     project.addFile(file.rel, file.content)
   } catch (e) {
-    window.alert(String((e as Error).message ?? e))
+    await ui.notify({ title: t('dialog.error'), message: String((e as Error).message ?? e) })
   }
 }
 </script>

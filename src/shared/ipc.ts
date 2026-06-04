@@ -98,6 +98,17 @@ export interface ProjectFile {
 /** Asset kinds with project-bound disk IO (ASSET_IO.md). */
 export type AssetKind = 'palette' | 'charset' | 'tilemap'
 
+/**
+ * The project-wide graphics mode — the root SSOT chosen at project creation that
+ * drives both the editors (pixel aspect, palette layout) and the transpiler's
+ * `Graphics …` command (BREADCRAFT_IDE.md §2.1). The three Phase-1 modes; only
+ * TEXT_MULTICOLOR is selectable today (the others come later). Stored in `.bread`.
+ */
+export type GraphicsMode = 'TEXT_HIRES' | 'TEXT_MULTICOLOR' | 'BITMAP_MULTICOLOR'
+
+/** Default mode for projects with no stored `graphicsMode` (old files) + temp projects. */
+export const DEFAULT_GRAPHICS_MODE: GraphicsMode = 'TEXT_MULTICOLOR'
+
 /** The `.bread` asset manifest (paths relative to the project dir). */
 export interface BreadAssets {
   palette: string | null
@@ -112,6 +123,8 @@ export interface OpenedProject {
   entry: string
   files: ProjectFile[]
   temporary: boolean
+  /** Project-wide graphics mode (root SSOT, IDE.md §2.1); drives editors + transpiler. */
+  graphicsMode: GraphicsMode
   /** Asset manifest of the project (palette/charsets/tilemaps), for the editors. */
   assets: BreadAssets
 }
