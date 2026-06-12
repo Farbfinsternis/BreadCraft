@@ -1,7 +1,9 @@
 import type { VocabItem } from '@shared/ssot-types'
+import type { PerfInfo } from '@shared/ipc'
 import { tokenize } from './lexer'
 import { parse } from './parser'
 import { generate } from './codegen'
+import { estimateFramePerf } from './codegen/perf-estimate'
 import type { AssetContext } from './codegen'
 
 // The transpiler's front door: .crumb source → cc65-C, in one call. Runs the
@@ -30,6 +32,9 @@ export interface CompileResult {
   linkerConfig: string
   /** The address the program image must stay below (the RAM health-bar ceiling, S1c). */
   mainCeiling: number
+  /** Estimated per-frame CPU cost (a guess from the code) for the PERF health-bar, or
+   *  null when the program has no frame loop to talk about. */
+  perf: PerfInfo | null
 }
 
 /** Compile .crumb source to cc65-C using the given SSOT vocabulary. `assets` lets
@@ -48,7 +53,7 @@ export function compile(
     ...parseErrors.map((e) => ({ stage: 'parse' as const, severity: 'error' as const, ...e })),
     ...codegenErrors.map((e) => ({ stage: 'codegen' as const, ...e }))
   ]
-  return { code, errors, linkerConfig, mainCeiling }
+  return { code, errors, linkerConfig, mainCeiling, perf: estimateFramePerf(program) }
 }
 
 export { tokenize } from './lexer'

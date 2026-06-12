@@ -212,5 +212,5 @@
   "console.railLabel": "Output console",
 
   "health.ram.meta": "no build yet · cc65 map provides the value",
-  "health.perf.meta": "no run yet · measured during Build & Run"
+  "health.perf.meta": "no build yet · rough estimate from the code"
 }

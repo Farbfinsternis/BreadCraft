@@ -22,6 +22,18 @@ const fillClass = computed(() => {
   if (ram.value.state === 'warn') return 'hb-fill-warn'
   return 'hb-fill-arc'
 })
+
+// PERF bar: an ESTIMATE of the frame-loop cost extrapolated from the code (a guess,
+// never a runtime measurement — the `~` says so). It climbs as the .crumb does more
+// expensive work, so the cost is visible while you write.
+const perf = computed(() => output.perf)
+const perfPct = computed(() => (perf.value ? Math.min(100, Math.round(perf.value.fraction * 100)) : 0))
+const perfFillClass = computed(() => {
+  if (!perf.value) return 'hb-fill-filament'
+  if (perf.value.state === 'over') return 'hb-fill-over'
+  if (perf.value.state === 'warn') return 'hb-fill-warn'
+  return 'hb-fill-filament'
+})
 </script>
 
 <template>
@@ -45,11 +57,16 @@ const fillClass = computed(() => {
 
       <div class="hb">
         <div class="hb-top">
-          <span class="bc-label">PERF · RASTER</span>
-          <span class="hb-val hb-nodata">—</span>
+          <span class="bc-label">PERF · FRAME</span>
+          <span class="hb-val" :class="{ 'hb-nodata': !perf }">{{ perf ? '~' + perfPct + ' %' : '—' }}</span>
         </div>
-        <div class="hb-track"><div class="hb-fill hb-fill-filament" style="width: 0%" /></div>
-        <div class="hb-meta">{{ t('health.perf.meta') }}</div>
+        <div class="hb-track">
+          <div class="hb-fill" :class="perfFillClass" :style="{ width: perfPct + '%' }" />
+        </div>
+        <div class="hb-meta">
+          <template v-if="perf">~{{ perf.cyclesPerFrame }} Takte/Frame von {{ perf.budgetCycles }} · geschätzt</template>
+          <template v-else>{{ t('health.perf.meta') }}</template>
+        </div>
       </div>
     </div>
   </div>

@@ -59,6 +59,7 @@ async function buildAndRun(): Promise<void> {
     const result = await window.breadcraft.build.run(source, project.dir)
     output.appendMany(result.log)
     output.ram = result.ram ?? null // feed the RAM health-bar (STAHL S1c)
+    output.perf = result.perf ?? null // feed the PERF health-bar (estimated cost)
     if (result.needsVicePath) {
       output.append({ level: 'info', text: t('build.viceHint') })
       settings.openModal()

@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { BuildLogLine, RamInfo } from '@shared/ipc'
+import type { BuildLogLine, RamInfo, PerfInfo } from '@shared/ipc'
 
 /**
  * The Output console's line buffer. Deliberately NOT persisted (build/run logs
@@ -13,6 +13,8 @@ export const useOutputStore = defineStore('output', () => {
   const busy = ref(false)
   /** RAM usage from the most recent build, or null before the first build. */
   const ram = ref<RamInfo | null>(null)
+  /** Estimated per-frame CPU cost from the most recent build (a guess from the code). */
+  const perf = ref<PerfInfo | null>(null)
 
   function clear(): void {
     lines.value = []
@@ -26,5 +28,5 @@ export const useOutputStore = defineStore('output', () => {
     lines.value.push(...more)
   }
 
-  return { lines, busy, ram, clear, append, appendMany }
+  return { lines, busy, ram, perf, clear, append, appendMany }
 })

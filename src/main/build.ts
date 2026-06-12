@@ -45,7 +45,10 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
     manifest: listAssets(projectDir),
     readFile: (rel: string) => readAsset(projectDir, rel)
   }
-  const { code, errors, linkerConfig, mainCeiling } = compile(source, vocabulary, assets)
+  const { code, errors, linkerConfig, mainCeiling, perf } = compile(source, vocabulary, assets)
+  // The per-frame cost estimate is valid as soon as the code parsed — feed it to the
+  // PERF health-bar on every outcome where we actually compiled something.
+  const perfInfo = perf ?? undefined
   for (const e of errors) {
     const level = e.severity === 'warn' ? 'warn' : 'error'
     add(level, `${e.stage} ${e.line}:${e.col}: ${e.message}`)
@@ -53,13 +56,13 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
   // Warnings (e.g. narrowing) are honest hints, not blockers; only real errors stop the build.
   if (errors.some((e) => e.severity === 'error')) {
     add('error', 'Transpilieren fehlgeschlagen.')
-    return { ok: false, stage: 'compile', log, cCode: code }
+    return { ok: false, stage: 'compile', log, cCode: code, perf: perfInfo }
   }
 
   // 2) write C, invoke bundled cl65 → .prg
   if (!cc65Available()) {
     add('error', 'Gebündelter cc65 nicht gefunden (resources/cc65/bin/cl65).')
-    return { ok: false, stage: 'compile', log, cCode: code }
+    return { ok: false, stage: 'compile', log, cCode: code, perf: perfInfo }
   }
   mkdirSync(buildDir, { recursive: true })
   const cPath = join(buildDir, 'main.c')
@@ -85,10 +88,10 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
       const over = Number(overflow[1])
       add('error', `Zu groß für den Speicher: dein Programm überschreitet den nutzbaren Bereich um ${over} Bytes. Mach den Code/die Assets kleiner — oder die Health-Bar zeigt, wie nah du an der Grenze bist.`)
       // Feed a synthetic .prg size so usedBytes = budget + overflow → state 'over'.
-      return { ok: false, stage: 'cc65', log, cCode: code, ram: ramInfo(mainCeiling - 0x0801 + over + 2, mainCeiling) }
+      return { ok: false, stage: 'cc65', log, cCode: code, ram: ramInfo(mainCeiling - 0x0801 + over + 2, mainCeiling), perf: perfInfo }
     }
     add('error', 'cc65-Build fehlgeschlagen.')
-    return { ok: false, stage: 'cc65', log, cCode: code }
+    return { ok: false, stage: 'cc65', log, cCode: code, perf: perfInfo }
   }
   add('ok', `Build erfolgreich → ${prgPath}`)
 
@@ -104,7 +107,7 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
   const vicePath = readSettings().vicePath
   if (!vicePath || !existsSync(vicePath)) {
     add('info', 'Kein gültiger VICE-Pfad gesetzt — .prg gebaut, aber nicht gestartet.')
-    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram }
+    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram, perf: perfInfo }
   }
 
   add('cmd', `Starte VICE: ${vicePath} "${prgPath}"`)
@@ -112,9 +115,9 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
     const child = spawn(vicePath, [prgPath], { detached: true, stdio: 'ignore' })
     child.unref()
     add('ok', 'VICE gestartet.')
-    return { ok: true, stage: 'run', log, cCode: code, prgPath, ram }
+    return { ok: true, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
   } catch (e) {
     add('error', `VICE-Start fehlgeschlagen: ${String((e as Error).message ?? e)}`)
-    return { ok: false, stage: 'run', log, cCode: code, prgPath, ram }
+    return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
   }
 }

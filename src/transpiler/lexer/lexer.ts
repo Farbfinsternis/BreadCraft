@@ -392,15 +392,21 @@ class Scanner {
 
 /**
  * The two-word block endings BreadCraft accepts, merged into their canonical single
- * keyword. STRICT canonical (Sprachdef §B.1 / EISEN N10): only the exact spelling
- * `End If` / `End Function` / `Else If` merges — `end if` stays two words so the
- * parser can answer with "meintest Du `End If`?". `End` and `Else` on their own are
- * untouched (the `End` command, the `Else` block opener).
+ * keyword. The full set of SSOT-defined two-word aliases (`Else If`, `End If`,
+ * `End Function`, `End Type`, `End Select`, `End Asm`). STRICT canonical (Sprachdef
+ * §B.1 / EISEN N10): only the exact spelling merges — `end if` stays two words so the
+ * parser can answer with "meintest Du `End If`?". `End`/`Else` on their own are
+ * untouched (the `End` command, the `Else` block opener). The later-feature pairs
+ * (Select/Asm) merge too, so writing `End Select` reaches the honest "not yet
+ * supported" message rather than a confusing two-token error.
  */
 const MERGE_PAIRS: ReadonlyArray<{ first: string; second: string; into: string }> = [
+  { first: 'Else', second: 'If', into: 'ElseIf' },
   { first: 'End', second: 'If', into: 'EndIf' },
   { first: 'End', second: 'Function', into: 'EndFunction' },
-  { first: 'Else', second: 'If', into: 'ElseIf' }
+  { first: 'End', second: 'Type', into: 'EndType' },
+  { first: 'End', second: 'Select', into: 'EndSelect' },
+  { first: 'End', second: 'Asm', into: 'EndAsm' }
 ]
 
 /**

@@ -210,10 +210,13 @@ describe('lexer: normalizer (two-word block endings, M2.T1)', () => {
       .map((t) => t.value)
   }
 
-  it('fuses canonical End If / End Function / Else If into one keyword', () => {
+  it('fuses every SSOT two-word ending into one keyword', () => {
     expect(values('End If')).toEqual(['EndIf'])
     expect(values('End Function')).toEqual(['EndFunction'])
     expect(values('Else If')).toEqual(['ElseIf'])
+    expect(values('End Type')).toEqual(['EndType'])
+    expect(values('End Select')).toEqual(['EndSelect'])
+    expect(values('End Asm')).toEqual(['EndAsm'])
   })
 
   it('keeps Else and End untouched when not in a canonical pair', () => {

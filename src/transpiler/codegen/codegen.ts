@@ -564,7 +564,9 @@ class Generator {
         '  col = (unsigned char)((px - BC_SPR_X0) >> 3);',
         '  row = (unsigned char)((py - BC_SPR_Y0) >> 3);',
         '  if (col >= BC_SCR_W || row >= 25) return 0;',
-        '  return BC_SCREEN[row * BC_SCR_W + col];',
+        // `row` is a local read repeatedly without side effects → strength-reduce the
+        // ×40 to shifts (the per-pixel collision hot path, see screenRowOffset).
+        `  return BC_SCREEN[${this.screenRowOffset('row', true)} + col];`,
         '}',
         ''
       )
@@ -1116,7 +1118,9 @@ class Generator {
     const row = this.expr(a[1])
     const tile = this.expr(a[2])
     const color = this.colorArg(a[3])
-    const off = `(${row}) * BC_SCR_W + (${col})`
+    // Strength-reduce row×40 to shifts when the row is a plain variable (safe to read
+    // twice); a literal/complex row stays a `* BC_SCR_W` (cc65 folds constants anyway).
+    const off = `${this.screenRowOffset(row, a[1].kind === 'Identifier')} + (${col})`
     this.emit(`BC_SCREEN[${off}] = ${tile};`)
     this.emit(`COLOR_RAM[${off}] = (${color}) | 8;`)
   }
@@ -1334,6 +1338,21 @@ class Generator {
     // High bit first reads like the decomposition (40 = 32 + 8 → (r<<5)+(r<<3)).
     const terms = bits.reverse().map((i) => (i === 0 ? `(${rowC})` : `((${rowC}) << ${i})`))
     return terms.length === 1 ? terms[0] : `(${terms.join(' + ')})`
+  }
+
+  /**
+   * The C for `row * BC_SCR_W` inside a screen offset. The text screen is 40 wide, and
+   * 40 is NOT a power of two, so a literal `row * 40` compiles to cc65's slow software
+   * multiply (the 6502 has no hardware multiply — memory: c64-math-cost-model). When the
+   * row is safe to read twice we emit the shift/add chain (40 = 32 + 8 → (row<<5)+(row<<3))
+   * — cc65 turns that into cheap shifts, the same strength reduction the 2D-array index
+   * uses (rowTimesWidth, STAHL S2b). This keeps a per-frame, per-pixel TileSolid
+   * (bc_tile_at) from dragging the frame past one screen refresh. The result is fully
+   * parenthesized so a `+ col` after it binds correctly (`<<` is weaker than `+` in C).
+   */
+  private screenRowOffset(rowC: string, simple: boolean): string {
+    if (!simple) return `(${rowC}) * BC_SCR_W`
+    return `(((${rowC}) << 5) + ((${rowC}) << 3))`
   }
 
   /** Render a record field access `tasche[3]\count` / `p\x` → `base.count` (§C). A
@@ -1583,7 +1602,7 @@ class Generator {
           return '/* GetTile: zu wenige Argumente */ 0'
         }
         this.usesTileWorld = true
-        const off = `(${this.expr(a[1])}) * BC_SCR_W + (${this.expr(a[0])})`
+        const off = `${this.screenRowOffset(this.expr(a[1]), a[1].kind === 'Identifier')} + (${this.expr(a[0])})`
         const layer = a.length >= 3 ? this.constLayer(a[2]) : 0
         if (layer === 1) {
           this.usesDataLayer = true

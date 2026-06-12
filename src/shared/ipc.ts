@@ -164,6 +164,22 @@ export interface RamInfo {
   ceilingAddr: number
 }
 
+/** A per-frame CPU-cost ESTIMATE, extrapolated from the code — a guess, not a runtime
+ *  measurement (like BASSM's health bars). The 6502 has a hard per-frame cycle budget;
+ *  cross it and the game drops from 50 to 25 fps. The bar shows roughly how full the
+ *  frame is from what the .crumb does, so the cost is visible WHILE you write. */
+export interface PerfInfo {
+  /** Estimated 6502 cycles for ONE iteration of the main frame loop (incl. the
+   *  functions it calls). A coarse guess — its value is the relative signal. */
+  cyclesPerFrame: number
+  /** One PAL frame's cycle budget (the wall: more than this halves the frame rate). */
+  budgetCycles: number
+  /** cyclesPerFrame / budgetCycles (≥ 1 means the frame would overrun). */
+  fraction: number
+  /** 'ok' (room), 'warn' (getting tight), 'over' (would overrun → 25fps). */
+  state: 'ok' | 'warn' | 'over'
+}
+
 /** Result of a Build & Run: which stage reached, logs, and what to show. */
 export interface BuildResult {
   ok: boolean
@@ -179,4 +195,6 @@ export interface BuildResult {
   /** RAM usage vs the planned ceiling (STAHL S1c) — set when a .prg was produced, or
    *  reported as `over` when the linker rejected the build for overflowing the island. */
   ram?: RamInfo
+  /** Estimated per-frame CPU cost (a guess from the code) — feeds the PERF health-bar. */
+  perf?: PerfInfo
 }

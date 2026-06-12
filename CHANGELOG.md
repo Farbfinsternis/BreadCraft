@@ -7,6 +7,38 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-12
+
+### Hinzugefügt
+- **Die Perf-Health-Bar lebt — sie SCHÄTZT, was Dein Crumb pro Frame kostet.** Bisher war der
+  „PERF"-Balken ein totes Schaufenster (immer „—"). Jetzt zeigt er nach jedem Build eine *Schätzung*,
+  wie voll ein Bild (ein Frame) wird: BreadCraft liest Deinen Code, findet die Spielschleife (die mit
+  `VWait`), und extrapoliert grob, wie viele Takte ein Durchlauf kostet — inklusive der Funktionen, die er
+  ruft. Ein Multiplizieren wiegt viel, ein Plus wenig, eine Schleife multipliziert ihren Rumpf; so klettert
+  der Balken, *während* Du teureren Code schreibst, ohne dass Du das Spiel erst starten musst. Wichtig und
+  ehrlich: es ist ein **Schätzwert, keine Messung** (das `~` vor der Prozentzahl sagt es) — genau wie in
+  BASSM. Überschreitet die Schätzung ein ganzes Frame, färbt der Balken rot: dann droht der Sprung auf 25
+  fps. (Das Into-The-Deep-Level liegt z. B. bei ~48 %.) (memory: c64-math-cost-model, breadcraft-health-bars)
+
+### Behoben
+- **Tile-Kollisionen tragen kein verstecktes Multiplizieren mehr — und bremsen das Spiel nicht aus.**
+  Jede `TileSolid`/`TileAt`-Abfrage rechnet intern `zeile · 40 + spalte`, um die Zelle im Bildschirm-RAM
+  zu finden — und 40 ist keine Zweierpotenz, also rief der Übersetzer hier seine *langsame* Software-
+  Multiplikation auf (der 6502 kann nicht multiplizieren). Das fiel bei Bewegung auf: weil die Kollision
+  *pro bewegtem Pixel* prüft, häuften sich die teuren Multiplikationen, der Frame platzte über einen
+  Bildaufbau, und alles lief auf einmal mit halbem Tempo (am sichtbarsten an gleichmäßig laufenden
+  Gegnern). Jetzt zerlegt BreadCraft das `· 40` in billige Bit-Verschiebungen (40 = 32 + 8 →
+  `(zeile<<5)+(zeile<<3)`) — exakt dieselbe Optimierung, die 2D-Tabellen schon bekamen. Die Abfrage wird
+  schlagartig günstiger, das `.prg` sogar kleiner (die Multiplikations-Routine fällt weg). Greift überall:
+  `TileSolid`, `TileAt`, und `SetTile`/`GetTile` mit einer Variablen-Zeile. (memory: c64-math-cost-model)
+
+### Hinzugefügt
+- **`End Type` darf jetzt auch in zwei Wörtern stehen.** Die ausgeschriebenen Block-Enden waren bisher
+  unvollständig: `End If`, `Else If` und `End Function` gingen, aber ausgerechnet `End Type` (das Ende
+  eines Records) nicht — ein einsames `EndType` stach aus dem Zwei-Wort-Stil heraus. Jetzt versteht
+  BreadCraft alle vom Sprach-Standard vorgesehenen Zwei-Wort-Formen (auch `End Select`/`End Asm` für die
+  späteren Features), strikt in kanonischer Schreibweise.
+
 ## [0.2.0] - 2026-06-12
 
 ### Geändert

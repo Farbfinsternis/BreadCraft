@@ -484,6 +484,21 @@ describe('codegen: tile world (M3.T1) — SetTile/GetTile/TileAt/TileSolid', () 
     expect(code).toContain('blocked = bc_tile_solid_at(120, 100);')
   })
 
+  it('strength-reduces the ×40 in bc_tile_at to shifts (per-pixel collision hot path)', () => {
+    // 40 (the screen width) is not a power of two, so a literal row*40 is cc65's slow
+    // software multiply. The tile lookup runs once per pixel during movement, so it uses
+    // the shift/add chain (40 = 32 + 8 → (row<<5)+(row<<3)) like the 2D-array index does.
+    const { code } = gen('blocked.b = TileSolid(120, 100)')
+    expect(code).toContain('(((row) << 5) + ((row) << 3))')
+    expect(code).not.toContain('row * BC_SCR_W')
+  })
+
+  it('SetTile with a VARIABLE row strength-reduces the ×40 (a literal row stays folded)', () => {
+    const { code, errors } = gen('Global r.b = 0\nGlobal c.b = 0\nSetTile c, r, 7, RED')
+    expect(errors).toEqual([])
+    expect(code).toContain('BC_SCREEN[(((r) << 5) + ((r) << 3)) + (c)] = 7;')
+  })
+
   it('does not emit tile-world helpers when unused', () => {
     const { code } = gen('x.b = 1')
     expect(code).not.toContain('bc_tile_at')
