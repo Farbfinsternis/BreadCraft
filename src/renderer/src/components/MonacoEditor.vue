@@ -70,7 +70,7 @@ onMounted(() => {
           change.range.startLineNumber,
           change.range.startColumn
         )
-        autoCaseEdit(model, before, language.canonicalize)
+        autoCaseEdit(model, before, language.canonicalInfo)
       }
     }
 

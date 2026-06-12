@@ -96,7 +96,7 @@ export interface ProjectFile {
 }
 
 /** Asset kinds with project-bound disk IO (ASSET_IO.md). */
-export type AssetKind = 'palette' | 'charset' | 'tilemap'
+export type AssetKind = 'palette' | 'charset' | 'tilemap' | 'sprite'
 
 /**
  * The project-wide graphics mode — the root SSOT chosen at project creation that
@@ -114,6 +114,16 @@ export interface BreadAssets {
   palette: string | null
   charsets: string[]
   tilemaps: string[]
+  sprites: string[]
+}
+
+/** A node in the project's file tree (P2.T0b explorer). Paths are project-relative,
+ *  forward-slash separated. Directories carry their children (sorted: dirs first). */
+export interface TreeNode {
+  name: string
+  rel: string
+  kind: 'dir' | 'file'
+  children?: TreeNode[]
 }
 
 export interface OpenedProject {
@@ -135,6 +145,25 @@ export interface BuildLogLine {
   text: string
 }
 
+/** How full RAM is after a build, measured against the project's PLANNED ceiling
+ *  (STAHL S1c). For a tiled game the ceiling is the reserved VIC island ($3000);
+ *  otherwise it's the top of usable RAM ($D000). The bar fills toward the ceiling and
+ *  turns red as the program approaches the wall the linker would otherwise hit. */
+export interface RamInfo {
+  /** Bytes the loaded program image occupies (from the $0801 load address). */
+  usedBytes: number
+  /** Budget from the load address up to the ceiling. */
+  budgetBytes: number
+  /** budgetBytes − usedBytes (negative if it would overflow). */
+  freeBytes: number
+  /** Fill fraction usedBytes / budgetBytes (≥ 1 means at/over the ceiling). */
+  fraction: number
+  /** 'ok' (room), 'warn' (close), 'over' (would cross the reserved space). */
+  state: 'ok' | 'warn' | 'over'
+  /** The C64 address the budget is measured up to ($3000 tiled, else $D000). */
+  ceilingAddr: number
+}
+
 /** Result of a Build & Run: which stage reached, logs, and what to show. */
 export interface BuildResult {
   ok: boolean
@@ -147,4 +176,7 @@ export interface BuildResult {
   prgPath?: string
   /** True when the .prg was built but no VICE path is configured to run it. */
   needsVicePath?: boolean
+  /** RAM usage vs the planned ceiling (STAHL S1c) — set when a .prg was produced, or
+   *  reported as `over` when the linker rejected the build for overflowing the island. */
+  ram?: RamInfo
 }

@@ -7,7 +7,271 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-12
+
+### Geändert
+- **CRUMB unterscheidet jetzt Groß- und Kleinschreibung — und schenkt Dir damit Deine Wörter zurück
+  (EISEN M2.T2).** Bisher war `fire` dasselbe wie `FIRE`, also durftest Du keine Variable `fire` nennen —
+  der Übersetzer hielt sie für die Joystick-Konstante und verschluckte sich. Genau diese Reibung ist weg:
+  ein CRUMB-Wort ist ab jetzt NUR seine eine kanonische Schreibweise. `FIRE` ist die Konstante, `If` das
+  Schlüsselwort, `Next` das Schleifenende — aber `fire`, `next`, `max` (kleingeschrieben) gehören wieder
+  Dir und dürfen heißen, was Du willst. Die kanonische Schreibweise selbst bleibt reserviert: schreibst Du
+  versehentlich `Next = 1`, sagt BreadCraft klar „‚Next' ist ein CRUMB-Wort — schreib es z. B. klein". Und
+  vertippst Du Dich in der Schreibweise eines Schlüsselworts (`if` statt `If`), rätst Du nicht mehr im
+  Dunkeln: „meintest Du ‚If'? CRUMB unterscheidet Groß- und Kleinschreibung."
+- **Der Editor spricht jetzt dieselbe Sprache wie der Übersetzer (EISEN M2.T2b).** Die Schreibhilfe ist
+  nachgezogen: Der Editor färbt Wörter ab jetzt *case-sensitiv* — `If` leuchtet als Schlüsselwort, `if`
+  oder `iff` bleiben schlichter Text, genau wie der Übersetzer sie sieht. Und vor allem hört die
+  Auto-Korrektur auf, Dir Deine Variablen zu klauen: Tippst Du `vwait = 1`, bleibt es `vwait` — die
+  Korrektur macht daraus nicht mehr heimlich das Schlüsselwort `VWait`. Sie greift nur noch dort, wo ein
+  CRUMB-Wort eindeutig ist (eine Farbe als Argument, `Cls black` → `Cls BLACK`; ein Funktionsaufruf,
+  `joystick(` → `Joystick(`) — und lässt im Zweifel die Finger davon, denn ein zerstörter Variablenname
+  ist teurer als ein nicht korrigiertes Schlüsselwort. (Ein Kommentarzeichen-Rest ist dabei auch gefallen:
+  der Editor erkennt jetzt `;` als Kommentar, nicht mehr das alte BASIC-Hochkomma `'` — die Färbung im
+  Editor und die Regeln des Übersetzers decken sich damit endgültig.)
+
+### Intern
+- **Die Wort-Rolle wird sauber im Parser entschieden, nicht mehr mit einem Pflaster (EISEN M2.T2).** Damit
+  ein Wort wie `MAX` nach `Const` als Name durchging, obwohl der alte Lexer es als Funktion einstufte, gab
+  es eine Sonderliste („nimm den Namen, egal was der Lexer meint"). Die ist weg. Stattdessen gilt eine
+  einzige, klare Regel: die exakte kanonische Schreibweise eines CRUMB-Worts ist reserviert, alles andere
+  ist ein freier Bezeichner. Der Statement-Einstieg prüft zuerst die Zuweisungs-Form (`name = …`), dann
+  Schlüsselwörter, dann Aufrufe — und ein reserviertes Wort als Ziel quittiert er mit einem präzisen
+  Hinweis statt einer Allgemeinplatz-Fehlermeldung. Kein für Dich neuer Knopf, aber das Fundament, auf dem
+  die einzeiligen `If`-Ketten und die vereinte Argumentliste als Nächstes stehen. (Eine Plan-Abweichung,
+  bewusst für die nächste Review markiert: der ursprünglich geplante gemeinsame Namens-Knoten im
+  Syntaxbaum wurde vorerst zurückgestellt — die Groß-/Kleinschreibung allein erledigt das Kernproblem;
+  bessere Tippfehler-Hinweise im Übersetzer bleiben eine spätere Politur.)
+- **Das Sicherheitsnetz für den Parser-Umbau ist gespannt (EISEN M0.T1).** Bevor am Herz der Sprache
+  geschraubt wird, hängen jetzt 19 Architektur-Schmerzfälle als fester Test (`parser.archcases.test.ts`) —
+  vom zweiwörtrigen `End If` über die Variable namens `next` bis zur einzeiligen `If…Then`-Kette. Sieben
+  Fälle parsen schon heute sauber; die zwölf, die es noch nicht tun, stehen bewusst als `it.fails`: Sie
+  laufen mit, MÜSSEN heute scheitern — und in der Sekunde, in der ein späterer Umbau-Schritt sie repariert,
+  schlägt das Netz an und erzwingt, dass der Fall auf „muss-grün" hochgestuft wird. So kann kein
+  reparierter Fall heimlich wieder verrotten. (Noch kein für dich sichtbarer Unterschied — das Netz liegt
+  unter dem Boden, nicht auf der Bühne.)
+- **Der Lexer hat sich dumm gestellt — und genau das ist der Fortschritt (EISEN M2.T1).** Bisher fällte
+  die erste Stufe des Übersetzers, der Wort-Zerteiler, eine Entscheidung, die ihr gar nicht zustand: Sie
+  versuchte schon beim Zerlegen festzulegen, ob ein Wort ein Befehl, eine Konstante oder ein Schlüsselwort
+  ist — ohne den Satz drumherum zu kennen. Das ist die Wurzel einer ganzen Fehlerfamilie (warum `next` keine
+  Variable sein durfte, warum `End If` in zwei Wörtern scheiterte). Jetzt reicht der Zerteiler jedes Wort
+  einfach als schlichtes „Wort" weiter; *welche* Rolle es spielt, klärt der Parser, der den Kontext sieht.
+  Mit umgezogen ist die Zwei-Wort-Verschmelzung (`End If` → `EndIf`, strikt nur die kanonische Schreibweise)
+  und der doppelte Datei-Durchlauf für Record-Typen ist ersatzlos weggefallen. Das erzeugte C ist Byte für
+  Byte dasselbe wie vorher — diese Runde legt nur das Fundament, auf dem die sichtbaren Reparaturen (`fire`
+  als Variable, einzeilige `If`-Ketten) als Nächstes stehen werden. Eine bewusst kleine Abweichung vom Plan:
+  der Zerteiler kennt das Vokabular noch für *eine* rein lexikalische Grenze (`Left$` bleibt ein Wort, nicht
+  `Left` + `$`) — keine Grammatik-Klassifikation, nur eine Wortgrenze.
+
 ### Hinzugefügt
+- **`End If`, `Else If` und `End Function` darfst Du jetzt in zwei Wörtern schreiben.** Wer aus anderen
+  BASIC-Dialekten kommt, tippt die Block-Enden gern getrennt — und stieß bisher gegen eine Wand: CRUMB
+  kannte nur `EndIf`, `ElseIf`, `EndFunction` am Stück, die getrennte Schreibweise war schlicht ein Fehler.
+  Jetzt versteht BreadCraft beide. Eine kleine, ehrliche Grenze bleibt: verschmolzen wird nur die saubere
+  Groß-/Kleinschreibung (`End If`, nicht `end if`) — damit später keine Zweideutigkeit entsteht und der
+  Editor Dir bei `end if` freundlich „meintest Du `End If`?" zurufen kann. Und ein einsames `Else` auf
+  eigener Zeile, gefolgt von einem `If` in der nächsten, bleibt natürlich ein verschachteltes If — nur das
+  unmittelbare `Else If` in *einer* Zeile wird zusammengezogen.
+- **Die RAM-Anzeige lebt jetzt — und kennt die echte Wand.** Der RAM-Balken oben war bisher nur ein
+  hübsches Versprechen (er zeigte „—"). Jetzt füllt er sich nach jedem Build mit der *echten* Größe deines
+  Programms — gemessen gegen die Decke, die für *dein* Projekt gilt: Benutzt du einen Zeichensatz, ist das
+  die reservierte Grafik-Grenze ($3000); sonst der ganze nutzbare Speicher. Der Balken läuft gelb, wenn es
+  eng wird, und rot, wenn du an die Wand stößt — du siehst also „wird voll", *bevor* der Übersetzer abbricht,
+  statt überrascht zu werden. Und wenn ein Programm doch zu groß wird, sagt BreadCraft jetzt klar um wie
+  viele Bytes — keine kryptische Linker-Zeile mehr.
+- **Das erste echte Level läuft: gemalter Held auf gemalter Welt.** Der Bogen schließt sich — ein im IDE
+  gemaltes Into-The-Deep-Level läuft als echtes CRUMB-Programm auf dem C64 (in VICE): das gemalte Tileset
+  und die gemalte Karte bilden die Welt, der gemalte Spieler-Sprite springt mit der abgenommenen
+  Plattformer-Physik hindurch und kollidiert gegen die festen Tiles — sauber und flüssig, alles farbtreu
+  aus der Projekt-Palette. Der Clou unter der Haube: weil der Spieler jetzt ein *Sprite* ist (eigener
+  Hardware-Layer) statt einer bewegten Kachel, kollidiert er nicht mehr mit sich selbst — das mühsam von
+  Hand gepflegte Schatten-Array der Phase-1-Skizze fällt ersatzlos weg. Die Kollision liest direkt die
+  gemalte Karte (`TileSolid`, Konvention: Kachel 0 = leer/begehbar, jede andere = fest). Das CRUMB wurde
+  dadurch *kürzer*, nicht länger.
+- **Die Projekt-Palette färbt jetzt wirklich.** Bisher war der Palette-Editor ein hübsches Versprechen:
+  Du konntest die geteilten C64-Farben festlegen und speichern — aber das laufende Spiel scherte sich
+  nicht darum, es buk stur Braun und Orange ein. Das ist vorbei. `UseTileset` und `UseSprite` lesen jetzt
+  die Projekt-Palette und setzen genau die Farben, die du gewählt hast: Hintergrund und die beiden
+  geteilten Register, die sich Kacheln UND Sprites von Hardware wegen teilen (eine Wahrheit fürs ganze
+  Bild, kein doppelter Buchhaltungsposten). Hat ein Projekt noch gar keine Palette, greifen ehrliche
+  Standardfarben statt eines Absturzes; eine kaputte Palette-Datei dagegen fällt sofort auf, statt sich
+  stillschweigend wegzumogeln.
+- **Sprites bekommen ihre eigene Farbe.** Ein Multicolor-Sprite hat vier Farb-Rollen: durchsichtig, zwei
+  geteilte (die aus der Palette) und eine *individuelle*, die jeder Figur allein gehört. Genau die ließ
+  sich bisher nicht wählen — sie war fest auf Weiß genagelt, alle Sprites gleich. Jetzt liegt im
+  Sprite-Editor ein Farbfeld-Wähler für diese eine freie Farbe; sie wandert in die `.sprite`-Datei und
+  von dort ins Programm. So tragen Spieler und Schleim ihre eigene Note, während die beiden geteilten
+  Farben weiter projektweit gekoppelt bleiben — das Modell, das den Hybrid-Farbsprung von vornherein
+  unmöglich macht, nicht bloß verbietet. (Alte `.sprite`-Dateien ohne diese Farbe lesen sich klaglos als
+  Weiß — nichts geht verloren.)
+- **„Neuer Sprite": eine leere Fläche zum Ausprobieren.** Der Sprite-Editor ist jetzt ein Skizzenblock.
+  Ein Klick auf „Neuer Sprite" wischt die Leinwand frei — und schreibt dabei *nichts* auf die Platte. Die
+  Datei entsteht erst, wenn die Skizze gut wird und du bewusst „Speichern als" wählst; verwirfst du das
+  Gekritzel, bleibt keine Spur zurück. Genau so probiert man eine Figur aus, ohne sich vorab auf Name und
+  Ordner festzulegen. Hat die aktuelle Zeichnung ungespeicherte Änderungen, fragt ein kurzer Dialog nach,
+  bevor er sie verwirft — ein Fehlklick kostet nie Arbeit. (Dafür hat BreadCraft nun auch einen echten
+  Ja/Nein-Dialog, nicht nur Eingabe und bloße Meldung.)
+
+### Geändert
+- **„Speichern als" heißt jetzt „Speichern als".** Der Knopf im Datei-Dialog trug die verwirrende
+  Aufschrift „Hier speichern" / „Save here" — vertrauter und zum Dialogtitel passend ist „Speichern als" /
+  „Save as".
+- **Projektname schön, Ordnername sicher.** Beim Anlegen darf das Projekt einen freien Namen mit
+  Großschreibung und Leerzeichen tragen (z. B. „Into The Deep") — der bleibt als Anzeigename erhalten.
+  Auf der Festplatte legt BreadCraft daraus aber automatisch einen sauberen Ordner- und Dateinamen an
+  („into-the-deep"): kleingeschrieben, Bindestriche statt Leerzeichen, keine Sonderzeichen. So stolpert
+  später keine Werkzeugkette (Compiler, Emulator, Versionsverwaltung) über Leerzeichen im Pfad — der
+  Komfort eines hübschen Titels ohne die versteckten Kosten.
+
+### Behoben
+- **Argumentlisten verstehen sich jetzt in einer Routine — und ein vergessenes Klammerpaar wird erklärt
+  (EISEN M2.T4).** Drei Reibungen auf einmal geglättet: (1) Ein eigener Befehl wie `Heal(5, 3)` — mit
+  Klammern UND mehreren Argumenten — ging bisher schief (der Übersetzer las `(5` als angefangene Klammer
+  und stolperte über das Komma); jetzt läuft er. (2) Setzt Du nur das ERSTE Argument in Klammern,
+  `DrawText (1), 2, "hi"`, wird das nicht mehr für die Klammer um die ganze Liste gehalten — ein
+  Ein-Zeichen-Blick voraus erkennt am Komma hinter der `)`, dass es bloß ein gruppiertes erstes Argument
+  war. (3) Vergisst Du die Pflicht-Klammern bei einer Wert-Funktion (`y = Dist 3` statt `Dist(3)`), bekommst
+  Du jetzt einen klaren Satz statt einer kryptischen Fehlermeldung über die Zahl danach: „‚Dist' ist eine
+  Funktion und gibt einen Wert zurück — ruf sie mit Klammern auf, z. B. Dist(…)". Unter der Haube teilen
+  sich Befehle, anweisungsartige Funktionen und Wert-Funktionen ab jetzt EINE Argument-Routine, statt vier
+  leicht verschiedene — weniger Code, der auseinanderlaufen kann. **Damit ist der ganze Parser-Neubau durch:
+  jede der Schreibweisen, an denen sich der alte Parser verschluckte, parst jetzt sauber.**
+- **`If` versteht jetzt jede natürliche Schreibweise (EISEN M2.T3).** Bisher gab es eine stille
+  Stolperstelle: Schriebst Du `If x > 0 Then` und gingst dann in die nächste Zeile (mit `EndIf` am Ende),
+  verschluckte sich der Übersetzer — die alte Regel deutete „`Then`" als „jetzt kommt genau EINE Anweisung,
+  und zwar sofort", und ein Zeilenumbruch passte da nicht hinein. Auch `If x > 0 Then : … : EndIf` in einer
+  Zeile ging nicht. Jetzt gibt es nur noch EINE If-Routine, und `Then` ist überall bloß ein höfliches
+  Füllwort: Was DANACH steht, entscheidet die Form — kommt ein Zeilenumbruch, läuft der Rumpf über die
+  nächsten Zeilen bis `EndIf`; bleibst Du in der Zeile, ist es eine `:`-Kette bis `EndIf` oder Zeilenende
+  (und das `EndIf` darfst Du Dir bei der einzeiligen Form sparen). Alle vier Schreibweisen, die ein Mensch
+  intuitiv hinschreibt, parsen damit gleich gut — die einzeilige `If … Then x = 1`, die `:`-Kette, der
+  Block mit und ohne `Then`. (Die Inline-Logik ist als wiederverwendbarer Baustein angelegt — einzeilige
+  `While`/`For` könnten später denselben Weg gehen.)
+- **2D-Tabellen mit Bildschirmbreite sind nicht mehr heimlich teuer.** `feld[x, y]` rechnet intern
+  `zeile · breite + spalte` — und der 6502 kann nicht multiplizieren. Bei der typischen Breite 40
+  rief der Compiler bisher seine langsame Software-Multiplikation auf (hunderte Takte pro Zugriff),
+  ohne dass man es sah — ausgerechnet bei der allerüblichsten Tabellenbreite. Jetzt zerlegt BreadCraft
+  eine feste Breite in billige Bit-Verschiebungen (40 = 32 + 8 → zwei Shifts statt einer Multiplikation;
+  am Assembler nachgemessen: kein Multiplizierer-Aufruf mehr). Damit ist ein 2D-Zugriff pro Frame wieder
+  günstig, so wie die Dokumentation es immer versprochen hatte. (Eine zur Laufzeit variable Breite bleibt
+  ehrlich eine Multiplikation — da gibt es nichts zu verschieben.)
+- **Ein wachsendes Spiel kann sich nicht mehr heimlich selbst überschreiben.** Unter der Haube lag eine
+  tickende Bombe: Der Zeichensatz Deiner Welt lebt an einer festen Stelle im Speicher ($3000), aber der
+  Linker wusste nichts davon — er stapelte Programmcode lückenlos nach oben. Klein war alles gut; sobald ein
+  Spiel aber über ~10 KB wuchs, schob sich der Code mitten durch den Zeichensatz-Bereich, und beim Start
+  kopierte das Spiel seine Kacheln über den eigenen Code: ein unerklärlicher Absturz, keine Warnung. Jetzt
+  rechnet BreadCraft vor jedem Build eine maßgeschneiderte Speicherkarte aus dem, was Dein Projekt wirklich
+  benutzt: Wer einen Zeichensatz/Sprites verwendet, bekommt genau diese Bereiche **reserviert** — und würde
+  der Code hineinwachsen, sagt der Übersetzer es Dir **ehrlich vor dem Start** („passt nicht mehr"), statt
+  Dich in einen Geisterabsturz laufen zu lassen. Wer gar keine Grafik benutzt, bekommt im Gegenzug den
+  **vollen** Speicher, ohne künstliche Schranke. (Die Adresse, die ins Programm gebacken wird, und die im
+  Linker stammen jetzt aus *einer* Rechnung — sie können nicht mehr auseinanderlaufen.)
+- **Neue Dateien starten nicht mehr mit einer kaputten Zeile.** Legtest Du eine neue `.crumb`-Datei
+  an, schrieb BreadCraft ihr eine Kopfzeile mit dem Dateinamen voran — aber im alten BASIC-Stil mit
+  einem Hochkomma (`'`) als Kommentarzeichen. CRUMB kommentiert jedoch mit Strichpunkt (`;`), also war
+  ausgerechnet die allererste Zeile jeder frischen Datei für den Übersetzer ein Fehler. Jetzt steht dort
+  ein sauberes `;` — die Datei ist vom ersten Zeichen an gültig.
+- **Rückwärts zählen läuft jetzt rückwärts — und endet auch.** `For i = 10 To 1 Step -1` tat bisher
+  schlicht nichts: der Übersetzer prüfte stur „ist `i` schon zu groß?", und weil 10 sofort größer als 1
+  ist, sprang die Schleife übersprungen weiter — kein Durchlauf, kommentarlos. Jetzt erkennt BreadCraft den
+  negativen Schritt und zählt richtig herunter. Und es gibt eine ehrliche Wahrheit obendrauf, die der C64
+  Dir sonst böse heimzahlt: eine normale Zahl (`.b`/`.w`) kennt kein „unter Null" — bei 0 springt sie auf
+  255 zurück, und eine Abwärtsschleife würde ewig kreiseln. Darum sagt BreadCraft beim Herunterzählen klar:
+  „nimm einen `.i`-Zähler" (die vorzeichenbehaftete Zahl, die auch unter Null darf), statt Dich in eine
+  unsichtbare Endlosschleife laufen zu lassen.
+- **Die 255-Falle beim Hochzählen ist zugemauert.** Spiegelbildlich dazu: `For i = 0 To 255` mit einem
+  Byte-Zähler sah harmlos aus, war aber dieselbe Endlosfalle — nach 255 kippt das Byte zurück auf 0, „kleiner
+  gleich 255" bleibt für immer wahr. Statt das stillschweigend zu generieren, sagt BreadCraft jetzt ehrlich,
+  dass der Zähler überläuft, und schickt Dich zum größeren `.w`-Zähler. (Und ein versehentliches `Step 0`,
+  das den Zähler nie bewegt, fällt jetzt ebenfalls sofort auf, statt das Programm festzunageln.)
+- **Rechnungen mit `Shl`, `Xor` & Co. ergeben jetzt, was Du meinst.** Eine stille, gemeine Falle:
+  CRUMB und die C-Sprache darunter sind sich nicht ganz einig, wie streng manche Rechenzeichen binden.
+  In CRUMB klebt `Shl` (und `Shr`/`Xor`) so fest wie ein Mal-Zeichen — `a + b Shl 2` heißt „erst `b`
+  verschieben, dann `a` dazu". C sah dieselbe Zeile ohne Klammern und las sie andersherum, rechnete also
+  klammheimlich etwas anderes aus. Kein Fehler, keine Warnung — nur ein falsches Ergebnis, das erst im
+  Spiel auffällt. Jetzt setzt der Übersetzer um jede Teilrechnung eine Klammer, genau so, wie Du sie
+  gedacht hast; das Ergebnis stimmt immer mit Deiner Zeile überein. (Sichtbar wird das nur, wenn Du in die
+  optionale C-Ansicht schaust — die zeigt jetzt mehr Klammern. Ein Schaufenster lügt nicht, also zeigt es
+  ehrlich, was passiert; ein aufgeräumterer Druck, der nur dort klammert, wo's nötig ist, kommt später.)
+- **Sprite öffnen rutschte nicht mehr in Frame 1.** Wer im Explorer doppelt auf ein Sprite klickte, sah
+  seine Figur plötzlich in Frame 1 wandern, mit einem leeren Frame 0 davor. Schuld war ein winziges
+  Zeitfenster: Der Editor leerte die Bildliste, *bevor* er die Datei gelesen hatte — und in genau diesem
+  Augenblick schob die Leinwand reflexartig ein leeres Bild nach. Jetzt wird erst gelesen, dann in einem
+  Zug getauscht; ein leerer Zwischenzustand entsteht gar nicht erst.
+
+### Hinzugefügt
+- **Das `.sprite`-Format: ein Zuhause für bewegte Gestalten.** BreadCraft kennt jetzt das Dateiformat
+  für Sprites — die freischwebenden 24×21-Figuren, die der C64 unabhängig vom Kachel-Hintergrund über
+  den Bildschirm schiebt (Spieler, Gegner). Eine `.sprite`-Datei = *eine* Figur, aber von Anfang an mit
+  Platz für mehrere Animations-Bilder derselben Figur, damit später das Laufen wackeln und der Schleim
+  schwabbeln kann, ohne dass das Format neu erfunden werden muss. Wie schon beim Charset speichert die
+  Datei die rohen C64-Bytes (63 pro Bild, modus-unabhängig) — Hi-Res oder Multicolor wird beim Malen
+  interpretiert, nicht in die Datei eingebrannt; alle vier Multicolor-Farben überleben das
+  Speichern+Laden verlustfrei. Das Projekt-Manifest führt jetzt eine `sprites`-Liste, und die Bauwerk-
+  Brücke kann eine Sprite-Gestalt aus ihrem Namen auflösen (streng und früh: ein unbekannter Name, eine
+  fehlende Datei oder ein verbogenes Bild fällt sofort auf, lange bevor der Compiler läuft).
+- **Der Sprite-Editor: Figuren malen, Bild für Bild.** Jetzt lässt sich eine Sprite-Gestalt direkt im
+  IDE malen — auf demselben Pixel-Werkzeugkasten wie der Zeichensatz-Editor (Stift, Linie, Rechteck,
+  Füllen, beliebig zurück und vor), nur auf der Sprite-Leinwand von 24×21 Pixeln. Im Multicolor-Modus
+  zeigt sie ehrlich die doppelt breiten Pixel (2:1), wie der C64 sie zeigt. Links ein **Frame-Streifen**:
+  eine Figur kann mehrere Bilder tragen — neue mit „+" anlegen, durchklicken, überzählige wegwerfen
+  (das letzte bleibt, eine Figur braucht mindestens eins) —, der Stoff, aus dem später Animation wird.
+  Die Farben kommen aus der Projekt-Palette, gespeichert wird wie überall bewusst von Hand (Knopf oder
+  Strg+S), und die Figur überlebt den Neustart.
+- **`UseSprite`: die gemalte Figur landet im Programm.** Der Befehl, der ein im Sprite-Editor gemaltes
+  Bild zur Übersetzungszeit in das C64-Programm einbäckt und einem der acht Hardware-Sprite-Slots gibt:
+  `UseSprite 0, "player"`. Der Slot (0–7) ist dieselbe Nummer, die `Sprite`, `ShowSprite` und
+  `HideSprite` verwenden — `UseSprite` gibt die *Gestalt*, jene geben *Position* und *Sichtbarkeit*. Am
+  lesbarsten vergibt man ihn als benannte Zahl (`Const SPIELER = 0`), statt nackte Ziffern durchs
+  Programm zu tragen. BreadCraft bäckt nur, was nötig ist, prüft einen festen Slot vorab gegen die
+  C64-Wahrheit (es gibt genau acht; eine 8 ist ein ehrlicher Fehler, kein kryptischer cc65-Absturz), und
+  im Multicolor-Modus setzt es das Sprite-Multicolor-Bit und die geteilten Farben aus der Projekt-Palette
+  gleich mit. Auf echter cc65 zur lauffähigen `.prg` gebaut und in VICE bewegt. *(Die individuelle, dritte
+  Sprite-Farbe ist vorerst ein Standardwert — eine pro-Sprite wählbare Farbe kommt später.)*
+- **Vorzeichen-Zahlen: der neue Typ `.i`.** Bisher kannte BreadCraft nur Zahlen ab null aufwärts
+  (`.b` 0–255, `.w` 0–65535). Für Bewegung braucht man aber auch *negative* Werte — eine Sprung-
+  Geschwindigkeit zeigt nach oben, ein Abstand kann in beide Richtungen gehen. Dafür gibt es jetzt
+  `.i`: eine vorzeichenbehaftete Ganzzahl von −32768 bis 32767. Damit liest sich Physik so, wie man
+  sie denkt — `vy.i = 0 - sprungkraft` lässt die Figur steigen, die Schwerkraft zählt sie wieder
+  herunter. „Vorzeichen ist ansteckend": rechnet man mit einer `.i`-Zahl, bleibt das Ergebnis
+  vorzeichenbehaftet, und BreadCraft warnt ehrlich, falls ein negativer Wert in einen Typ ohne
+  Vorzeichen geschrieben würde (wo er sich in eine riesige Zahl verwandeln würde). Auf echter cc65 gebaut.
+- **Rechen-Helfer: `Abs`, `Min`, `Max`.** Die drei kleinen Werkzeuge, die fast jede Spiellogik
+  braucht: **Abs** für den Betrag (etwa der Abstand zweier Dinge — `Abs(spielerX - gegnerX)`, egal wer
+  links steht), **Min** und **Max** zum Begrenzen (Leben auffüllen, aber nie über das Maximum:
+  `leben = Min(leben + trank, 20)`; und nie unter null: `leben = Max(leben - schaden, 0)`). Alles reine
+  Ganzzahl-Mathematik (der C64 kennt keine Kommazahlen, und das soll er auch nicht müssen), billig, im
+  Frame nutzbar. Auf echter cc65 gebaut.
+- **Funktionen: eigene Bausteine, statt ein 300-Zeilen-Block.** BreadCraft versteht jetzt
+  `Function … Return … EndFunction` — der Weg, Spiellogik in lesbare Stücke zu zerlegen (Sprungphysik,
+  Kollision, Gegner-Update). Das Suffix am Namen entscheidet alles: **mit** `.b`/`.w`/`$` gibt die
+  Funktion einen Wert zurück und wird mit Klammern aufgerufen (`weite.w = Distance(a, b)`); **ohne**
+  Suffix ist sie ein Befehl ohne Rückgabewert, aufrufbar ohne Klammern (`Heil 10`). Parameter und
+  eigene Variablen leben nur im Aufruf; geteilten Zustand hält man über `Global`. **Rekursion** (eine
+  Funktion ruft sich selbst) ist ehrlich verboten — der 6502 hat keinen echten Variablen-Stack, also
+  sagt BreadCraft das klar, statt es heimlich überlaufen zu lassen.
+- **Records an Funktionen übergeben, ohne Kopier-Kosten.** Man darf einer Funktion einen ganzen
+  `Type` (z. B. einen Gegner) übergeben — `Function Treffer.b(g.Gegner)` — und im Code fühlt es sich
+  an wie „Wert rein". Hinter den Kulissen reicht BreadCraft nur die Adresse weiter (kein Byte-für-Byte-
+  Kopieren auf dem 6502) und sorgt dafür, dass die Funktion den übergebenen Record nur lesen, nicht
+  heimlich verändern kann. Auf echter cc65 gebaut und geprüft — der Komfort kostet nichts.
+- **Eingabe: der Joystick steuert das Spiel.** Der Übersetzer versteht jetzt **Joystick(RICHTUNG)** —
+  eine ehrliche Ja/Nein-Frage „wird gerade nach LEFT, RIGHT, UP, DOWN oder gegen FIRE gedrückt?"
+  (Port 2, der C64-Spiele-Standard). Keine Achsenwerte, weil der C64 keine kennt — fünf Bit, mehr
+  gibt die Hardware nicht her. Der Treiber wird einmal beim Programmstart hinter den Kulissen
+  eingerichtet; im Spiel fragt man einfach `If Joystick(LEFT) Then …`. Damit baut der erste
+  **per Joystick bewegte Sprite** end-to-end bis zur lauffähigen `.prg` (mit der gebündelten cc65
+  geprüft). Noch nicht dabei: **KeyDown/KeyHit** (Tastatur) — die C64-Tastaturmatrix und die
+  Tasten-Konstanten bekommen einen eigenen Milestone; bis dahin bewegt der Joystick.
+- **Sprites: bewegliche Figuren, die der VIC-Chip von selbst zeichnet.** Der Übersetzer
+  versteht jetzt die vier Sprite-Befehle: **Sprite n, x, y** stellt Sprite Nummer n an eine
+  Pixelposition (0–319 / 0–255) — anders als eine Kachel klebt es nicht am 8×8-Raster, sondern
+  gleitet pixelweise; das fummelige 9. X-Bit (für die rechte Bildschirmhälfte) erledigt BreadCraft
+  hinter den Kulissen. **ShowSprite n** / **HideSprite n** schalten ein Sprite an und aus,
+  **Sprite n, OFF** ist die Kurzform fürs Ausschalten. Alle bauen end-to-end bis zur lauffähigen
+  `.prg` (mit der gebündelten cc65 geprüft). Noch nicht dabei: **UseSprite** (die gemalte
+  Sprite-Form einbacken) — dafür fehlt noch der Sprite-Editor, das kommt mit dessen Milestone;
+  bis dahin positioniert/zeigt/versteckt man Formen, die anderswo eingerichtet wurden.
 - **Vorschau in den Editoren: man sieht, wohin man malt.** Fährt man im Tilemap-Editor mit
   der Maus über die Karte, erscheint die ausgewählte Kachel schon halbtransparent auf der Zelle
   unter dem Zeiger — in der gerade gewählten Zellfarbe. Im PETSCII-Editor leuchtet das Pixel unter

@@ -21,14 +21,16 @@ import type {
   IfStmt,
   WhileStmt,
   RepeatStmt,
-  ForStmt
+  ForStmt,
+  FunctionDecl,
+  ReturnStmt
 } from './index'
 
 // Lexer + parser together, against the REAL SSOT vocabulary.
 const vocab: VocabItem[] = buildVocabulary(rawSsot as unknown as Ssot)
 
 function parseSrc(src: string): { program: Program; errors: string[] } {
-  const { program, errors } = parse(tokenize(src, vocab))
+  const { program, errors } = parse(tokenize(src, vocab), vocab)
   return { program, errors: errors.map((e) => `${e.line}:${e.col} ${e.message}`) }
 }
 
@@ -64,6 +66,19 @@ describe('parser: command statements', () => {
     expect(s.kind).toBe('CommandStmt')
     expect(s.args).toHaveLength(1)
     expect(s.args[0].kind).toBe('ConstantRef')
+  })
+
+  it('one arg routine: wrapping parens hold the WHOLE list — Heal(5, 3) (C3, M2.T4)', () => {
+    const src = ['Function Heal(n.b, m.b)', '  Return', 'EndFunction', 'Heal(5, 3)'].join('\n')
+    const { program, errors } = parseSrc(src)
+    expect(errors).toEqual([])
+    const call = program.body.find((s) => s.kind === 'CallStmt') as { args: Expr[] }
+    expect(call.args.map((a) => (a as { raw?: string }).raw)).toEqual(['5', '3'])
+  })
+
+  it('one arg routine: a grouped FIRST arg is not a wrapper — DrawText (1), 2, "hi" (E2)', () => {
+    const s = firstStmt('DrawText (1), 2, "hi"') as CommandStmt
+    expect(s.args.map((a) => a.kind)).toEqual(['Grouping', 'NumberLit', 'StringLit'])
   })
 })
 
@@ -171,19 +186,21 @@ describe('parser: declarations (Global / Const)', () => {
     expect(s.value.kind).toBe('NumberLit')
   })
 
-  it('parses  Const MAX = 5  even though MAX collides with the Max function (M3.T0a)', () => {
-    // The lexer classifies MAX as the Max function (SSOT), but after `Const` it is a
-    // user name. The parser must take the name regardless of the lexer's class.
+  it('parses  Const MAX = 5  — MAX ≠ the Max function (case-sensitive, M2.T2)', () => {
+    // Under case-sensitivity MAX is not the canonical `Max`, so it is a free name —
+    // no collision to resolve, it simply parses.
     const s = firstStmt('Const MAX = 5') as ConstStmt
     expect(s.kind).toBe('ConstStmt')
     expect(s.name).toBe('MAX')
     expect(s.value.kind).toBe('NumberLit')
   })
 
-  it('parses  Const LEFT = 1  (collides with the LEFT direction constant, M3.T0a)', () => {
-    const s = firstStmt('Const LEFT = 1') as ConstStmt
-    expect(s.kind).toBe('ConstStmt')
-    expect(s.name).toBe('LEFT')
+  it('rejects  Const LEFT = 1  — LEFT is a reserved CRUMB word (N1)', () => {
+    // The reserved-word rule (case-sensitive) overrides the old M3.T0a leniency: the
+    // exact canonical `LEFT` is the direction constant and can't be redeclared. The
+    // user would write `links` / `left` instead.
+    const { errors } = parseSrc('Const LEFT = 1')
+    expect(errors.some((e) => /CRUMB-Wort/.test(e))).toBe(true)
   })
 
   it('parses a 1D  Dim punkte.b[10]', () => {
@@ -265,9 +282,9 @@ describe('parser: records (Type/Field/EndType, backslash access)', () => {
     expect(target.field).toBe('count')
   })
 
-  it('allows field names that collide with SSOT words (M3.T0b)', () => {
-    // `len` is the Len function, `type` the Type keyword — as FIELD names (declared
-    // and accessed) they must parse, not be swallowed by the lexer's classification.
+  it('allows lowercase field names that look like SSOT words (case-sensitive, M2.T2)', () => {
+    // `len`/`type` are not the canonical `Len`/`Type`, so under case-sensitivity they
+    // are ordinary field names — declared and accessed without trouble.
     const src = ['Type Slot', '  Field len.b', '  Field type.b', 'EndType', 't[0]\\len = 2'].join('\n')
     const { program, errors } = parseSrc(src)
     expect(errors).toEqual([])
@@ -277,10 +294,10 @@ describe('parser: records (Type/Field/EndType, backslash access)', () => {
     expect((assign.target as FieldExpr).field).toBe('len')
   })
 
-  it('allows a record type name that collides with an SSOT word (M3.T0b)', () => {
-    // `End` is a keyword; as a Type NAME after `Type` it is a user identifier.
+  it('rejects a record type named exactly a CRUMB word (Type End → reserved, N1)', () => {
+    // `End` is the canonical End command — reserved, so it can't be a type name.
     const { errors } = parseSrc(['Type End', '  Field x.b', 'EndType'].join('\n'))
-    expect(errors).toEqual([])
+    expect(errors.some((e) => /CRUMB-Wort/.test(e))).toBe(true)
   })
 })
 
@@ -311,6 +328,29 @@ describe('parser: control flow (2b)', () => {
     expect(s.elifs).toHaveLength(1)
     expect(s.elifs[0].body).toHaveLength(1)
     expect(s.else).toHaveLength(1)
+  })
+
+  it('one If routine: Then + Newline is a BLOCK, not a one-statement Then (A1, M2.T3)', () => {
+    // `Then` is filler; the Newline after it means the body runs over the next lines
+    // up to EndIf — the shape the old "Then ⇒ exactly one statement" rule choked on.
+    const s = firstStmt(['If x > 0 Then', '  x = 1', '  y = 2', 'EndIf'].join('\n')) as IfStmt
+    expect(s.kind).toBe('IfStmt')
+    expect(s.then.map((t) => t.kind)).toEqual(['AssignStmt', 'AssignStmt'])
+    expect(s.elifs).toHaveLength(0)
+    expect(s.else).toBeUndefined()
+  })
+
+  it('one If routine: Then + colon chain on one line (A2, M2.T3)', () => {
+    const s = firstStmt('If x > 0 Then : x = 1 : y = 2 : EndIf') as IfStmt
+    expect(s.then.map((t) => t.kind)).toEqual(['AssignStmt', 'AssignStmt'])
+    expect(s.else).toBeUndefined()
+  })
+
+  it('one If routine: inline Else on a single line', () => {
+    const s = firstStmt('If x > 0 Then a = 1 Else a = 2') as IfStmt
+    expect(s.then).toHaveLength(1)
+    expect(s.else).toHaveLength(1)
+    expect((s.then[0] as AssignStmt).value.kind).toBe('NumberLit')
   })
 
   it('parses the frame loop While 1 … Wend', () => {
@@ -372,5 +412,95 @@ describe('parser: control flow (2b)', () => {
     expect(errors.some((e) => /Wend/.test(e))).toBe(true)
     // The While still produced a node (with the body it could read).
     expect(program.body[0].kind).toBe('WhileStmt')
+  })
+})
+
+describe('parser: functions (P1.T2, Sprachdef §C.1)', () => {
+  it('parses a value function: name, return suffix, typed params, body', () => {
+    const src = ['Function Distance.w(x1.b, y1.b)', '  Return x1 + y1', 'EndFunction'].join('\n')
+    const s = firstStmt(src) as FunctionDecl
+    expect(s.kind).toBe('FunctionDecl')
+    expect(s.name).toBe('Distance')
+    expect(s.returnSuffix).toBe('.w')
+    expect(s.params).toEqual([
+      { name: 'x1', suffix: '.b' },
+      { name: 'y1', suffix: '.b' }
+    ])
+    expect(s.body).toHaveLength(1)
+    expect(s.body[0].kind).toBe('ReturnStmt')
+    const ret = s.body[0] as ReturnStmt
+    expect(ret.value?.kind).toBe('Binary')
+  })
+
+  it('a name WITHOUT a suffix is a statement-function (no return value)', () => {
+    const src = ['Function Heal(menge)', '  hp.b = hp + menge', 'EndFunction'].join('\n')
+    const s = firstStmt(src) as FunctionDecl
+    expect(s.returnSuffix).toBeUndefined()
+    expect(s.params).toEqual([{ name: 'menge', suffix: undefined }])
+  })
+
+  it('parses a string return ($-suffix) and an empty param list', () => {
+    const src = ['Function Label$()', '  Return "HI"', 'EndFunction'].join('\n')
+    const s = firstStmt(src) as FunctionDecl
+    expect(s.name).toBe('Label')
+    expect(s.returnSuffix).toBe('$')
+    expect(s.params).toEqual([])
+  })
+
+  it('rejects a function named exactly a CRUMB word (Function Min → reserved, N1)', () => {
+    // `Min` is the canonical built-in — reserved under case-sensitivity, so it can't
+    // name a user function. A lowercase `min` would be free (but shadows nothing).
+    const { errors } = parseSrc(['Function Min.b(a.b, b.b)', '  Return a', 'EndFunction'].join('\n'))
+    expect(errors.some((e) => /CRUMB-Wort/.test(e))).toBe(true)
+  })
+
+  it('allows a lowercased near-miss as a function name (mindist, case-sensitive)', () => {
+    // The escape hatch the reserved rule leaves open: spell it differently. `mindist`
+    // is not a CRUMB word, so it is a perfectly good user function name.
+    const src = ['Function mindist.b(a.b, b.b)', '  Return a', 'EndFunction'].join('\n')
+    const s = firstStmt(src) as FunctionDecl
+    expect(s.name).toBe('mindist')
+    expect(s.returnSuffix).toBe('.b')
+  })
+
+  it('parses Return with no value (early exit)', () => {
+    const src = ['Function Tick()', '  If done.b = 1 Then Return', '  x.b = 1', 'EndFunction'].join(
+      '\n'
+    )
+    const s = firstStmt(src) as FunctionDecl
+    const ifStmt = s.body[0] as IfStmt
+    const ret = ifStmt.then[0] as ReturnStmt
+    expect(ret.kind).toBe('ReturnStmt')
+    expect(ret.value).toBeUndefined()
+  })
+
+  it('forbids nested functions, recovers to the rest of the file', () => {
+    const src = [
+      'Function Outer()',
+      '  Function Inner()',
+      '  EndFunction',
+      'EndFunction',
+      'x.b = 1'
+    ].join('\n')
+    const { program, errors } = parseSrc(src)
+    expect(errors.some((e) => /verschachtelt/.test(e))).toBe(true)
+    // recovery: the trailing assignment still parses
+    expect(program.body.some((st) => st.kind === 'AssignStmt')).toBe(true)
+  })
+
+  it('flags a Return that sits outside any function', () => {
+    const { errors } = parseSrc('Return 5')
+    expect(errors.some((e) => /außerhalb einer Funktion/.test(e))).toBe(true)
+  })
+
+  it('reports a missing EndFunction with position, does not crash', () => {
+    const { program, errors } = parseSrc('Function F()\n  x.b = 1')
+    expect(errors.some((e) => /EndFunction/.test(e))).toBe(true)
+    expect(program.body[0].kind).toBe('FunctionDecl')
+  })
+
+  it('reports a missing name after Function', () => {
+    const { errors } = parseSrc('Function ()\nEndFunction')
+    expect(errors.some((e) => /Funktionsname erwartet/.test(e))).toBe(true)
   })
 })

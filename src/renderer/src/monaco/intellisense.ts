@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor'
 import { CRUMB_LANGUAGE_ID } from './crumb'
+import { shouldCanonicalize } from './autoCase'
 import type { EntryKind, VocabItem } from '@renderer/language/ssot'
 
 function completionKind(kind: EntryKind): monaco.languages.CompletionItemKind {
@@ -87,21 +88,25 @@ export function registerIntellisense(
 }
 
 /**
- * Auto-casing pass over a single line edit: given the full line text and the
- * column where typing just ended, returns a replacement edit if the word
- * before the cursor matches a vocabulary entry under a different casing.
+ * Auto-casing pass over a single line edit: if the word before the cursor matches a
+ * vocabulary entry under a different casing AND `shouldCanonicalize` allows it in this
+ * spot, rewrite it to the canonical spelling.
  */
 export function autoCaseEdit(
   model: monaco.editor.ITextModel,
   position: monaco.Position,
-  canonicalize: (word: string) => string | undefined
+  canonicalInfo: (word: string) => { name: string; kind: VocabItem['kind'] } | undefined
 ): void {
   const word = model.getWordUntilPosition(position)
   const typed = word.word
   if (!typed) return
 
-  const canonical = canonicalize(typed)
-  if (!canonical || canonical === typed) return
+  const info = canonicalInfo(typed)
+  if (!info || info.name === typed) return
+
+  const line = model.getLineContent(position.lineNumber)
+  // getWordUntilPosition columns are 1-based; slice wants 0-based offsets.
+  if (!shouldCanonicalize(line, word.startColumn - 1, word.endColumn - 1, info.kind)) return
 
   const range = new monaco.Range(
     position.lineNumber,
@@ -109,5 +114,5 @@ export function autoCaseEdit(
     position.lineNumber,
     word.endColumn
   )
-  model.applyEdits([{ range, text: canonical }])
+  model.applyEdits([{ range, text: info.name }])
 }

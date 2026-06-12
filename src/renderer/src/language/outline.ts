@@ -1,7 +1,7 @@
 // Lightweight symbol scanner for .crumb source. This is a HEURISTIC (line-based
 // regex), NOT a real parse — it exists so the Outliner reflects actual code
 // today. When the transpiler's lexer/parser/AST lands, replace this with the
-// real symbol table (SPRACHE.md §7.4). Comments start with ' and are ignored.
+// real symbol table (SPRACHE.md §7.4). Comments start with ';' and are ignored.
 //
 // Scope: the Outliner lists ONLY user-defined routines — every one is declared
 // with `Function … EndFunction` (there is NO `Sub`). Whether it's a "Function"
@@ -22,16 +22,17 @@ export interface OutlineSymbol {
   line: number
 }
 
-// Capture the declared name including an optional return-type suffix (.b/.w/$).
-const FUNCTION_RE = /^\s*Function\s+([A-Za-z_]\w*)(\.[bw]|\$)?/i
+// Capture the declared name including an optional return-type suffix (.b/.w/.i/$).
+// Case-SENSITIVE (EISEN M2.T2): only the canonical `Function` keyword starts a def.
+const FUNCTION_RE = /^\s*Function\s+([A-Za-z_]\w*)(\.[bwi]|\$)?/
 
 function stripComment(line: string): string {
-  // Drop a trailing ' comment, but not one inside a string literal.
+  // Drop a trailing ';' comment (Sprachdef §B), but not one inside a string literal.
   let inStr = false
   for (let i = 0; i < line.length; i++) {
     const c = line[i]
     if (c === '"') inStr = !inStr
-    else if (c === "'" && !inStr) return line.slice(0, i)
+    else if (c === ';' && !inStr) return line.slice(0, i)
   }
   return line
 }

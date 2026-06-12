@@ -10,6 +10,7 @@ import WorkspaceSetup from '@renderer/components/WorkspaceSetup.vue'
 import SettingsModal from '@renderer/components/SettingsModal.vue'
 import PromptModal from '@renderer/components/PromptModal.vue'
 import NewProjectModal from '@renderer/components/NewProjectModal.vue'
+import SaveAsModal from '@renderer/components/SaveAsModal.vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { EDITOR_ROUTE_NAMES } from '@renderer/router'
@@ -114,4 +115,7 @@ watch(
 
   <!-- New-Project dialog: name + graphics mode + boilerplate (M1.T6). -->
   <NewProjectModal />
+
+  <!-- Save-As file dialog: pick folder + name in the project (P2.T0b). -->
+  <SaveAsModal />
 </template>

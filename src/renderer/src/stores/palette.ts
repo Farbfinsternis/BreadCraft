@@ -152,5 +152,45 @@ export const usePaletteStore = defineStore('palette', () => {
     dirty.value = false
   }
 
-  return { background, shared1, shared2, dirty, colorOf, setSlot, loadForProject, save }
+  function currentRel(): string {
+    return assetRel
+  }
+
+  /** Switch to another palette file (P2.T0): save pending, then load. (The project
+   *  palette is normally singular, but the explorer treats all kinds uniformly.) */
+  async function switchAsset(dir: string, rel: string): Promise<void> {
+    if (dirty.value) await save()
+    await loadForProject(dir, rel)
+  }
+
+  /** Create a NEW palette file at `rel` (current colours) and bind to it (P2.T0). */
+  async function createBlank(dir: string, rel: string): Promise<void> {
+    if (dirty.value) await save()
+    projectDir = dir
+    assetRel = rel
+    dirty.value = false
+    await save()
+  }
+
+  /** "Save as" (P2.T0b): bind to a new rel and write the current colours there. */
+  async function saveTo(dir: string, rel: string): Promise<void> {
+    projectDir = dir
+    assetRel = rel
+    await save()
+  }
+
+  return {
+    background,
+    shared1,
+    shared2,
+    dirty,
+    colorOf,
+    setSlot,
+    loadForProject,
+    save,
+    currentRel,
+    switchAsset,
+    createBlank,
+    saveTo
+  }
 })

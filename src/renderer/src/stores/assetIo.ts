@@ -10,12 +10,21 @@ import {
   indicesToBytesMC,
   bytesToIndicesMC
 } from '@renderer/pixel-engine/charsetBytes'
+import {
+  indicesToBytesSpriteHires,
+  bytesToIndicesSpriteHires,
+  indicesToBytesSpriteMC,
+  bytesToIndicesSpriteMC,
+  pixelsPerSprite,
+  SPRITE_BYTES
+} from '@renderer/pixel-engine/spriteBytes'
 import type { GraphicsMode } from '@shared/ipc'
 
 /** Default file names for the single-per-project assets. */
 export const PALETTE_FILE = 'project.palette'
 export const CHARSET_FILE = 'main.petscii'
 export const TILEMAP_FILE = 'main.tilemap'
+export const SPRITE_FILE = 'main.sprite'
 
 const CHAR_COUNT = 256
 
@@ -184,6 +193,88 @@ export function parseTilemap(text: string): TilemapData | null {
       }
     }
     return { tiles, colors }
+  } catch {
+    return null
+  }
+}
+
+// ---- Sprite (.sprite) ----
+
+/** Pick the index↔bytes converter pair for a sprite (the MC-vs-hi-res seam). */
+function spriteCodec(mode: GraphicsMode): {
+  pack: (cells: Uint8Array | number[]) => Uint8Array
+  unpack: (bytes: Uint8Array | number[]) => Uint8Array
+} {
+  return mode === 'TEXT_MULTICOLOR'
+    ? { pack: indicesToBytesSpriteMC, unpack: bytesToIndicesSpriteMC }
+    : { pack: indicesToBytesSpriteHires, unpack: bytesToIndicesSpriteHires }
+}
+
+/**
+ * One sprite ASSET = one figure (player, blob, …) as a list of animation FRAMES.
+ * Each frame is an index grid (24×21 hi-res = 504 cells, 12×21 MC = 252). ITD uses
+ * only frame 0 for now; the array shape lets later animation add frames without a
+ * format rewrite (the user's P2.T1 sharpening: one sprite/file, but animatable).
+ */
+export interface SpriteData {
+  frames: Uint8Array[]
+  /** The figure's INDIVIDUAL multicolor (spr_color[n], the "10" pixel pair) as a
+   *  C64 index 0–15. The two SHARED colours come from the project palette; this one
+   *  is per-sprite (so player and blob can differ). Default white (1). */
+  color: number
+}
+
+/** Default individual sprite colour (white, C64 index 1) — the "10" pair until the
+ *  user picks one in the sprite editor. */
+export const DEFAULT_SPRITE_COLOR = 1
+
+/**
+ * Serialize a sprite to the `.sprite` JSON: a `frames` array, each frame 63 raw
+ * C64 sprite-shape bytes. The packing follows the project's `graphicsMode` (MC
+ * packs 2-bit pairs, indices 0–3 survive; hi-res packs 1 bit) — same bit order as
+ * `.petscii`. The stored BYTES are mode-independent (only interpretation differs),
+ * so no mode lives in the file. An empty figure still writes one all-zero frame.
+ */
+export function serializeSprite(sprite: SpriteData, mode: GraphicsMode): string {
+  const { pack } = spriteCodec(mode)
+  const frames = sprite.frames.length ? sprite.frames : [new Uint8Array(pixelsPerSprite(mode))]
+  const out = frames.map((cells) => Array.from(pack(cells)))
+  const color = clampColorIndex(sprite.color)
+  return JSON.stringify({
+    format: 'breadcraft.sprite',
+    version: 1,
+    frameCount: out.length,
+    color,
+    frames: out
+  })
+}
+
+/** Clamp any value to a valid C64 colour index 0–15 (default white on garbage). */
+function clampColorIndex(n: unknown): number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 15 ? n : DEFAULT_SPRITE_COLOR
+}
+
+/**
+ * Parse a `.sprite` file into the frame index-grids the store holds, reading the
+ * 63 raw bytes per frame as `graphicsMode` dictates (MC → 252 double-pixels, hi-res
+ * → 504 pixels). Always returns at least one frame (a blank one) so the editor has
+ * something to draw on. Returns null if malformed (wrong format / no frames).
+ */
+export function parseSprite(text: string, mode: GraphicsMode): SpriteData | null {
+  try {
+    const raw = JSON.parse(text) as { frames?: number[][]; color?: number }
+    if (!Array.isArray(raw.frames)) return null
+    const { unpack } = spriteCodec(mode)
+    const expected = pixelsPerSprite(mode)
+    const frames: Uint8Array[] = []
+    for (const bytes of raw.frames) {
+      if (!Array.isArray(bytes) || bytes.length !== SPRITE_BYTES) continue
+      const cells = unpack(Uint8Array.from(bytes))
+      if (cells.length === expected) frames.push(cells)
+    }
+    if (frames.length === 0) frames.push(new Uint8Array(expected))
+    // `color` is optional — old files (pre-individual-colour) default to white.
+    return { frames, color: clampColorIndex(raw.color) }
   } catch {
     return null
   }

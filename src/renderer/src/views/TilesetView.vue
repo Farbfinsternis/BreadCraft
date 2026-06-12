@@ -115,6 +115,11 @@ function resetLayout(): void {
   panels.reset(SCOPE)
 }
 
+/** Save-As (P2.T0b): pick folder + name in the project, write the current charset there. */
+function saveAs(): void {
+  void project.saveAssetAs('charset', '.petscii', t('saveas.title.charset'))
+}
+
 const usedCount = computed(() => charset.usedCount())
 
 // Ctrl/Cmd+S saves the charset (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
@@ -152,6 +157,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" />
         </svg>
         {{ t('tileset.resetLayout') }}
+      </button>
+      <button
+        v-if="tab === 'paint'"
+        class="pt-reset"
+        :title="t('saveas.title.charset')"
+        @click="saveAs"
+      >
+        <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
+        {{ t('saveas.save') }}
       </button>
       <button
         class="pt-save"

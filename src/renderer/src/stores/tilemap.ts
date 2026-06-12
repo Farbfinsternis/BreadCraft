@@ -90,5 +90,51 @@ export const useTilemapStore = defineStore('tilemap', () => {
     dirty.value = false
   }
 
-  return { tiles, colors, version, dirty, tileAt, colorAt, setTile, loadForProject, save }
+  function currentRel(): string {
+    return assetRel
+  }
+
+  /** Switch the editor to another map file (P2.T0): save pending, then load. */
+  async function switchAsset(dir: string, rel: string): Promise<void> {
+    if (dirty.value) await save()
+    await loadForProject(dir, rel)
+  }
+
+  /** Create a NEW empty map file at `rel` and bind to it (P2.T0). */
+  async function createBlank(dir: string, rel: string): Promise<void> {
+    if (dirty.value) await save()
+    projectDir = dir
+    assetRel = rel
+    tiles.value = new Uint8Array(MAP_CELLS)
+    colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
+    version.value++
+    dirty.value = false
+    const text = serializeTilemap({ tiles: tiles.value, colors: colors.value })
+    await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
+  }
+
+  /** "Save as" (P2.T0b): bind to a new rel and write the CURRENT map there. */
+  async function saveTo(dir: string, rel: string): Promise<void> {
+    projectDir = dir
+    assetRel = rel
+    const text = serializeTilemap({ tiles: tiles.value, colors: colors.value })
+    await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
+    dirty.value = false
+  }
+
+  return {
+    tiles,
+    colors,
+    version,
+    dirty,
+    tileAt,
+    colorAt,
+    setTile,
+    loadForProject,
+    save,
+    currentRel,
+    switchAsset,
+    createBlank,
+    saveTo
+  }
 })

@@ -24,6 +24,12 @@ export interface CompileError {
 export interface CompileResult {
   code: string
   errors: CompileError[]
+  /** ld65 linker config matching this project's planned memory map (STAHL S1) —
+   *  reserves the VIC island ($3000 charset / $3800 sprites) only when used, so a
+   *  growing game can't silently overwrite itself. Pass to cl65 via -C. */
+  linkerConfig: string
+  /** The address the program image must stay below (the RAM health-bar ceiling, S1c). */
+  mainCeiling: number
 }
 
 /** Compile .crumb source to cc65-C using the given SSOT vocabulary. `assets` lets
@@ -35,17 +41,18 @@ export function compile(
   assets?: AssetContext
 ): CompileResult {
   const tokens = tokenize(source, vocabulary)
-  const { program, errors: parseErrors } = parse(tokens)
-  const { code, errors: codegenErrors } = generate(program, assets)
+  const { program, errors: parseErrors } = parse(tokens, vocabulary)
+  const { code, errors: codegenErrors, linkerConfig, mainCeiling } = generate(program, assets)
 
   const errors: CompileError[] = [
     ...parseErrors.map((e) => ({ stage: 'parse' as const, severity: 'error' as const, ...e })),
     ...codegenErrors.map((e) => ({ stage: 'codegen' as const, ...e }))
   ]
-  return { code, errors }
+  return { code, errors, linkerConfig, mainCeiling }
 }
 
 export { tokenize } from './lexer'
 export { parse } from './parser'
 export { generate } from './codegen'
 export type { AssetContext } from './codegen'
+export { ramInfo } from './codegen/memory-map'

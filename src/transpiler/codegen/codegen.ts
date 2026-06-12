@@ -17,15 +17,48 @@ import type {
   IfStmt,
   WhileStmt,
   RepeatStmt,
-  ForStmt
+  ForStmt,
+  FunctionDecl,
+  ReturnStmt,
+  CallStmt
 } from '../parser/ast'
 import {
   resolveCharset,
   resolveTilemap,
+  resolveSprite,
+  resolvePalette,
   AssetResolveError,
   type AssetManifest,
-  type AssetReader
+  type AssetReader,
+  type ResolvedPalette
 } from '../assets'
+import { planMemory } from './memory-map'
+
+/** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
+ *  The project palette stores indices; the generated C reads as named colours. */
+const COLOR_CONST: readonly string[] = [
+  'COLOR_BLACK',
+  'COLOR_WHITE',
+  'COLOR_RED',
+  'COLOR_CYAN',
+  'COLOR_PURPLE',
+  'COLOR_GREEN',
+  'COLOR_BLUE',
+  'COLOR_YELLOW',
+  'COLOR_ORANGE',
+  'COLOR_BROWN',
+  'COLOR_LIGHTRED',
+  'COLOR_GRAY1',
+  'COLOR_GRAY2',
+  'COLOR_LIGHTGREEN',
+  'COLOR_LIGHTBLUE',
+  'COLOR_GRAY3'
+]
+
+/** Map a palette colour index (0–15) to its cc65 COLOR_* constant (clamped). */
+function colorConst(index: number): string {
+  return COLOR_CONST[index] ?? COLOR_CONST[0]
+}
 
 // CodeGen: AST → cc65-C source. The mappings follow Sprachdef §I and the proven
 // reference in _preflight/game.c (conio: bordercolor/bgcolor/clrscr/cputsxy,
@@ -52,6 +85,13 @@ export interface CodeGenError extends Pos {
 export interface CodeGenResult {
   code: string
   errors: CodeGenError[]
+  /** The ld65 linker config tailored to this project's memory map (STAHL S1). The
+   *  charset/sprite addresses baked into `code` come from the SAME plan, so cfg and C
+   *  can't drift. Pass to cl65 via -C. */
+  linkerConfig: string
+  /** The address the program image must stay below (VIC island $3000/$3800 or $D000) —
+   *  the ceiling the RAM health-bar measures against (STAHL S1c). */
+  mainCeiling: number
 }
 
 /**
@@ -65,14 +105,33 @@ export interface AssetContext {
   readFile: AssetReader
 }
 
-/** A BreadCraft numeric/string type, inferred from a `.b`/`.w`/`$` suffix. */
-type VarType = 'byte' | 'word' | 'string'
+/** A BreadCraft numeric/string type, inferred from a `.b`/`.w`/`.i`/`$` suffix.
+ *  `sint` is the only SIGNED type (.i) — needed for velocities/deltas (physics). */
+type VarType = 'byte' | 'word' | 'sint' | 'string'
 
 /** The C type each BreadCraft type maps to (Sprachdef §C table). */
 const C_TYPE: Record<VarType, string> = {
   byte: 'unsigned char',
   word: 'unsigned int',
+  sint: 'int', // signed 16-bit (-32768..32767) — velocities, deltas, offsets
   string: 'char' // emitted as `char name[…]` — buffer sizing is a later (string) layer
+}
+
+/** Inclusive maximum value each scalar type can hold — used by genFor to catch the
+ *  unsigned-wrap traps (Befund 3). undefined = not a counting type. */
+const TYPE_MAX: Record<VarType, number | undefined> = {
+  byte: 255,
+  word: 65535,
+  sint: 32767,
+  string: undefined
+}
+
+/** Human label for the counting types, for honest For-loop diagnostics. */
+const TYPE_LABEL: Record<VarType, string> = {
+  byte: 'Byte',
+  word: 'Word',
+  sint: 'Signed-Int',
+  string: 'String'
 }
 
 /** Read the BreadCraft type from an identifier's written suffix. */
@@ -82,6 +141,8 @@ function suffixType(suffix: string | undefined): VarType | undefined {
       return 'byte'
     case '.w':
       return 'word'
+    case '.i':
+      return 'sint'
     case '$':
       return 'string'
     default:
@@ -89,13 +150,16 @@ function suffixType(suffix: string | undefined): VarType | undefined {
   }
 }
 
+/** The scalar (non-record) suffixes — used to tell a record suffix (.Slot) apart. */
+const SCALAR_SUFFIXES = new Set(['$', '.b', '.w', '.i'])
+
 /**
  * The record type name in a suffix like `.Slot`, or undefined for a scalar suffix
- * (`.b`/`.w`/`$`) or none. The lexer only attaches `.Name` when Name is a known
+ * (`.b`/`.w`/`.i`/`$`) or none. The lexer only attaches `.Name` when Name is a known
  * record, so any `.x` that isn't a scalar suffix is a record type.
  */
 function recordSuffixName(suffix: string | undefined): string | undefined {
-  if (!suffix || suffix === '$' || suffix === '.b' || suffix === '.w') return undefined
+  if (!suffix || SCALAR_SUFFIXES.has(suffix)) return undefined
   if (suffix.startsWith('.')) return suffix.slice(1)
   return undefined
 }
@@ -118,6 +182,20 @@ const COLOR_MACRO: Record<string, string> = {
   LIGHTGREEN: 'COLOR_LIGHTGREEN',
   LIGHTBLUE: 'COLOR_LIGHTBLUE',
   GRAY3: 'COLOR_GRAY3'
+}
+
+/**
+ * JoyDir enum member (as written, e.g. LEFT) → the cc65 joystick.h test macro.
+ * FIRE maps to JOY_BTN_1 (the universally-available button); the rest are 1:1.
+ * (The SSOT's `value` field carries JOY_FIRE, which isn't a real cc65 macro — the
+ * mapping lives here, against the member name, so the generated C is valid.)
+ */
+const JOY_MACRO: Record<string, string> = {
+  LEFT: 'JOY_LEFT',
+  RIGHT: 'JOY_RIGHT',
+  UP: 'JOY_UP',
+  DOWN: 'JOY_DOWN',
+  FIRE: 'JOY_BTN_1'
 }
 
 /** Word/symbol operator → C operator. */
@@ -146,6 +224,33 @@ interface Symbol {
   cName: string
   type: VarType
   global: boolean
+}
+
+/**
+ * A local variable or parameter inside a function body — its own scope, separate from
+ * the global/main symbol table (Sprachdef §C.1: params + body locals are local). A
+ * record-typed value carries its record type; a record PARAMETER is passed as a
+ * const-pointer (the doctrine, breadcraft-records-in-functions) so field access uses
+ * `->` and the function can't mutate the caller's record.
+ */
+interface LocalSym {
+  cName: string
+  /** Scalar type, or undefined when this is a record local/param. */
+  type?: VarType
+  /** Record type name when this local/param is a record. */
+  recordType?: string
+  /** True for a record PARAMETER (passed as `const struct X *` → field access via `->`). */
+  isPointer?: boolean
+}
+
+/** A user-defined function (Function…EndFunction), collected in the first pass. */
+interface FuncInfo {
+  cName: string
+  /** Return scalar type from the name suffix, or undefined (no scalar return). */
+  returnType?: VarType
+  /** Record type name when the function returns a record (→ out-pointer in C). */
+  returnRecord?: string
+  params: { name: string; type?: VarType; recordType?: string }[]
 }
 
 /**
@@ -183,6 +288,9 @@ class Generator {
   private readonly consts = new Map<string, Expr>()
   /** The display area set by the last `Graphics` (TEXT/BITMAP); drives requiresMode checks. */
   private gfxArea: 'TEXT' | 'BITMAP' | undefined
+  /** The colour mode set by the last `Graphics` (HIRES/MULTICOLOR); UseSprite reads it
+   *  to decide whether a baked sprite is multicolor (spr_mcolor bit + shared colours). */
+  private gfxColor: 'HIRES' | 'MULTICOLOR' | undefined
 
   // ---- baked assets (UseTileset / DrawMap) ----
   /** File-scope `static const` data blocks baked from resolved assets (charset bytes,
@@ -202,10 +310,60 @@ class Generator {
   /** TileAt used → emit the pixel→cell→tile helper. */
   private usesTileAt = false
 
+  // ---- sprites (M3.T2): Sprite / ShowSprite / HideSprite ----
+  /** Any sprite command used. Sprites poke VIC registers directly (c64.h, always
+   *  included), so no extra header is needed — the flag documents the dependency. */
+  private usesSprites = false
+  /** UseSprite used (P2.T3) → emit the sprite-shape memory-map #defines (the 64-byte-
+   *  aligned data block above the charset + the pointer slots). */
+  private usesSpriteData = false
+
+  // ---- input (M3.T3): Joystick ----
+  /** Joystick() used → pull in <joystick.h> and install the driver once in main. */
+  private usesJoystick = false
+
+  // ---- math built-ins (P1.T4) ----
+  /** Abs() used → pull in <stdlib.h> for cc65's abs(). (Min/Max are inline, no header.) */
+  private usesStdlib = false
+
+  // ---- functions (P1.T3) ----
+  /** All user functions, by name → signature (collected first pass). */
+  private readonly functions = new Map<string, FuncInfo>()
+  /** Emitted C for each function definition (before main). */
+  private readonly funcDefs: string[] = []
+  /** The local scope while emitting a function body (params + locals); undefined in main. */
+  private localScope: Map<string, LocalSym> | undefined
+  /** Name of the function currently being emitted — to forbid direct recursion. */
+  private currentFunc: string | undefined
+
   constructor(private readonly assets?: AssetContext) {}
 
+  /** The project's shared palette colours, resolved once and cached. UseTileset +
+   *  UseSprite read this so the running program's colours match the editor. With no
+   *  asset context (no project) the defaults stand. A garbled .palette throws inside
+   *  resolvePalette; we surface it via `at` at the resolving command's position. */
+  private paletteCache: ResolvedPalette | undefined
+  private palette(at: Pos): ResolvedPalette {
+    if (this.paletteCache) return this.paletteCache
+    if (!this.assets) {
+      this.paletteCache = { kind: 'palette', background: 0, shared1: 9, shared2: 14 }
+      return this.paletteCache
+    }
+    try {
+      this.paletteCache = resolvePalette(this.assets.manifest, this.assets.readFile)
+    } catch (e) {
+      this.err(e instanceof AssetResolveError ? e.message : String(e), at)
+      this.paletteCache = { kind: 'palette', background: 0, shared1: 9, shared2: 14 }
+    }
+    return this.paletteCache
+  }
+
+  /** Where emit() writes. Defaults to main's body (this.lines); redirected to a
+   *  function's buffer while a Function body is generated. */
+  private sink: string[] = this.lines
+
   private emit(line: string): void {
-    this.lines.push('  '.repeat(this.indent) + line)
+    this.sink.push('  '.repeat(this.indent) + line)
   }
 
   private err(message: string, at: Pos, severity: Severity = 'error'): void {
@@ -214,10 +372,31 @@ class Generator {
 
   generate(program: Program): CodeGenResult {
     // First pass: collect declarations (types, globals, consts) so the second pass
-    // can emit correctly-typed declarations and narrowing checks.
-    for (const s of program.body) this.collect(s)
+    // can emit correctly-typed declarations and narrowing checks. Function signatures
+    // are collected too (so calls can be checked/emitted before the def is reached).
+    for (const s of program.body) {
+      if (s.kind === 'FunctionDecl') this.collectFunction(s)
+      else this.collect(s)
+    }
 
-    for (const s of program.body) this.genStatement(s)
+    // Emit each function definition into its own buffer (placed before main). Done
+    // before the main body so call sites see resolved signatures.
+    for (const s of program.body) {
+      if (s.kind === 'FunctionDecl') this.genFunction(s)
+    }
+
+    // The main body: every top-level statement that isn't a function definition.
+    for (const s of program.body) {
+      if (s.kind !== 'FunctionDecl') this.genStatement(s)
+    }
+
+    // Plan the C64 memory map from what this project actually bakes (STAHL S1). The
+    // addresses below come from this single plan — and so does the returned linker
+    // config, so the cfg's reserved regions and the C's pointers can never drift.
+    const map = planMemory({
+      usesCharset: !!this.activeTileset,
+      usesSprites: this.usesSpriteData
+    })
 
     const header = [
       '/* Generated by BreadCraft — do not edit by hand. */',
@@ -231,7 +410,7 @@ class Generator {
     // needed once a tileset is baked; the screen + geometry whenever the tile-world
     // primitives (SetTile/GetTile/TileAt/TileSolid) or DrawMap touch the grid.
     if (this.activeTileset) {
-      header.push('#define BC_CHARSET ((unsigned char*)0x3000) /* our tileset */')
+      header.push(`#define BC_CHARSET ((unsigned char*)0x${map.charsetAddr!.toString(16)}) /* our tileset */`)
     }
     if (this.activeTileset || this.usesTileWorld) {
       header.push(
@@ -243,6 +422,35 @@ class Generator {
         '#define BC_SPR_Y0  50',
         ''
       )
+    }
+    // Sprites poke VIC registers directly (c64.h, already included). The marker
+    // documents that the program drives sprites and is where sprite-asset baking
+    // (UseSprite) will hook in once the sprite editor/format exists.
+    if (this.usesSprites) {
+      header.push('/* sprites: positions/enable via VIC registers (c64.h) */', '')
+    }
+    // UseSprite (P2.T3) bakes shapes into a 64-byte-aligned block above the charset
+    // ($3800, clear of charset $3000–$37FF + screen $0400). Slot n's shape lives at
+    // BC_SPR_DATA(n) = $3800 + n*64; its pointer is BC_SPR_PTR[n] ($07F8+n) = block/64
+    // = 224 + n. Proven layout: _preflight/tilecollide.c/platformer.c ($3400 area).
+    if (this.usesSpriteData) {
+      const spr = `0x${map.spritesAddr!.toString(16)}`
+      header.push(
+        `#define BC_SPR_DATA(n) ((unsigned char*)(${spr} + (unsigned int)(n) * 64))`,
+        '#define BC_SPR_PTR  ((unsigned char*)0x07F8) /* sprite-pointer slots 0..7 */',
+        `#define BC_SPR_BLOCK0 (${spr} / 64)          /* slot n adds n */`,
+        ''
+      )
+    }
+    // Joystick (M3.T3): the cc65 driver header. The driver itself is installed
+    // once at the top of main (see the setup block) — the proven _preflight/game.c
+    // pattern (joy_install + joy_read(JOY_2)).
+    if (this.usesJoystick) {
+      header.push('#include <joystick.h>', '')
+    }
+    // Math built-ins (P1.T4): cc65's abs() lives in stdlib. Min/Max are inline.
+    if (this.usesStdlib) {
+      header.push('#include <stdlib.h> /* abs() */', '')
     }
     // Const → #define (compile-time, free at runtime, Sprachdef §C).
     const defines: string[] = []
@@ -293,6 +501,19 @@ class Generator {
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
 
+    // One-time setup that must run at the very top of main, before the user's body
+    // (e.g. installing the joystick driver). Kept apart from this.lines so it can't
+    // be reordered by the user's code. Mirrors _preflight/game.c's joy_install.
+    const setup: string[] = []
+    if (this.usesJoystick) {
+      setup.push('  joy_install(joy_static_stddrv); /* CIA joystick driver, port 2 */')
+    }
+    if (setup.length > 0) setup.push('')
+
+    // User function definitions (P1.T3) live between the globals and main, so they
+    // can see file-scope globals/arrays/structs and be called from main.
+    const funcs = this.funcDefs.length > 0 ? [...this.funcDefs, ''] : []
+
     const code = [
       ...header,
       ...defines,
@@ -301,15 +522,17 @@ class Generator {
       ...baked,
       ...tileWorld,
       ...globalDecls,
+      ...funcs,
       'int main(void) {',
       ...localDecls,
+      ...setup,
       ...this.lines,
       '',
       '  return 0;',
       '}',
       ''
     ].join('\n')
-    return { code, errors: this.errors }
+    return { code, errors: this.errors, linkerConfig: map.cfg, mainCeiling: map.mainCeiling }
   }
 
   /**
@@ -368,6 +591,19 @@ class Generator {
   private declare(id: Identifier, opts: { global?: boolean } = {}): void {
     const name = id.name
     const type = suffixType(id.suffix)
+    // Inside a function body, a plain assignment to a NEW name creates a LOCAL (unless
+    // it's already a param/local, or a known global the function writes to). Sprachdef
+    // §C.1: body locals live only during the call; globals are shared.
+    if (this.localScope && !opts.global) {
+      if (this.localScope.has(name)) {
+        const l = this.localScope.get(name)!
+        if (type && !l.recordType) l.type = type
+        return
+      }
+      if (this.symbols.get(name)?.global) return // writing a known global, not a new local
+      this.localScope.set(name, { cName: cName(name), type: type ?? 'byte' })
+      return
+    }
     const existing = this.symbols.get(name)
     if (existing) {
       if (type) existing.type = type
@@ -429,13 +665,140 @@ class Generator {
     }
   }
 
+  // ---- functions (P1.T3) ----
+
+  /** Record a function's signature in the first pass, so calls resolve before the
+   *  definition is emitted. The return type comes from the name suffix (none = no
+   *  return); a record suffix means a record return (→ out-pointer in C). */
+  private collectFunction(s: FunctionDecl): void {
+    if (this.functions.has(s.name)) {
+      this.err(`Funktion '${s.name}' ist mehrfach definiert`, s)
+      return
+    }
+    const returnRecord = recordSuffixName(s.returnSuffix)
+    this.functions.set(s.name, {
+      cName: cName(s.name),
+      returnType: returnRecord ? undefined : suffixType(s.returnSuffix),
+      returnRecord,
+      params: s.params.map((p) => {
+        const recordType = recordSuffixName(p.suffix)
+        return { name: p.name, type: recordType ? undefined : suffixType(p.suffix), recordType }
+      })
+    })
+  }
+
+  /** Emit a function definition into the funcDefs buffer (placed before main). Sets up
+   *  a fresh local scope (params + body locals), translates the BreadCraft signature to
+   *  C, and emits the body. Records: a record PARAM is a `const struct X *` (read-only,
+   *  the user feels by-value — breadcraft-records-in-functions); a record RETURN becomes
+   *  a trailing out-pointer and a `void` function. */
+  private genFunction(s: FunctionDecl): void {
+    const info = this.functions.get(s.name)
+    if (!info) return // collectFunction reported a duplicate; skip the body
+
+    // Build the local scope from the parameters.
+    const scope = new Map<string, LocalSym>()
+    const cParams: string[] = []
+    for (const p of info.params) {
+      if (p.recordType) {
+        const rec = this.records.get(p.recordType)
+        if (!rec) this.err(`Funktion '${s.name}': unbekannter Record '${p.recordType}' im Parameter '${p.name}'`, s)
+        // const-pointer: read-only view, no record copy (the doctrine).
+        cParams.push(`const struct ${cName(p.recordType)} *${cName(p.name)}`)
+        scope.set(p.name, { cName: cName(p.name), recordType: p.recordType, isPointer: true })
+      } else {
+        const t = p.type ?? 'word' // typeless param → .w (reserve the wider, Sprachdef §C.1)
+        cParams.push(`${C_TYPE[t]} ${cName(p.name)}`)
+        scope.set(p.name, { cName: cName(p.name), type: t })
+      }
+    }
+    // A record return is threaded as a trailing out-pointer the caller provides.
+    let retC: string
+    if (info.returnRecord) {
+      cParams.push(`struct ${cName(info.returnRecord)} *bc_out`)
+      retC = 'void'
+    } else {
+      retC = info.returnType ? C_TYPE[info.returnType] : 'void'
+    }
+    const params = cParams.length > 0 ? cParams.join(', ') : 'void'
+
+    // Collect body locals into the scope (a mini first pass with the scope active).
+    const savedScope = this.localScope
+    this.localScope = scope
+    this.currentFunc = s.name
+    for (const st of s.body) this.collect(st)
+
+    // Emit into the function buffer.
+    const savedSink = this.sink
+    const savedIndent = this.indent
+    const buf: string[] = []
+    this.sink = buf
+    this.indent = 1
+    // Local declarations (params are in the signature; only body-locals here).
+    for (const [, l] of scope) {
+      if (l.isPointer) continue // a param, already in the signature
+      const isParam = info.params.some((p) => p.name && cName(p.name) === l.cName)
+      if (isParam) continue
+      if (l.recordType) this.emit(`struct ${cName(l.recordType)} ${l.cName};`)
+      else this.emit(`${C_TYPE[l.type ?? 'byte']} ${l.cName}${l.type === 'string' ? '[1]' : ' = 0'};`)
+    }
+    for (const st of s.body) this.genStatement(st)
+
+    // Assemble the function and append to funcDefs.
+    this.funcDefs.push(`${retC} ${info.cName}(${params}) {`, ...buf, '}', '')
+
+    this.sink = savedSink
+    this.indent = savedIndent
+    this.localScope = savedScope
+    this.currentFunc = undefined
+  }
+
+  /** `Return [expr]` — in a record-returning function it fills the out-pointer; in a
+   *  value function it returns the value; otherwise a bare `return;`. */
+  private genReturn(s: ReturnStmt): void {
+    const info = this.currentFunc ? this.functions.get(this.currentFunc) : undefined
+    if (info?.returnRecord && s.value) {
+      this.emit(`*bc_out = ${this.expr(s.value)};`)
+      this.emit('return;')
+      return
+    }
+    if (s.value) this.emit(`return ${this.expr(s.value)};`)
+    else this.emit('return;')
+  }
+
+  /** A statement-function call `Heal 5` → `heal(5);` (no return value used). */
+  private genCallStatement(s: CallStmt): void {
+    const info = this.functions.get(s.callee)
+    if (!info) {
+      this.err(`Unbekannte Funktion '${s.callee}' — fehlt eine 'Function ${s.callee}…'?`, s)
+      this.emit(`/* TODO: ${s.callee}(...) nicht definiert */`)
+      return
+    }
+    if (s.callee === this.currentFunc) {
+      this.err(`Rekursion ist nicht erlaubt (Funktion '${s.callee}' ruft sich selbst auf) — der 6502 hat keinen echten Variablen-Stack; formuliere es iterativ`, s)
+    }
+    this.emit(`${info.cName}(${this.callArgs(info, s.args)});`)
+  }
+
+  /** Render a call's argument list, passing record args by address (const-pointer
+   *  contract) and scalars by value. */
+  private callArgs(info: FuncInfo, args: Expr[]): string {
+    return args
+      .map((a, i) => {
+        const p = info.params[i]
+        if (p?.recordType) return `&${this.expr(a)}` // record arg → address (no copy)
+        return this.expr(a)
+      })
+      .join(', ')
+  }
+
   /** The inferred type of an expression, as far as the slice can tell (§D). */
   private exprType(e: Expr): VarType | undefined {
     switch (e.kind) {
       case 'StringLit':
         return 'string'
       case 'Identifier':
-        return this.symbols.get(e.name)?.type
+        return this.localScope?.get(e.name)?.type ?? this.symbols.get(e.name)?.type
       case 'IndexExpr':
         return this.arrays.get(e.name)?.type
       case 'FieldExpr':
@@ -443,9 +806,12 @@ class Generator {
       case 'Grouping':
         return this.exprType(e.expr)
       case 'Binary': {
-        // .b + .w → .w (no implicit float; widening, §D). Word is contagious.
+        // Widening (no implicit float, §D). SIGNED is contagious: any .i in the
+        // expression makes the result signed (a velocity calc like vy + GRAVITY must
+        // stay signed even if GRAVITY is written unsigned). Otherwise word > byte.
         const l = this.exprType(e.left)
         const r = this.exprType(e.right)
+        if (l === 'sint' || r === 'sint') return 'sint'
         if (l === 'word' || r === 'word') return 'word'
         if (l === 'byte' || r === 'byte') return 'byte'
         return undefined
@@ -457,25 +823,31 @@ class Generator {
   }
 
   /**
-   * Warn when a word value is stored into a byte target — data would be truncated
-   * (Sprachdef §C.1). Widening (.b → .w) is silent. Unknown source types don't warn.
-   * Works for a scalar variable, an array element, or a record field (same rule).
+   * Warn when storing a value into a target that can't hold it without loss
+   * (Sprachdef §C.1). Lossy pairs: word/sint → byte (range), sint → word (a negative
+   * becomes a huge unsigned), word → sint (a value > 32767 flips sign). Pure widening
+   * (.b → .w/.i) is silent. Unknown source types don't warn.
    */
   private checkNarrowing(target: Identifier | IndexExpr | FieldExpr, value: Expr): void {
-    if (this.exprType(target) !== 'byte') return
-    if (this.exprType(value) === 'word') {
-      const where =
-        target.kind === 'Identifier'
-          ? `die Byte-Variable '${target.name}'`
-          : target.kind === 'IndexExpr'
-            ? `das Byte-Array-Element '${target.name}[…]'`
-            : `das Byte-Feld '\\${target.field}'`
-      this.err(
-        `Verkleinerung: ein .w-Wert (0…65535) wird in ${where} (.b, 0…255) geschrieben — höhere Bits gehen verloren`,
-        target,
-        'warn'
-      )
+    const tt = this.exprType(target)
+    const vt = this.exprType(value)
+    if (!tt || !vt) return
+    let reason: string | undefined
+    if (tt === 'byte' && (vt === 'word' || vt === 'sint')) {
+      reason = 'der Wert passt nicht in ein Byte (.b, 0…255) — höhere Bits gehen verloren'
+    } else if (tt === 'word' && vt === 'sint') {
+      reason = 'ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl'
+    } else if (tt === 'sint' && vt === 'word') {
+      reason = 'ein .w-Wert über 32767 kippt im signed .i ins Negative'
     }
+    if (!reason) return
+    const where =
+      target.kind === 'Identifier'
+        ? `'${target.name}'`
+        : target.kind === 'IndexExpr'
+          ? `'${target.name}[…]'`
+          : `'\\${target.field}'`
+    this.err(`Verkleinerung beim Schreiben in ${where}: ${reason}`, target, 'warn')
   }
 
   // ---- statements ----
@@ -524,6 +896,16 @@ class Generator {
       case 'ExitStmt':
         this.emit('break;')
         break
+      case 'FunctionDecl':
+        // Emitted separately (genFunction) before main — never inside another body.
+        // Reaching here means a nested Function slipped past the parser guard; ignore.
+        break
+      case 'ReturnStmt':
+        this.genReturn(s)
+        break
+      case 'CallStmt':
+        this.genCallStatement(s)
+        break
     }
   }
 
@@ -546,6 +928,18 @@ class Generator {
         break
       case 'settile':
         this.genSetTile(s)
+        break
+      case 'sprite':
+        this.genSprite(s)
+        break
+      case 'showsprite':
+        this.genSpriteEnable(s, true)
+        break
+      case 'hidesprite':
+        this.genSpriteEnable(s, false)
+        break
+      case 'usesprite':
+        this.genUseSprite(s)
         break
       case 'bordercolor':
         this.emit(`bordercolor(${this.colorArg(a[0])});`)
@@ -595,6 +989,7 @@ class Generator {
       return
     }
     this.gfxArea = area
+    this.gfxColor = color
     this.emit(`/* Graphics ${area}, ${color} */`)
     // BMM bit (bitmap vs text)
     if (area === 'BITMAP') this.emit('VIC.ctrl1 |= 0x20;')
@@ -651,10 +1046,13 @@ class Generator {
     this.emit(`{ unsigned int _i; for (_i = 0; _i < ${bytes.length}; ++_i) BC_CHARSET[_i] = ${dataName}[_i]; }`)
     // Point VIC at screen $0400 + charset $3000 (VIC.addr = 0x1C), proven in tilemap.c.
     this.emit('VIC.addr = 0x1C;')
-    // MC-text shared colours (the "00/01/10" pairs); the "11" pair is per-cell Color-RAM.
-    this.emit('VIC.bgcolor[0] = COLOR_BLACK;')
-    this.emit('VIC.bgcolor[1] = COLOR_BROWN;')
-    this.emit('VIC.bgcolor[2] = COLOR_ORANGE;')
+    // MC-text shared colours from the project palette (the "00/01/10" pairs; the
+    // "11" pair is per-cell Color-RAM). Same registers the sprites share — one
+    // project-wide truth (memory breadcraft-project-palette).
+    const pal = this.palette(s)
+    this.emit(`VIC.bgcolor[0] = ${colorConst(pal.background)};`)
+    this.emit(`VIC.bgcolor[1] = ${colorConst(pal.shared1)};`)
+    this.emit(`VIC.bgcolor[2] = ${colorConst(pal.shared2)};`)
   }
 
   /**
@@ -723,6 +1121,147 @@ class Generator {
     this.emit(`COLOR_RAM[${off}] = (${color}) | 8;`)
   }
 
+  /**
+   * `Sprite n, x, y` → position sprite n in pixel coordinates (proven _preflight/
+   * sprite.c). Two pieces of C64 hardware reality the command TRANSLATES for the
+   * user (it makes the bookkeeping convenient — it does NOT hide a cost; the doctrine
+   * is "take away the crypticness, not the cost", breadcraft-translation-doctrine):
+   *   - X is 0–319 but each sprite's X register is 8 bits; the 9th bit lives in
+   *     VIC.spr_hi_x bit n, so we split it: low byte to spr_pos[n].x, carry to the
+   *     mask bit. y is plain 8-bit → spr_pos[n].y.
+   *   - cc65's VIC.spr_pos[8] array (c64.h cc65 mode) lets n be any expression.
+   * `Sprite n, OFF` is the overloaded off-variant (SSOT): the 2nd arg is the
+   * SpriteState constant OFF → just disable the sprite (same as HideSprite n).
+   */
+  private genSprite(s: CommandStmt): void {
+    const a = s.args
+    // Off-variant: `Sprite n, OFF` — 2nd arg is the OFF constant, not an x value.
+    if (a.length === 2 && a[1].kind === 'ConstantRef' && a[1].name.toUpperCase() === 'OFF') {
+      this.emitSpriteEnable(this.expr(a[0]), false)
+      return
+    }
+    if (a.length < 3) {
+      this.err('Sprite erwartet n, x, y (oder n, OFF)', s)
+      this.emit('/* Sprite: zu wenige Argumente */')
+      return
+    }
+    this.usesSprites = true
+    const n = this.expr(a[0])
+    const x = this.expr(a[1])
+    const y = this.expr(a[2])
+    // Position; the 9th X bit (X >= 256) is carried into spr_hi_x bit n by hand.
+    this.emit(`VIC.spr_pos[${n}].x = (unsigned char)((${x}) & 0xFF);`)
+    this.emit(`if ((${x}) & 0x100) VIC.spr_hi_x |= (1 << (${n})); else VIC.spr_hi_x &= ~(1 << (${n}));`)
+    this.emit(`VIC.spr_pos[${n}].y = (${y});`)
+  }
+
+  /** `ShowSprite n` / `HideSprite n` → flip the sprite's enable bit (VIC.spr_ena). */
+  private genSpriteEnable(s: CommandStmt, on: boolean): void {
+    const a = s.args
+    if (a.length < 1) {
+      this.err(`${s.name} erwartet die Sprite-Nummer n (0–7)`, s)
+      this.emit(`/* ${s.name}: fehlende Sprite-Nummer */`)
+      return
+    }
+    this.emitSpriteEnable(this.expr(a[0]), on)
+  }
+
+  /** Emit the enable-bit poke for sprite n (shared by ShowSprite/HideSprite/Sprite n,OFF). */
+  private emitSpriteEnable(n: string, on: boolean): void {
+    this.usesSprites = true
+    if (on) this.emit(`VIC.spr_ena |= (1 << (${n}));`)
+    else this.emit(`VIC.spr_ena &= ~(1 << (${n}));`)
+  }
+
+  /**
+   * `UseSprite slot, "name"` → bake a painted sprite's shape (frame 0) into the
+   * program and hand it to hardware slot `slot` (0–7): copy the 63 shape bytes into
+   * that slot's 64-byte-aligned block (BC_SPR_DATA(slot) = $3800 + slot*64) and point
+   * the slot's pointer ($07F8+slot) at it. Proven pattern: _preflight/sprite.c (hi-
+   * res) + sprite_mc.c (multicolor). The slot is the same number Sprite/ShowSprite
+   * use — UseSprite gives the shape, those give position/enable.
+   *
+   * The slot is the user's own number (named-variable style, breadcraft-translation-
+   * doctrine TEIL F): readable, and we check it's a compile-time constant 0–7 where we
+   * can — a clear error beats cryptic cc65/HW frustration. A variable slot is allowed
+   * (the shape RAM math is runtime-safe), but then we can't pre-warn on out-of-range.
+   *
+   * Colours: multicolor (from the project Graphics mode) sets the slot's MC bit +
+   * the two SHARED registers (spr_mcolor0/1 = the project palette's shared pair, the
+   * same coupling UseTileset uses). The INDIVIDUAL per-sprite colour (spr_color[slot])
+   * has no per-sprite storage yet → a sensible default (white); a real per-sprite
+   * colour is a later editor feature.
+   */
+  private genUseSprite(s: CommandStmt): void {
+    const a = s.args
+    if (a.length < 2) {
+      this.err('UseSprite erwartet einen Slot (0–7) und einen Sprite-Namen, z. B. UseSprite 0, "player"', s)
+      return
+    }
+    const id = this.stringArg(a[1])
+    if (!id) {
+      this.err('UseSprite: das zweite Argument muss ein Sprite-Name in Anführungszeichen sein, z. B. UseSprite 0, "player"', s)
+      return
+    }
+    if (!this.assets) {
+      this.err(`UseSprite "${id}": kein Projekt-Kontext — Assets können nur in einem Projekt aufgelöst werden`, s)
+      return
+    }
+    // A constant slot we can range-check now (the doctrine: translate the error, don't
+    // hide it). A variable/expression slot is allowed but can't be pre-checked.
+    if (a[0].kind === 'NumberLit') {
+      const slotNum = Number(a[0].raw)
+      if (!Number.isInteger(slotNum) || slotNum < 0 || slotNum > 7) {
+        this.err(`UseSprite: Slot ${slotNum} gibt es nicht — der C64 hat genau 8 Sprite-Slots (0–7)`, s)
+        return
+      }
+    }
+
+    let frames: Uint8Array[]
+    let spriteColor: number
+    try {
+      const resolved = resolveSprite(id, this.assets.manifest, this.assets.readFile)
+      frames = resolved.frames
+      spriteColor = resolved.color
+    } catch (e) {
+      this.err(e instanceof AssetResolveError ? e.message : String(e), s)
+      return
+    }
+    const frame0 = frames[0] // resolveSprite guarantees ≥1 frame of 63 bytes
+
+    this.usesSprites = true
+    this.usesSpriteData = true
+    const slot = this.expr(a[0])
+    const dataName = `sprite_${safeAssetName(id)}`
+    this.bakedData.push(
+      `static const unsigned char ${dataName}[${frame0.length}] = {`,
+      byteRows(frame0),
+      '};'
+    )
+
+    this.emit(`/* UseSprite ${slot}, "${id}" */`)
+    // Copy the 63 shape bytes into this slot's sprite-data block, then point the slot.
+    this.emit(
+      `{ unsigned char _s; unsigned char* _d = BC_SPR_DATA(${slot}); ` +
+        `for (_s = 0; _s < ${frame0.length}; ++_s) _d[_s] = ${dataName}[_s]; }`
+    )
+    this.emit(`BC_SPR_PTR[${slot}] = BC_SPR_BLOCK0 + (${slot});`)
+    // Individual per-sprite colour (the "10" pair), chosen in the sprite editor and
+    // stored in the .sprite — so player and blob can differ.
+    this.emit(`VIC.spr_color[${slot}] = ${colorConst(spriteColor)};`)
+    if (this.gfxColor === 'MULTICOLOR') {
+      // Mark this slot multicolor + set the two SHARED registers from the project
+      // palette (the coupling bgcolor1/2 = spr_mcolor0/1 — memory project-palette),
+      // so sprite colours match what the editor painted.
+      const pal = this.palette(s)
+      this.emit(`VIC.spr_mcolor |= (1 << (${slot}));`)
+      this.emit(`VIC.spr_mcolor0 = ${colorConst(pal.shared1)};`)
+      this.emit(`VIC.spr_mcolor1 = ${colorConst(pal.shared2)};`)
+    } else {
+      this.emit(`VIC.spr_mcolor &= ~(1 << (${slot}));`)
+    }
+  }
+
   private genAssign(s: AssignStmt): void {
     this.checkNarrowing(s.target, s.value)
     this.emit(`${this.lvalue(s.target)} = ${this.expr(s.value)};`)
@@ -763,10 +1302,9 @@ class Generator {
     }
     if (e.indices.length === 2) {
       // 2D → flat: zeile * breite + spalte (spalte = first index, zeile = second).
-      const width = this.expr(arr.sizes[0])
+      const rowOffset = this.rowTimesWidth(e.indices[1], arr.sizes[0])
       const spalte = this.expr(e.indices[0])
-      const zeile = this.expr(e.indices[1])
-      return `${arr.cName}[(${zeile}) * (${width}) + (${spalte})]`
+      return `${arr.cName}[${rowOffset} + (${spalte})]`
     }
     if (e.indices.length === 1) {
       return `${arr.cName}[${this.expr(e.indices[0])}]`
@@ -775,23 +1313,58 @@ class Generator {
     return `${arr.cName}[0]`
   }
 
-  /** Render a record field access `tasche[3]\count` / `p\x` → `base.count` (§C). */
+  /** The C for `row * width` inside a 2D index (STAHL S2b). The 6502 has no hardware
+   *  multiply; cc65 already turns a power-of-two width into shifts, but a NON-power-of-two
+   *  width — including the screen width 40 — compiles to its general software multiply
+   *  (`jsr tosumula*`, hundreds of cycles). So for a constant width that is a sum of ≤3
+   *  powers of two (40 = 32+8, the common tilemap case) we emit the shift/add chain
+   *  ourselves, which cc65 turns into cheap shifts — VERIFIED at the asm. Guard: only when
+   *  the row is a plain variable, since the chain evaluates it more than once (never
+   *  duplicate a call/expression that could have side effects). Everything else stays a
+   *  `*`: cc65 handles pure powers of two, and a variable width is a genuine multiply. */
+  private rowTimesWidth(rowExpr: Expr, widthExpr: Expr): string {
+    const rowC = this.expr(rowExpr)
+    const width = this.constInt(widthExpr)
+    if (rowExpr.kind !== 'Identifier' || width === undefined || width <= 0) {
+      return `(${rowC}) * (${this.expr(widthExpr)})`
+    }
+    const bits: number[] = []
+    for (let i = 0; 1 << i <= width; i++) if (width & (1 << i)) bits.push(i)
+    if (bits.length > 3) return `(${rowC}) * (${this.expr(widthExpr)})` // too many adds
+    // High bit first reads like the decomposition (40 = 32 + 8 → (r<<5)+(r<<3)).
+    const terms = bits.reverse().map((i) => (i === 0 ? `(${rowC})` : `((${rowC}) << ${i})`))
+    return terms.length === 1 ? terms[0] : `(${terms.join(' + ')})`
+  }
+
+  /** Render a record field access `tasche[3]\count` / `p\x` → `base.count` (§C). A
+   *  record PARAMETER is a const-pointer, so its field access uses `->` not `.`. */
   private fieldExpr(e: FieldExpr): string {
     const rec = this.recordOf(e.base)
     if (rec && !rec.fields.has(e.field)) {
       this.err(`Record '${rec.cName}' hat kein Feld '${e.field}'`, e)
     }
-    const baseC = e.base.kind === 'Identifier' ? cName(e.base.name) : this.indexExpr(e.base)
+    // A local record-pointer param (`const struct X *p`) dereferences with `->`.
+    if (e.base.kind === 'Identifier') {
+      const local = this.localScope?.get(e.base.name)
+      const arrow = local?.isPointer ? '->' : '.'
+      return `${cName(e.base.name)}${arrow}${cName(e.field)}`
+    }
+    const baseC = this.indexExpr(e.base)
     return `${baseC}.${cName(e.field)}`
   }
 
-  /** The record type backing a field-access base (an array element or scalar). */
+  /** The record type backing a field-access base (an array element, or a scalar record
+   *  local/param inside a function). */
   private recordOf(base: Identifier | IndexExpr): RecordInfo | undefined {
     if (base.kind === 'IndexExpr') {
       const arr = this.arrays.get(base.name)
       if (arr?.recordType) return this.records.get(arr.recordType)
+      return undefined
     }
-    // Scalar record variables (Global p.Slot) are a later layer; arrays cover §C's example.
+    // A scalar record local/param (a record value or a record-pointer param).
+    const local = this.localScope?.get(base.name)
+    if (local?.recordType) return this.records.get(local.recordType)
+    // Global scalar record variables aren't a thing yet (arrays cover §C's example).
     return undefined
   }
 
@@ -839,8 +1412,88 @@ class Generator {
     this.emit(`} while (!(${this.expr(s.until)}));`)
   }
 
+  /** Evaluate a compile-time-constant integer (number literal, possibly negated or
+   *  grouped). Returns undefined for anything not statically known — those fall back to
+   *  the plain forward loop, which is the safe assumption for a runtime step. */
+  private constInt(e: Expr | undefined, seen: Set<string> = new Set()): number | undefined {
+    if (!e) return undefined
+    switch (e.kind) {
+      case 'NumberLit': {
+        const radix = e.base === 'hex' ? 16 : e.base === 'bin' ? 2 : 10
+        const n = parseInt(e.raw, radix)
+        return Number.isNaN(n) ? undefined : n
+      }
+      case 'Unary':
+        if (e.op === '-') {
+          const inner = this.constInt(e.expr, seen)
+          return inner === undefined ? undefined : -inner
+        }
+        return undefined
+      case 'Grouping':
+        return this.constInt(e.expr, seen)
+      case 'Identifier':
+      case 'ConstantRef': {
+        // A user `Const W = 40` resolves to its value (so `Dim feld.b[W,25]` gets the
+        // same shift/add specialization as a literal width). A name the parser left as
+        // an Identifier that turns out to be a const counts too; a plain variable isn't
+        // in `consts` → undefined (not compile-time known). `seen` guards a cycle.
+        if (seen.has(e.name)) return undefined
+        const v = this.consts.get(e.name)
+        if (!v) return undefined
+        seen.add(e.name)
+        return this.constInt(v, seen)
+      }
+      default:
+        return undefined
+    }
+  }
+
   private genFor(s: ForStmt): void {
     const v = cName(s.variable.name)
+    const counterType = this.exprType(s.variable) ?? 'byte'
+    const stepVal = this.constInt(s.step)
+    const declName = s.variable.name
+
+    // A constant Step 0 never moves the counter → endless loop. Catch it honestly.
+    if (s.step && stepVal === 0) {
+      this.err('For … Step 0 würde endlos laufen — der Zähler bewegt sich nie', s)
+      return
+    }
+
+    if (stepVal !== undefined && stepVal < 0) {
+      // Counting DOWN. An unsigned counter has no value below 0: at 0 it wraps to its
+      // type maximum and `v >= to` stays forever true (Befund 3 / N5, e.g.
+      // `For i = 10 To 0 Step -1` on a .b counter). Only a signed .i counter can step
+      // through 0 into the negatives, so its `>=` comparison terminates correctly.
+      if (counterType !== 'sint') {
+        this.err(
+          `Abwärts zählen (Step ${stepVal}) braucht einen .i-Zähler — unsigned kennt kein „unter null" (schreib z. B. \`For ${declName}.i = …\`)`,
+          s
+        )
+        return
+      }
+      const mag = Math.abs(stepVal)
+      this.emit(`for (${v} = ${this.expr(s.from)}; ${v} >= ${this.expr(s.to)}; ${v} -= ${mag}) {`)
+      this.genBlock(s.body)
+      this.emit('}')
+      return
+    }
+
+    // Counting UP. The mirror trap: a constant `to` equal to the counter's type maximum
+    // — after the last body run, `v += step` wraps past the max back to 0 and `v <= to`
+    // is forever true (`For i = 0 To 255` on a .b counter). A bigger type fixes byte;
+    // for word/sint there is no wider unsigned, so it is an honest dead end.
+    const max = TYPE_MAX[counterType]
+    if (max !== undefined && this.constInt(s.to) === max) {
+      const advice =
+        counterType === 'byte' ? ` — nimm .w für den Zähler (\`For ${declName}.w = …\`)` : ''
+      this.err(
+        `Zähler läuft bis ${max} (${TYPE_LABEL[counterType]}-Maximum) und würde beim letzten Schritt überlaufen${advice}`,
+        s
+      )
+      return
+    }
+
     const step = s.step ? this.expr(s.step) : '1'
     this.emit(`for (${v} = ${this.expr(s.from)}; ${v} <= ${this.expr(s.to)}; ${v} += ${step}) {`)
     this.genBlock(s.body)
@@ -848,6 +1501,18 @@ class Generator {
   }
 
   // ---- expressions ----
+
+  /** True if `name` is a declared variable / const / array (i.e. a real value), as
+   *  opposed to a function name — used to tell a forgotten-parens call (C5) apart from
+   *  an ordinary identifier. */
+  private isDeclaredName(name: string): boolean {
+    return (
+      (this.localScope?.has(name) ?? false) ||
+      this.symbols.has(name) ||
+      this.consts.has(name) ||
+      this.arrays.has(name)
+    )
+  }
 
   /** A color argument: a constant (BLACK→COLOR_BLACK) or a raw expression (0–15). */
   private colorArg(e: Expr | undefined): string {
@@ -871,16 +1536,30 @@ class Generator {
         // layers map the rest, e.g. JoyDir → JOY_*).
         return COLOR_MACRO[e.name.toUpperCase()] ?? e.name
       case 'Identifier':
+        // A bare function name used as a value means the parens were forgotten on a
+        // value-function (C5). Parens are mandatory (Konvention §E), so this is an
+        // honest, fix-it-yourself error — not a cryptic cc65 failure later.
+        if (this.functions.has(e.name) && !this.isDeclaredName(e.name)) {
+          this.err(
+            `'${e.name}' ist eine Funktion und gibt einen Wert zurück — ruf sie mit Klammern auf, z. B. ${e.name}(…)`,
+            e
+          )
+        }
         return cName(e.name)
       case 'Grouping':
         return `(${this.expr(e.expr)})`
       case 'Unary': {
+        // Always parenthesize: the parser already built the tree with CRUMB's
+        // precedence; printing bare would let C's (different) precedence re-bind it
+        // (Befund 1). Parens preserve the AST structure exactly.
         const op = OP_C[e.op.toLowerCase()] ?? e.op
-        return `${op}${this.expr(e.expr)}`
+        return `(${op}${this.expr(e.expr)})`
       }
       case 'Binary': {
+        // Always parenthesize — see Unary above. e.g. CRUMB `a + b Shl 2` parses as
+        // `a + (b Shl 2)` (Shl binds like *); without parens C reads `(a + b) << 2`.
         const op = OP_C[e.op.toLowerCase()] ?? e.op
-        return `${this.expr(e.left)} ${op} ${this.expr(e.right)}`
+        return `(${this.expr(e.left)} ${op} ${this.expr(e.right)})`
       }
       case 'IndexExpr':
         return this.indexExpr(e)
@@ -929,9 +1608,86 @@ class Generator {
         this.usesTileSolid = true
         this.usesTileAt = true // bc_tile_solid_at builds on bc_tile_at
         return `bc_tile_solid_at(${this.expr(a[0])}, ${this.expr(a[1])})`
-      default:
+      case 'abs':
+        // Abs(n) → cc65's abs() (stdlib). The argument is cast to signed int so a
+        // subtraction like Abs(a - b) reads as |a − b| even though BreadCraft values
+        // are unsigned — the collision-distance case (the reason Into The Deep needs
+        // it). cc65 has abs(); we just include <stdlib.h> when used.
+        if (a.length < 1) {
+          this.err('Abs erwartet einen Wert: Abs(n)', e)
+          return '/* Abs: Argument fehlt */ 0'
+        }
+        this.usesStdlib = true
+        return `abs((int)(${this.expr(a[0])}))`
+      case 'min':
+      case 'max': {
+        // Min/Max aren't in cc65 — emit the BlitzBasic-style inline comparison (cheap,
+        // no helper, no header). NOTE: each argument appears twice in the ternary, so a
+        // side-effecting call as an argument would run twice; fine for the plain scalar
+        // values these are used with (Min(hp + potion, MAXHP), Max(x, 0)).
+        if (a.length < 2) {
+          this.err(`${name === 'min' ? 'Min' : 'Max'} erwartet zwei Werte: ${name === 'min' ? 'Min' : 'Max'}(a, b)`, e)
+          return '/* Min/Max: zu wenige Argumente */ 0'
+        }
+        const op = name === 'min' ? '<' : '>'
+        const x = this.expr(a[0])
+        const y = this.expr(a[1])
+        return `((${x}) ${op} (${y}) ? (${x}) : (${y}))`
+      }
+      case 'joystick': {
+        // Joystick(RICHTUNG) → JOY_<DIR>(joy_read(JOY_2)) — the proven _preflight/
+        // game.c read. The argument is a JoyDir constant (LEFT/RIGHT/UP/DOWN/FIRE);
+        // anything else is an honest error (no axis values — C64 sticks are 5-bit).
+        if (a.length < 1 || a[0].kind !== 'ConstantRef') {
+          this.err('Joystick erwartet eine Richtung: LEFT, RIGHT, UP, DOWN oder FIRE', e)
+          return '/* Joystick: Richtung fehlt */ 0'
+        }
+        const macro = JOY_MACRO[a[0].name.toUpperCase()]
+        if (!macro) {
+          this.err(
+            `Joystick: '${a[0].name}' ist keine Richtung — erlaubt sind LEFT, RIGHT, UP, DOWN, FIRE`,
+            e
+          )
+          return '/* Joystick: ungültige Richtung */ 0'
+        }
+        this.usesJoystick = true
+        return `${macro}(joy_read(JOY_2))`
+      }
+      case 'keydown':
+      case 'keyhit':
+        // Held/edge keyboard reads need a raw keyboard-matrix scan (column select +
+        // row bit per key) — and KeyHit additionally needs auto-tracked last-frame
+        // state. cc65 has no portable key API and the SSOT's KB_* values aren't real
+        // cc65 symbols yet ("vollständige Belegung folgt"); no preflight proves the
+        // matrix table. Honest deferral to a keyboard-input milestone, like UseSprite
+        // / SetMetaTile — not a silent gap. Joystick already drives a playable sprite.
+        this.err(
+          `${e.callee} kommt mit der Tastatur-Eingabe (eigener Milestone): die C64-Tastaturmatrix ` +
+            'und die Tasten-Konstanten sind noch nicht verdrahtet. Joystick() funktioniert bereits.',
+          e
+        )
+        return `/* TODO ${e.callee}() (Tastatur-Milestone) */ 0`
+      default: {
+        // A user-defined value function call (P1.T3): `Distance(a, b)`.
+        const info = this.functions.get(e.callee)
+        if (info) {
+          if (info.returnRecord) {
+            // A record-returning function uses an out-pointer, so it can't be a plain
+            // sub-expression. Honest error pointing at the supported form.
+            this.err(
+              `Funktion '${e.callee}' gibt einen Record zurück — weise sie direkt einer Record-Variable zu (r.${info.returnRecord} = ${e.callee}(…)), nicht mitten in einem Ausdruck`,
+              e
+            )
+            return `/* ${e.callee}(): Record-Rückgabe nur als direkte Zuweisung */ 0`
+          }
+          if (e.callee === this.currentFunc) {
+            this.err(`Rekursion ist nicht erlaubt (Funktion '${e.callee}' ruft sich selbst auf) — der 6502 hat keinen echten Variablen-Stack; formuliere es iterativ`, e)
+          }
+          return `${info.cName}(${this.callArgs(info, e.args)})`
+        }
         this.err(`Funktion '${e.callee}' hat in diesem Schritt noch kein C-Mapping`, e)
         return `/* TODO ${e.callee}() */ 0`
+      }
     }
   }
 

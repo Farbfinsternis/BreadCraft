@@ -10,6 +10,7 @@ import type {
   ProjectFile,
   RecentProject,
   SettingsPatch,
+  TreeNode,
   VicePathCheck,
   WorkspaceStatus
 } from '../shared/ipc'
@@ -25,6 +26,7 @@ export type {
   ProjectFile,
   RecentProject,
   SettingsPatch,
+  TreeNode,
   VicePathCheck,
   WorkspaceStatus
 }
@@ -57,7 +59,10 @@ const api = {
     saveFile: (dir: string, rel: string, content: string): Promise<void> =>
       ipcRenderer.invoke('project:saveFile', dir, rel, content),
     createFile: (dir: string, name: string): Promise<ProjectFile> =>
-      ipcRenderer.invoke('project:createFile', dir, name)
+      ipcRenderer.invoke('project:createFile', dir, name),
+    tree: (dir: string): Promise<TreeNode[]> => ipcRenderer.invoke('project:tree', dir),
+    createFolder: (dir: string, rel: string): Promise<string> =>
+      ipcRenderer.invoke('project:createFolder', dir, rel)
   },
   assets: {
     read: (dir: string, rel: string): Promise<string | null> =>

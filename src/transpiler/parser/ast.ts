@@ -220,6 +220,52 @@ export interface ExitStmt extends Pos {
   kind: 'ExitStmt'
 }
 
+/** One parameter in a function signature: a name + optional type suffix. A typeless
+ *  param (`x`) takes anything (CodeGen reserves .w); a typed one (`x.w`) is checked. */
+export interface ParamDecl {
+  name: string
+  /** Written type suffix: '.b' | '.w' | '$' | undefined (typeless). */
+  suffix?: string
+}
+
+/**
+ * A function definition (Sprachdef §C.1):
+ *   Function Distance.w(x1.b, y1.b)   ; return type = suffix on the NAME (.w here)
+ *     ... : Return d.w
+ *   EndFunction
+ * A suffix on the name (.b/.w/$) means it returns a value (call needs parentheses);
+ * NO suffix means it's a statement-function (no return value). by-value params,
+ * recursion forbidden — both enforced in CodeGen (P1.T3), the parser just records.
+ * Top-level only: a Function may not be nested inside another block.
+ */
+export interface FunctionDecl extends Pos {
+  kind: 'FunctionDecl'
+  name: string
+  /** Return-type suffix on the name; undefined = no return value (statement-function). */
+  returnSuffix?: string
+  params: ParamDecl[]
+  body: Statement[]
+}
+
+/** `Return [expr]` — leave the current function. The value is present in a
+ *  value-returning function, absent for an early exit / statement-function. */
+export interface ReturnStmt extends Pos {
+  kind: 'ReturnStmt'
+  value?: Expr
+}
+
+/**
+ * A call to a user-defined statement-function used as a statement: `Heal 5` (no
+ * parens, SSOT convention: a function with no return value reads like a command).
+ * A value-function call lives in an expression as CallExpr (`d = Distance(a,b)`),
+ * parens mandatory. `callee` is the function name as written.
+ */
+export interface CallStmt extends Pos {
+  kind: 'CallStmt'
+  callee: string
+  args: Expr[]
+}
+
 export type Statement =
   | CommandStmt
   | AssignStmt
@@ -232,6 +278,9 @@ export type Statement =
   | RepeatStmt
   | ForStmt
   | ExitStmt
+  | FunctionDecl
+  | ReturnStmt
+  | CallStmt
 
 // ---- Program ----
 

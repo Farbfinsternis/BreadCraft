@@ -27,11 +27,10 @@ function isIdentPart(ch: string): boolean {
 }
 
 /**
- * Map a vocabulary item's kind to its token type. Mirrors the disambiguation the
- * Monaco tokenizer documents (crumb.ts): a few names exist in the SSOT both as a
- * constant and as a command/function (TEXT, LEFT, RIGHT). The lexer has no
- * grammar context, so — for consistent classification with the editor — constant
- * wins. The parser can refine by context later.
+ * Map a vocabulary item's kind to the grammar class `classify(word)` reports to the
+ * parser. A few names exist in the SSOT both as a constant and as a command/function
+ * (TEXT, LEFT, RIGHT); the context-free classifier resolves the collision to
+ * constant (constant-wins, see buildClassifier), and the parser refines by context.
  */
 function kindToTokenType(kind: VocabItem['kind']): TokenType {
   switch (kind) {
@@ -52,17 +51,27 @@ function kindToTokenType(kind: VocabItem['kind']): TokenType {
   }
 }
 
-/** Build the lowercased-key → TokenType lookup, constant-wins on collisions. */
-function buildClassifier(vocabulary: VocabItem[]): Map<string, TokenType> {
+/**
+ * Build the canonical-spelling → grammar-class lookup, constant-wins on collisions.
+ * The PARSER uses this to give a Word its role (memory: breadcraft-tokenizer-ssot);
+ * the lexer only consults membership, to keep a canonical `$`-name (Left$, Chr$ …)
+ * as a single token instead of splitting the `$` off as a type suffix.
+ *
+ * EISEN M2.T2 / N3: keyed by the EXACT canonical `name` — CRUMB is now case-sensitive
+ * (Sprachdef §B.1). Only `If`/`Next`/`FIRE`/`Joystick` (exact) are CRUMB words; `next`,
+ * `fire`, `IF` are free identifiers. That is what lets a variable be named `fire`
+ * without colliding with the `FIRE` constant (arch D1–D4). The two-word aliases
+ * (`End If`, `Else If` …) are not keys here — the normalizer fuses those before the
+ * parser sees them.
+ */
+export function buildClassifier(vocabulary: VocabItem[]): Map<string, TokenType> {
   const map = new Map<string, TokenType>()
   const priority = (t: TokenType): number => (t === TokenType.Constant ? 2 : 1)
   for (const item of vocabulary) {
     const tt = kindToTokenType(item.kind)
-    for (const key of item.lookupKeys) {
-      const existing = map.get(key)
-      if (existing === undefined || priority(tt) > priority(existing)) {
-        map.set(key, tt)
-      }
+    const existing = map.get(item.name)
+    if (existing === undefined || priority(tt) > priority(existing)) {
+      map.set(item.name, tt)
     }
   }
   return map
@@ -71,17 +80,14 @@ function buildClassifier(vocabulary: VocabItem[]): Map<string, TokenType> {
 class Scanner {
   private readonly src: string
   private readonly classifier: Map<string, TokenType>
-  /** User record type names (from `Type X`), so `.X` lexes as a type suffix. */
-  private readonly recordNames: Set<string>
   private pos = 0
   private line = 1
   private col = 1
   private readonly tokens: Token[] = []
 
-  constructor(src: string, classifier: Map<string, TokenType>, recordNames: Set<string>) {
+  constructor(src: string, classifier: Map<string, TokenType>) {
     this.src = src
     this.classifier = classifier
-    this.recordNames = recordNames
   }
 
   private peek(ahead = 0): string {
@@ -314,28 +320,27 @@ class Scanner {
     let name = ''
     while (isIdentPart(this.peek())) name += this.advance()
 
-    // A '$' / '.b' / '.w' may be PART OF A CANONICAL NAME (e.g. the string
-    // functions Left$, Right$, Mid$, Chr$) or a TYPE SUFFIX on a variable
-    // (score.b, name$). The SSOT decides: if name+suffix is a known vocabulary
-    // word, it is ONE token classified by the vocab; otherwise the suffix is a
-    // separate TypeSuffix token on the bare identifier. This is what keeps
-    // `Left$` (a Function) distinct from `Left` (which would collide with the
-    // JoyDir constant LEFT). (memory: breadcraft-functions-vs-statements)
+    // A trailing `$` may be PART OF A CANONICAL NAME (the string functions Left$,
+    // Right$, Mid$, Chr$, Str$) or a TYPE SUFFIX on a variable (name$). This is the
+    // one boundary the lexer needs the vocabulary for: if name+suffix is a known
+    // word, keep it as ONE Word token; otherwise split the suffix off. That keeps
+    // `Left$` whole (the parser later classifies it as a Function) while `name$`
+    // becomes `name` + a `$` type suffix. (memory: breadcraft-functions-vs-statements)
     const suffix = this.peekTypeSuffix()
-    if (suffix) {
-      const combinedKind = this.classifier.get((name + suffix).toLowerCase())
-      if (combinedKind !== undefined) {
-        for (let i = 0; i < suffix.length; i++) this.advance()
-        this.push(combinedKind, name + suffix, line, col, name.length + suffix.length)
-        return
-      }
+    if (suffix && this.classifier.has(name + suffix)) {
+      for (let i = 0; i < suffix.length; i++) this.advance()
+      this.push(TokenType.Word, name + suffix, line, col, name.length + suffix.length)
+      return
     }
 
-    // Plain identifier / SSOT-classified word (no suffix consumed into the name).
-    const tt = this.classifier.get(name.toLowerCase()) ?? TokenType.Identifier
-    this.push(tt, name, line, col, name.length)
+    // Every other identifier-shaped lexeme is just a Word — its grammar class is the
+    // parser's job now (EISEN M2.T1), so the lexer no longer consults the vocabulary.
+    this.push(TokenType.Word, name, line, col, name.length)
 
-    // Trailing suffix that did NOT form a known name → it types the variable.
+    // A trailing suffix that did NOT form a known name types the variable. A record
+    // suffix `.Slot` is emitted blindly here (the lexer no longer knows the record
+    // names — that double-scan is gone, N2); the parser/symbol-table validates that
+    // the type actually exists.
     if (suffix) {
       const sl = this.line
       const sc = this.col
@@ -345,27 +350,33 @@ class Scanner {
   }
 
   /**
-   * Look ahead for a type suffix without consuming it: `$`, `.b`, `.w`, or a record
-   * type `.RecordName` (only when RecordName is a known user type — that's why the
-   * lexer is told the record names up front). `.b`/`.w` win over a record named
-   * exactly "b"/"w" — but those can't exist (record names start uppercase here).
+   * Look ahead for a type suffix without consuming it: `$`, `.b`, `.w`, `.i`, or a
+   * record type `.RecordName`. The lexer no longer knows which record names exist, so
+   * ANY `.<name>` that is not the reserved `.b`/`.w`/`.i` reads as a record-type
+   * suffix; the parser decides whether that record was actually declared (N2). The
+   * reserved letters win over a record named exactly "b"/"w"/"i" — but those can't
+   * exist (record names start uppercase here).
    */
   private peekTypeSuffix(): string | null {
     if (this.peek() === '$') return '$'
-    if (this.peek() === '.' && (this.peek(1) === 'b' || this.peek(1) === 'w')) {
-      // `.b`/`.w` only if NOT immediately followed by more identifier chars (so
-      // `.bonus` is not mis-read as `.b` + `onus`); a record `.Bonus` is handled below.
+    if (
+      this.peek() === '.' &&
+      (this.peek(1) === 'b' || this.peek(1) === 'w' || this.peek(1) === 'i')
+    ) {
+      // `.b`/`.w`/`.i` (.i = signed int) only if NOT immediately followed by more
+      // identifier chars (so `.item` is not mis-read as `.i` + `tem`, `.bonus` not
+      // `.b` + `onus`); those longer names fall through to the record branch below.
       if (!isIdentPart(this.peek(2))) return '.' + this.peek(1)
     }
     if (this.peek() === '.' && isIdentStart(this.peek(1))) {
-      // Read the candidate type name after the dot.
+      // Read the candidate type name after the dot — any `.Name` is a record suffix.
       let i = 1
       let name = ''
       while (isIdentPart(this.peek(i))) {
         name += this.peek(i)
         i++
       }
-      if (this.recordNames.has(name)) return '.' + name
+      return '.' + name
     }
     return null
   }
@@ -380,33 +391,54 @@ class Scanner {
 }
 
 /**
- * Tokenize .crumb source into a classified token stream. The vocabulary (built by
- * buildVocabulary from the SSOT) drives identifier classification, so the lexer
- * knows exactly the words BreadCraft knows — nothing hardcoded.
+ * The two-word block endings BreadCraft accepts, merged into their canonical single
+ * keyword. STRICT canonical (Sprachdef §B.1 / EISEN N10): only the exact spelling
+ * `End If` / `End Function` / `Else If` merges — `end if` stays two words so the
+ * parser can answer with "meintest Du `End If`?". `End` and `Else` on their own are
+ * untouched (the `End` command, the `Else` block opener).
  */
-export function tokenize(source: string, vocabulary: VocabItem[]): Token[] {
-  const classifier = buildClassifier(vocabulary)
-  // Records are user-defined, so the lexer can't know `.Slot` is a type from the
-  // SSOT alone. A first, record-blind pass finds every `Type <Name>`; the real pass
-  // then knows those names and lexes `.Name` as a type suffix (user chose the strict
-  // route: a typo'd record type fails to attach, surfacing the mistake).
-  const recordNames = collectRecordNames(source, classifier)
-  return new Scanner(source, classifier, recordNames).scan()
+const MERGE_PAIRS: ReadonlyArray<{ first: string; second: string; into: string }> = [
+  { first: 'End', second: 'If', into: 'EndIf' },
+  { first: 'End', second: 'Function', into: 'EndFunction' },
+  { first: 'Else', second: 'If', into: 'ElseIf' }
+]
+
+/**
+ * Normalizer peephole: fuse the canonical two-word block endings into one keyword
+ * token. Adjacency is what disambiguates `Else If` (one token apart → ElseIf) from
+ * an `Else` block whose first statement is an `If` (`Else\nIf …` → a Newline sits
+ * between them, so they do NOT fuse). Whitespace is not tokenized, so two words on
+ * the same line are always immediately adjacent here.
+ */
+export function normalize(tokens: Token[]): Token[] {
+  const out: Token[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]
+    const next = tokens[i + 1]
+    const pair = next && MERGE_PAIRS.find((p) => p.first === t.value && p.second === next.value)
+    if (pair) {
+      out.push({
+        type: TokenType.Keyword,
+        value: pair.into,
+        line: t.line,
+        col: t.col,
+        length: next.col - t.col + next.length
+      })
+      i++ // also consume the second word
+      continue
+    }
+    out.push(t)
+  }
+  return out
 }
 
 /**
- * First, record-blind lexer pass: collect the name after each `Type` keyword. Reuses
- * the real scanner (no duplicated whitespace/comment logic) — only the result is read.
+ * Tokenize .crumb source into a token stream. Every identifier-shaped lexeme is a
+ * `Word`; the vocabulary is used only for the `$`-name boundary (Left$ et al.). The
+ * grammar class of each Word is resolved later, in the parser (EISEN M2.T1).
  */
-function collectRecordNames(source: string, classifier: Map<string, TokenType>): Set<string> {
-  const names = new Set<string>()
-  const tokens = new Scanner(source, classifier, new Set()).scan()
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const t = tokens[i]
-    if (t.type === TokenType.Keyword && t.value.toLowerCase() === 'type') {
-      const next = tokens[i + 1]
-      if (next.type === TokenType.Identifier) names.add(next.value)
-    }
-  }
-  return names
+export function tokenize(source: string, vocabulary: VocabItem[]): Token[] {
+  const classifier = buildClassifier(vocabulary)
+  const tokens = new Scanner(source, classifier).scan()
+  return normalize(tokens)
 }

@@ -33,7 +33,7 @@ watch(
 function confirm(): void {
   const req = ui.prompt
   if (!req) return
-  if (req.kind === 'message') {
+  if (req.kind === 'message' || req.kind === 'confirm') {
     ui.resolvePrompt('')
     return
   }
@@ -77,7 +77,7 @@ function cancel(): void {
       </template>
 
       <footer class="prompt-actions">
-        <button v-if="ui.prompt.kind === 'input'" class="tbtn" @click="cancel">
+        <button v-if="ui.prompt.kind !== 'message'" class="tbtn" @click="cancel">
           {{ t('dialog.cancel') }}
         </button>
         <button class="tbtn tbtn-primary" @click="confirm">

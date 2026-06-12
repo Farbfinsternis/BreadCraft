@@ -1,9 +1,15 @@
 // Token vocabulary for the .crumb lexer — the first real, testable lexical truth
 // for BreadCraft. The Monaco Monarch tokenizer (renderer/src/monaco/crumb.ts) is
 // a separate, UI-only mechanism for now; later it can be derived from this lexer
-// (memory: breadcraft-tokenizer-ssot). The lexer is SSOT-fed: which identifier is
-// a Keyword/Command/Function/Constant is decided by membership in the vocabulary
-// (src/shared/vocabulary.ts), never hardcoded here.
+// (memory: breadcraft-tokenizer-ssot).
+//
+// EISEN M2.T1: the lexer no longer decides GRAMMAR CLASS. Every identifier-shaped
+// lexeme is emitted as a single `Word`; whether that word is a keyword, command,
+// function, or constant is resolved at parse time (the `eff`/classify bridge in
+// parser.ts). That removes the "classification on the wrong layer" rot (R3) and
+// lets the editor share one lexer with the transpiler. The classified types below
+// (Keyword/Command/Function/Constant/Type) therefore no longer appear in the
+// lexer's OUTPUT — they are the values `classify(word)` returns to the parser.
 
 export enum TokenType {
   // Trivia / structure
@@ -18,7 +24,11 @@ export enum TokenType {
   NumberHex = 'NumberHex', // $FF
   NumberBin = 'NumberBin', // %1010
 
-  // Identifiers, classified by SSOT membership (unknown words → Identifier)
+  // Every identifier-shaped lexeme the lexer emits (memory: breadcraft-tokenizer-ssot).
+  Word = 'Word',
+
+  // Grammar classes — NOT emitted by the lexer; only returned by classify(word) at
+  // parse time to give a Word its role (unknown words classify as Identifier).
   Identifier = 'Identifier',
   Keyword = 'Keyword',
   Command = 'Command',

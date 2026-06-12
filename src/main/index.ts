@@ -8,12 +8,14 @@ import {
 } from './workspace'
 import {
   createFile,
+  createFolder,
   createProject,
   createTempProject,
   listAssets,
   openProject,
   openProjectViaDialog,
   readAsset,
+  readProjectTree,
   recentProjects,
   resolveStartupProject,
   saveFile,
@@ -57,6 +59,11 @@ function registerIpc(): void {
   )
   ipcMain.handle('project:createFile', (_event, dir: string, name: string) =>
     createFile(dir, name)
+  )
+  // P2.T0b: the real-folder explorer + save-as dialog.
+  ipcMain.handle('project:tree', (_event, dir: string) => readProjectTree(dir))
+  ipcMain.handle('project:createFolder', (_event, dir: string, rel: string) =>
+    createFolder(dir, rel)
   )
 
   // Asset IO (ASSET_IO.md): generic project-bound read/write of asset files,

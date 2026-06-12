@@ -1,7 +1,12 @@
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { GraphicsMode, OpenedProject } from '@shared/ipc'
+import type { BreadAssets, GraphicsMode, OpenedProject } from '@shared/ipc'
 import { DEFAULT_GRAPHICS_MODE } from '@shared/ipc'
+
+/** Asset kinds the explorer can list/open/create (P2.T0). */
+export type AssetEditorKind = 'sprite' | 'charset' | 'tilemap' | 'palette'
+
+const EMPTY_MANIFEST: BreadAssets = { palette: null, charsets: [], tilemaps: [], sprites: [] }
 
 const STORAGE_KEY = 'breadcraft.project.ui'
 
@@ -49,6 +54,20 @@ export const useProjectStore = defineStore('project', () => {
   // rel paths with unsaved edits.
   const dirty = reactive<Record<string, boolean>>({})
 
+  // The project's asset manifest (P2.T0) — kept reactive so the explorer's asset
+  // list updates when a new asset is created. Mirrors the .bread `assets` block.
+  const assets = reactive<BreadAssets>({ ...EMPTY_MANIFEST })
+  // Bumped whenever a file is created/saved-as so the explorer re-reads the tree.
+  const treeVersion = ref(0)
+  // Which asset rel is currently open in each editor kind (for the explorer's
+  // active marker). '' = none / the default main.* not yet listed.
+  const activeAsset = reactive<Record<AssetEditorKind, string>>({
+    sprite: '',
+    charset: '',
+    tilemap: '',
+    palette: ''
+  })
+
   const debugMode = ref(saved.debugMode ?? true)
 
   const tabs = computed<OpenTab[]>(() =>
@@ -76,22 +95,103 @@ export const useProjectStore = defineStore('project', () => {
     openFiles.value = project.files.map((f) => f.rel)
     activeRel.value = project.entry || openFiles.value[0] || ''
 
+    // Mirror the asset manifest into the reactive store (the explorer reads this).
+    Object.assign(assets, EMPTY_MANIFEST, project.assets)
+    activeAsset.sprite = project.assets.sprites[0] ?? ''
+    activeAsset.charset = project.assets.charsets[0] ?? ''
+    activeAsset.tilemap = project.assets.tilemaps[0] ?? ''
+    activeAsset.palette = project.assets.palette ?? ''
+
     // Load the project's disk assets into their editors (ASSET_IO.md §4). Lazy
     // store access avoids an import cycle; the editors hold no cross-project state.
     void loadProjectAssets(project)
   }
 
-  /** Pull the project's palette + charset + tilemap assets from disk into their stores. */
+  /** Re-read the asset manifest from disk into the reactive store (after create). */
+  async function refreshAssets(): Promise<void> {
+    if (!dir.value) return
+    const fresh = await window.breadcraft.assets.list(dir.value)
+    Object.assign(assets, EMPTY_MANIFEST, fresh)
+    treeVersion.value++ // signal the explorer to re-read the file tree
+  }
+
+  /** The asset list for one kind (the explorer iterates these). */
+  function assetsOf(kind: AssetEditorKind): string[] {
+    if (kind === 'sprite') return assets.sprites
+    if (kind === 'charset') return assets.charsets
+    if (kind === 'tilemap') return assets.tilemaps
+    return assets.palette ? [assets.palette] : []
+  }
+
+  /**
+   * Open an existing asset in its editor (P2.T0): switch the matching store to that
+   * rel (saving any pending edit first), mark it active. The caller routes the view.
+   */
+  async function openAsset(kind: AssetEditorKind, rel: string): Promise<void> {
+    if (!dir.value) return
+    const store = await assetStore(kind)
+    await store.switchAsset(dir.value, rel)
+    activeAsset[kind] = rel
+  }
+
+  /**
+   * Create a NEW empty asset under `rel` and open it (P2.T0). Writing it registers
+   * it in the .bread manifest (writeAsset appends), so the explorer + the build see
+   * it; then we refresh the reactive list and switch the editor to it.
+   */
+  async function createAsset(kind: AssetEditorKind, rel: string): Promise<void> {
+    if (!dir.value) return
+    const store = await assetStore(kind)
+    await store.createBlank(dir.value, rel)
+    await refreshAssets()
+    activeAsset[kind] = rel
+  }
+
+  /** Lazy-load the asset store for a kind (avoids an import cycle). */
+  async function assetStore(kind: AssetEditorKind): Promise<{
+    switchAsset(dir: string, rel: string): Promise<void>
+    createBlank(dir: string, rel: string): Promise<void>
+    saveTo(dir: string, rel: string): Promise<void>
+    currentRel(): string
+  }> {
+    if (kind === 'sprite') return (await import('./sprite')).useSpriteStore()
+    if (kind === 'charset') return (await import('./charset')).useCharsetStore()
+    if (kind === 'tilemap') return (await import('./tilemap')).useTilemapStore()
+    return (await import('./palette')).usePaletteStore()
+  }
+
+  /**
+   * "Save as…" flow for an editor (P2.T0b): open the file dialog (folder + name in the
+   * project, the editor's fixed `ext`), then write the CURRENT editor content to the
+   * chosen rel and bind the editor to it. Returns the new rel, or null if cancelled.
+   */
+  async function saveAssetAs(kind: AssetEditorKind, ext: string, title: string): Promise<string | null> {
+    if (!dir.value) return null
+    const { useUiStore } = await import('./ui')
+    const ui = useUiStore()
+    const store = await assetStore(kind)
+    const rel = await ui.askSavePath({ title, ext, initialRel: store.currentRel() })
+    if (!rel) return null
+    await store.saveTo(dir.value, rel)
+    await refreshAssets()
+    activeAsset[kind] = rel
+    return rel
+  }
+
+  /** Pull the project's palette + charset + tilemap + sprite assets into their stores. */
   async function loadProjectAssets(project: OpenedProject): Promise<void> {
     const { usePaletteStore } = await import('./palette')
     const { useCharsetStore } = await import('./charset')
     const { useTilemapStore } = await import('./tilemap')
+    const { useSpriteStore } = await import('./sprite')
     const palette = usePaletteStore()
     const charset = useCharsetStore()
     const tilemap = useTilemapStore()
+    const sprite = useSpriteStore()
     await palette.loadForProject(project.dir, project.assets.palette)
     await charset.loadForProject(project.dir, project.assets.charsets[0] ?? null)
     await tilemap.loadForProject(project.dir, project.assets.tilemaps[0] ?? null)
+    await sprite.loadForProject(project.dir, project.assets.sprites[0] ?? null)
   }
 
   function setActiveTab(rel: string): void {
@@ -103,6 +203,7 @@ export const useProjectStore = defineStore('project', () => {
     contents[rel] = content
     if (!openFiles.value.includes(rel)) openFiles.value.push(rel)
     activeRel.value = rel
+    treeVersion.value++ // new crumb → refresh the explorer tree
   }
 
   async function saveActive(): Promise<void> {
@@ -127,12 +228,20 @@ export const useProjectStore = defineStore('project', () => {
     activeRel,
     dirty,
     debugMode,
+    assets,
+    activeAsset,
+    treeVersion,
     tabs,
     activeContent,
     load,
     setActiveTab,
     addFile,
     saveActive,
-    toggleDebug
+    toggleDebug,
+    refreshAssets,
+    assetsOf,
+    openAsset,
+    createAsset,
+    saveAssetAs
   }
 }, { persist: { key: STORAGE_KEY, paths: ['debugMode'] } })

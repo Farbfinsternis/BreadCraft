@@ -5,7 +5,8 @@ import {
   mkdirSync,
   readFileSync,
   writeFileSync,
-  readdirSync
+  readdirSync,
+  statSync
 } from 'fs'
 import { readConfig, writeConfig } from './config'
 import { TEMP_DIRNAME, PROJECTS_DIRNAME } from './workspace'
@@ -19,7 +20,8 @@ import type {
   GraphicsMode,
   OpenedProject,
   ProjectFile,
-  RecentProject
+  RecentProject,
+  TreeNode
 } from '../shared/ipc'
 
 const SSOT = rawSsot as unknown as Ssot
@@ -52,7 +54,7 @@ export interface BreadProjectFile {
   assets: BreadAssets
 }
 
-const EMPTY_ASSETS: BreadAssets = { palette: null, charsets: [], tilemaps: [] }
+const EMPTY_ASSETS: BreadAssets = { palette: null, charsets: [], tilemaps: [], sprites: [] }
 
 const GRAPHICS_MODES: readonly GraphicsMode[] = ['TEXT_HIRES', 'TEXT_MULTICOLOR', 'BITMAP_MULTICOLOR']
 
@@ -69,13 +71,14 @@ function normalizeAssets(raw: unknown): BreadAssets {
   return {
     palette: typeof a.palette === 'string' ? a.palette : null,
     charsets: Array.isArray(a.charsets) ? a.charsets.filter((s) => typeof s === 'string') : [],
-    tilemaps: Array.isArray(a.tilemaps) ? a.tilemaps.filter((s) => typeof s === 'string') : []
+    tilemaps: Array.isArray(a.tilemaps) ? a.tilemaps.filter((s) => typeof s === 'string') : [],
+    sprites: Array.isArray(a.sprites) ? a.sprites.filter((s) => typeof s === 'string') : []
   }
 }
 
 /** The starter main.crumb — its `Graphics …` line reflects the project's mode
  *  (derived from the SSOT, never hardcoded; IDE.md §2.1, M1.T4). */
-function sampleMain(graphicsMode: GraphicsMode): string {
+export function sampleMain(graphicsMode: GraphicsMode): string {
   return `; main.crumb — neues BreadCraft-Projekt
 ; Setup-Phase
 
@@ -249,36 +252,58 @@ export function createProject(
 ): OpenedProject {
   const projectsRoot = join(workspaceRootOrThrow(), PROJECTS_DIRNAME)
   mkdirSync(projectsRoot, { recursive: true })
-  const safe = name.trim().replace(/[^A-Za-z0-9 _-]/g, '').trim() || 'Projekt'
-  let dir = join(projectsRoot, safe)
+  // Display name vs. folder name: the user types a free name ("Into The Deep"); the
+  // folder + .bread are a filesystem-safe slug ("into-the-deep"), so paths never carry
+  // spaces/odd chars into the toolchain (cc65/VICE/Git). The display name is kept in
+  // the manifest. (BreadCraft doctrine: think pretty, translate to something machinable.)
+  const display = name.trim() || 'Projekt'
+  const slug = slugify(display)
+  let dir = join(projectsRoot, slug)
   let n = 2
-  while (existsSync(dir)) dir = join(projectsRoot, `${safe} ${n++}`)
-  return scaffold(dir, basename(dir), false, normalizeGraphicsMode(graphicsMode), withBoilerplate)
+  while (existsSync(dir)) dir = join(projectsRoot, `${slug}-${n++}`)
+  return scaffold(dir, display, false, normalizeGraphicsMode(graphicsMode), withBoilerplate)
+}
+
+/** A filesystem-safe project slug: lowercase, spaces/underscores → hyphens, drop any
+ *  other non-[a-z0-9-] char, collapse and trim hyphens. Empty result → 'projekt'. */
+function slugify(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  return slug || 'projekt'
 }
 
 /** Write a single crumb file's content back to disk. */
 export function saveFile(dir: string, rel: string, content: string): void {
   const target = join(dir, rel)
   if (!existsSync(dir)) throw new Error('Projektverzeichnis fehlt.')
+  mkdirSync(dirname(target), { recursive: true }) // support crumbs in sub-folders
   writeFileSync(target, content, 'utf-8')
 }
 
 /** Add a new empty crumb file to a project and register it in the .bread. */
 export function createFile(dir: string, rawName: string): ProjectFile {
-  let rel = rawName.trim()
+  let rel = rawName.trim().replace(/\\/g, '/')
   if (!rel) throw new Error('Dateiname fehlt.')
   if (!rel.endsWith('.crumb')) rel += '.crumb'
   const target = join(dir, rel)
   if (existsSync(target)) throw new Error(`Datei existiert bereits: ${rel}`)
 
-  writeFileSync(target, `' ${rel}\n`, 'utf-8')
+  mkdirSync(dirname(target), { recursive: true }) // support crumbs in sub-folders
+  // CRUMB comments start with `;` (not BASIC's `'`); a `'` header would make the very
+  // first line of every new file a lexer error (Befund 2).
+  const header = `; ${rel}\n`
+  writeFileSync(target, header, 'utf-8')
 
   const bread = readBread(dir)
   if (!bread.crumbs.includes(rel)) {
     bread.crumbs.push(rel)
     writeBread(dir, bread)
   }
-  return { rel, content: `' ${rel}\n` }
+  return { rel, content: header }
 }
 
 // ---- Asset IO (ASSET_IO.md §4) ----
@@ -301,13 +326,17 @@ export function readAsset(dir: string, rel: string): string | null {
  */
 export function writeAsset(dir: string, kind: AssetKind, rel: string, content: string): string {
   if (!existsSync(dir)) throw new Error('Projektverzeichnis fehlt.')
-  writeFileSync(join(dir, rel), content, 'utf-8')
+  const target = join(dir, rel)
+  mkdirSync(dirname(target), { recursive: true }) // create assets/sprites/… if needed
+  writeFileSync(target, content, 'utf-8')
 
   const bread = readBread(dir)
   if (kind === 'palette') {
     bread.assets.palette = rel
   } else if (kind === 'charset') {
     if (!bread.assets.charsets.includes(rel)) bread.assets.charsets.push(rel)
+  } else if (kind === 'sprite') {
+    if (!bread.assets.sprites.includes(rel)) bread.assets.sprites.push(rel)
   } else {
     if (!bread.assets.tilemaps.includes(rel)) bread.assets.tilemaps.push(rel)
   }
@@ -318,6 +347,60 @@ export function writeAsset(dir: string, kind: AssetKind, rel: string, content: s
 /** The asset manifest of a project (normalised). */
 export function listAssets(dir: string): BreadAssets {
   return readBread(dir).assets
+}
+
+// ---- project file tree (P2.T0b: the real-folder explorer) ----
+
+/** Folders/files the explorer never shows: generated output + the project metafile. */
+const TREE_HIDDEN = new Set(['build', '.git', 'node_modules'])
+
+/**
+ * Read the project folder recursively into a serialisable tree (PROJECT_EXPLORER.md
+ * §2). Dirs first, then files, each alphabetical; `build/` and the `.bread` metafile
+ * are hidden. Paths are project-relative with forward slashes (stable across OSes).
+ */
+export function readProjectTree(dir: string): TreeNode[] {
+  if (!existsSync(dir)) return []
+  const walk = (abs: string, relBase: string): TreeNode[] => {
+    let entries: string[]
+    try {
+      entries = readdirSync(abs)
+    } catch {
+      return []
+    }
+    const nodes: TreeNode[] = []
+    for (const name of entries) {
+      if (TREE_HIDDEN.has(name)) continue
+      if (name.endsWith('.bread')) continue // project metafile, not user content
+      const childAbs = join(abs, name)
+      const rel = relBase ? `${relBase}/${name}` : name
+      let isDir = false
+      try {
+        isDir = statSync(childAbs).isDirectory()
+      } catch {
+        continue
+      }
+      if (isDir) nodes.push({ name, rel, kind: 'dir', children: walk(childAbs, rel) })
+      else nodes.push({ name, rel, kind: 'file' })
+    }
+    // Dirs first, then files; each group alphabetical (case-insensitive).
+    nodes.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    })
+    return nodes
+  }
+  return walk(dir, '')
+}
+
+/** Create a folder inside the project (recursive, idempotent). `rel` is project-
+ *  relative; returns the normalised rel. Used by the save-as dialog's "new folder". */
+export function createFolder(dir: string, rawRel: string): string {
+  const rel = rawRel.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  if (!rel) throw new Error('Ordnername fehlt.')
+  if (!existsSync(dir)) throw new Error('Projektverzeichnis fehlt.')
+  mkdirSync(join(dir, rel), { recursive: true })
+  return rel
 }
 
 /** List existing .bread projects in <workspace>/projects (for a future picker). */

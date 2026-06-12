@@ -24,16 +24,18 @@ export function registerCrumb(vocabulary: VocabItem[]): void {
     vocabulary.filter((v) => kinds.includes(v.kind)).map((v) => v.name)
 
   monaco.languages.setMonarchTokensProvider(CRUMB_LANGUAGE_ID, {
-    // .crumb is case-insensitive (SSOT caseInsensitive:true); Monarch matches
-    // the cases-lists case-insensitively, so the canonical names suffice.
-    ignoreCase: true,
+    // .crumb is case-SENSITIVE (SSOT caseInsensitive:false, EISEN M2.T2/§B.1): a
+    // name highlights as a CRUMB word ONLY in its exact canonical spelling, exactly
+    // like the transpiler classifies it. `If` colours as a keyword, `if`/`iff` stay
+    // plain identifiers — so the editor's colours and the build agree.
+    ignoreCase: false,
     keywords: names(['keyword']),
     commands: names(['command']),
     functions: names(['function']),
     constants: names(['constant']),
     tokenizer: {
       root: [
-        [/'.*$/, 'comment'],
+        [/;.*$/, 'comment'],
         [/"/, { token: 'string.quote', next: '@string' }],
         [/\$[0-9A-Fa-f]+/, 'number.hex'],
         [/%[01]+/, 'number.binary'],
@@ -44,7 +46,7 @@ export function registerCrumb(vocabulary: VocabItem[]): void {
         // RIGHT). A line-based tokenizer can't use context to disambiguate, and
         // those names appear in real code as constants (Graphics TEXT,
         // Joystick(LEFT)), so constant wins for consistent coloring. The real
-        // lexer/parser will later disambiguate by context.
+        // lexer/parser disambiguates by context.
         [
           /\b[A-Za-z_]\w*\b/,
           {
@@ -68,7 +70,7 @@ export function registerCrumb(vocabulary: VocabItem[]): void {
 }
 
 const languageConfiguration: monaco.languages.LanguageConfiguration = {
-  comments: { lineComment: "'" },
+  comments: { lineComment: ';' }, // Sprachdef §B — CRUMB comments start with ';'
   brackets: [
     ['(', ')'],
     ['[', ']']

@@ -3,7 +3,7 @@
   "$comment": "SINGLE SOURCE OF TRUTH (SSOT) für die BreadCraft-Sprache. Transpiler, Monaco-Editor (Intellisense/Hints/Auto-Casing) und Doku-Generator ziehen ihr GESAMTES Sprachwissen ausschließlich aus dieser Datei. Niemals Sprachwissen woanders hartcodieren — wenn es hier nicht steht, existiert es in BreadCraft nicht. Texte stehen NICHT hier (Lokalisierung): jeder Eintrag verweist über i18n-Keys auf separate Sprachdateien (i18n/de.json, i18n/en.json …). Quelle der Inhalte: _plans/BREADCRAFT_SPRACHDEFINITION.md (formale Referenz) + BREADCRAFT_SPRACHE.md (Philosophie).",
   "$schema": {
     "$comment": "Selbst-Dokumentation: was jedes Feld bedeutet. Maschinell ignorierbar ($-Prefix), für Menschen, die die Datei pflegen.",
-    "caseInsensitive": "true: Die Sprache matcht Bezeichner case-insensitiv (joystick == Joystick == JOYSTICK). Der Editor normalisiert getippte Namen IMMER auf die hier hinterlegte 'name'-Schreibweise (canonical casing), damit der Source lesbar bleibt.",
+    "caseInsensitive": "false (seit EISEN M2.T2/§B.1): CRUMB ist case-SENSITIV. Ein Wort ist nur in seiner exakten kanonischen 'name'-Schreibweise ein CRUMB-Wort (If, FIRE, Next); next/fire/IF sind freie Bezeichner und dürfen Variablen sein. Reserviert ist genau die kanonische Schreibweise. (Der Editor wertet dieses Feld erst ab M2.T2b aus — bis dahin auto-caset er noch unbedingt.)",
     "enumDefinition": {
       "id": "Eindeutiger Enum-Bezeichner (z.B. 'Color', 'JoyDir', 'Key').",
       "i18nKey": "Lokalisierungs-Key für die Enum-Beschreibung (z.B. 'enum.color').",
@@ -35,6 +35,7 @@
       "variant": "Optional: für überladene Formen (z.B. Sprite n,x,y  vs  Sprite n,OFF) — Gruppen-Tag."
     }
   },
+  "caseInsensitive": false,
   "types": [
     {
       "id": "byte",
@@ -61,6 +62,20 @@
         65535
       ],
       "since": "phase1"
+    },
+    {
+      "id": "sint",
+      "name": ".i",
+      "kind": "type",
+      "category": "type",
+      "i18nKey": "type.sint",
+      "cMapping": "int",
+      "range": [
+        -32768,
+        32767
+      ],
+      "since": "phase1",
+      "$note": "Vorzeichenbehaftet (signed 16-bit). Für Geschwindigkeiten/Deltas/Offsets, die negativ werden (z.B. Sprung-vy). Der einzige signed-Typ; .b/.w sind unsigned."
     },
     {
       "id": "strbuf",
@@ -729,8 +744,13 @@
       "cost": "cheap",
       "since": "phase1",
       "proven": true,
-      "$note": "Asset wird zur Compile-Zeit eingebacken (NICHT von Disk geladen).",
+      "$note": "Asset wird zur Compile-Zeit in Slot-RAM eingebacken (NICHT von Disk geladen). Slot 0–7 wie bei Sprite/ShowSprite (P2.T3, breadcraft-translation-doctrine TEIL F: benannter Slot).",
       "params": [
+        {
+          "name": "slot",
+          "type": ".b",
+          "i18nKey": "param.usesprite.slot"
+        },
         {
           "name": "id",
           "type": "$",

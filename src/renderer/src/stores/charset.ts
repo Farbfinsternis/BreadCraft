@@ -85,5 +85,48 @@ export const useCharsetStore = defineStore('charset', () => {
     dirty.value = false
   }
 
-  return { chars, dirty, pixels, setPixels, isUsed, usedCount, loadForProject, save }
+  function currentRel(): string {
+    return assetRel
+  }
+
+  /** Switch the editor to another charset file (P2.T0): save pending, then load. */
+  async function switchAsset(dir: string, rel: string): Promise<void> {
+    if (dirty.value) await save()
+    await loadForProject(dir, rel)
+  }
+
+  /** Create a NEW empty charset file at `rel` and bind to it (P2.T0). */
+  async function createBlank(dir: string, rel: string): Promise<void> {
+    if (dirty.value) await save()
+    projectDir = dir
+    assetRel = rel
+    for (const key of Object.keys(chars)) delete chars[Number(key)]
+    dirty.value = false
+    const text = serializeCharset(chars, useProjectStore().graphicsMode)
+    await window.breadcraft.assets.write(dir, 'charset', rel, text)
+  }
+
+  /** "Save as" (P2.T0b): bind to a new rel and write the CURRENT chars there. */
+  async function saveTo(dir: string, rel: string): Promise<void> {
+    projectDir = dir
+    assetRel = rel
+    const text = serializeCharset(chars, useProjectStore().graphicsMode)
+    await window.breadcraft.assets.write(dir, 'charset', rel, text)
+    dirty.value = false
+  }
+
+  return {
+    chars,
+    dirty,
+    pixels,
+    setPixels,
+    isUsed,
+    usedCount,
+    loadForProject,
+    save,
+    currentRel,
+    switchAsset,
+    createBlank,
+    saveTo
+  }
 })

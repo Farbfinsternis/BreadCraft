@@ -38,7 +38,7 @@ export interface NewProjectResult {
  * input field (ask) and a message-only acknowledgement (notify).
  */
 export interface PromptRequest {
-  kind: 'input' | 'message'
+  kind: 'input' | 'message' | 'confirm'
   title: string
   label?: string
   placeholder?: string
@@ -46,6 +46,20 @@ export interface PromptRequest {
   confirmLabel?: string
   message?: string
 }
+
+/** A "save as" request (P2.T0b): pick a folder + name inside the project. The editor
+ *  fixes the extension (sprite→.sprite etc.), so the user only chooses where + the
+ *  name. `initialRel` pre-selects the folder/name when re-saving an existing asset. */
+export interface SaveAsRequest {
+  title: string
+  /** The fixed extension the editor enforces, incl. the dot (e.g. '.sprite'). */
+  ext: string
+  /** Pre-filled project-relative path (with ext) when one is already open; '' = new. */
+  initialRel?: string
+}
+
+/** The chosen project-relative path WITH the fixed extension (null = cancelled). */
+export type SaveAsResult = string | null
 
 interface SizeBounds {
   min: number
@@ -114,6 +128,10 @@ export const useUiStore = defineStore(
     const newProject = ref<NewProjectRequest | null>(null)
     let newProjectResolver: ((value: NewProjectResult | null) => void) | null = null
 
+    // ---- Save-As file dialog (P2.T0b: pick folder + name in the project) ----
+    const saveAs = ref<SaveAsRequest | null>(null)
+    let saveAsResolver: ((value: SaveAsResult) => void) | null = null
+
     /** Ask the user for a string. Resolves with the trimmed text, or null if
      *  cancelled (Esc / Cancel / click-outside). */
     function ask(opts: Omit<PromptRequest, 'kind'>): Promise<string | null> {
@@ -128,6 +146,15 @@ export const useUiStore = defineStore(
       return new Promise((resolve) => {
         resolver = () => resolve()
         prompt.value = { ...opts, kind: 'message' }
+      })
+    }
+
+    /** Ask a yes/no question (replaces window.confirm). Resolves true if the user
+     *  confirms, false on cancel/Esc/click-outside. Two buttons, no text field. */
+    function confirm(opts: Omit<PromptRequest, 'kind'>): Promise<boolean> {
+      return new Promise((resolve) => {
+        resolver = (value) => resolve(value !== null)
+        prompt.value = { ...opts, kind: 'confirm' }
       })
     }
 
@@ -171,6 +198,31 @@ export const useUiStore = defineStore(
       r?.(null)
     }
 
+    /** Open the Save-As dialog; resolves with a project-relative path (with the fixed
+     *  extension), or null if cancelled. */
+    function askSavePath(req: SaveAsRequest): Promise<SaveAsResult> {
+      return new Promise((resolve) => {
+        saveAsResolver = resolve
+        saveAs.value = req
+      })
+    }
+
+    /** Confirm the Save-As dialog with the chosen rel (the modal calls this). */
+    function resolveSaveAs(rel: string): void {
+      const r = saveAsResolver
+      saveAs.value = null
+      saveAsResolver = null
+      r?.(rel)
+    }
+
+    /** Cancel the Save-As dialog (the modal calls this). */
+    function cancelSaveAs(): void {
+      const r = saveAsResolver
+      saveAs.value = null
+      saveAsResolver = null
+      r?.(null)
+    }
+
     function collapse(panel: CollapsiblePanel): void {
       collapsed[panel] = true
     }
@@ -197,6 +249,7 @@ export const useUiStore = defineStore(
       zen,
       prompt,
       newProject,
+      saveAs,
       collapse,
       expand,
       setSize,
@@ -204,11 +257,15 @@ export const useUiStore = defineStore(
       setZen,
       ask,
       notify,
+      confirm,
       resolvePrompt,
       cancelPrompt,
       askNewProject,
       resolveNewProject,
-      cancelNewProject
+      cancelNewProject,
+      askSavePath,
+      resolveSaveAs,
+      cancelSaveAs
     }
   },
   { persist: { key: STORAGE_KEY, paths: ['collapsed', 'sizes', 'zen'] } }

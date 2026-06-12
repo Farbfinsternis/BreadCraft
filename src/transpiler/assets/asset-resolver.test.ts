@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   resolveCharset,
   resolveTilemap,
+  resolveSprite,
   AssetResolveError,
   type AssetManifest,
   type AssetReader
@@ -28,10 +29,25 @@ function reader(files: Record<string, string>): AssetReader {
   return (rel) => (rel in files ? files[rel] : null)
 }
 
-const manifest = (charsets: string[], tilemaps: string[] = []): AssetManifest => ({
+const manifest = (
+  charsets: string[],
+  tilemaps: string[] = [],
+  sprites: string[] = [],
+  palette: string | null = null
+): AssetManifest => ({
+  palette,
   charsets,
-  tilemaps
+  tilemaps,
+  sprites
 })
+
+const SPRITE_BYTES = 63
+
+/** A valid `.sprite` JSON: `frames` of 63 bytes each. `frames` lets a test pass
+ *  exact byte rows so it can assert they flow through unchanged. */
+function spriteFile(frames: number[][] = [new Array(SPRITE_BYTES).fill(0)]): string {
+  return JSON.stringify({ format: 'breadcraft.sprite', version: 1, frameCount: frames.length, frames })
+}
 
 describe('asset-resolver: resolveCharset (happy path)', () => {
   it('resolves an id to its .petscii by filename stem', () => {
@@ -59,13 +75,34 @@ describe('asset-resolver: resolveCharset (happy path)', () => {
     expect(Array.from(r.bytes.slice(40, 48))).toEqual([255, 0, 0, 0, 0, 0, 0, 9])
   })
 
-  it('matches the stem even when the manifest path has subdirs', () => {
+  it('matches a sub-folder asset by its FULL project-relative path (P2.T0b)', () => {
     const r = resolveCharset(
-      'hero',
+      'assets/hero',
       manifest(['assets/hero.petscii']),
       reader({ 'assets/hero.petscii': petscii() })
     )
     expect(r.rel).toBe('assets/hero.petscii')
+  })
+
+  it('does NOT match a sub-folder asset by basename alone (no stem collision)', () => {
+    expect(() =>
+      resolveCharset('hero', manifest(['assets/hero.petscii']), reader({ 'assets/hero.petscii': petscii() }))
+    ).toThrowError(/unbekanntes Tileset 'hero'/)
+  })
+
+  it('two same-basename assets in different folders are distinct by full path', () => {
+    const m = manifest(['enemies/blob.petscii', 'props/blob.petscii'])
+    const files = reader({
+      'enemies/blob.petscii': petscii({ 0: [1, 0, 0, 0, 0, 0, 0, 0] }),
+      'props/blob.petscii': petscii({ 0: [2, 0, 0, 0, 0, 0, 0, 0] })
+    })
+    expect(resolveCharset('enemies/blob', m, files).bytes[0]).toBe(1)
+    expect(resolveCharset('props/blob', m, files).bytes[0]).toBe(2)
+  })
+
+  it('a root-level asset still matches by its short name (main.petscii → "main")', () => {
+    const r = resolveCharset('main', manifest(['main.petscii']), reader({ 'main.petscii': petscii() }))
+    expect(r.rel).toBe('main.petscii')
   })
 })
 
@@ -208,5 +245,102 @@ describe('asset-resolver: resolveTilemap (strict, eager errors)', () => {
     expect(() =>
       resolveTilemap('m', manifest([], ['m.tilemap']), reader({ 'm.tilemap': json }))
     ).toThrowError(/Zelle 0/)
+  })
+})
+
+// ---- resolveSprite ----
+
+/** A 63-byte frame with a couple of bytes set, so a test can assert pass-through. */
+function frame(edits: Record<number, number> = {}): number[] {
+  const b = new Array(SPRITE_BYTES).fill(0)
+  for (const [i, v] of Object.entries(edits)) b[Number(i)] = v
+  return b
+}
+
+describe('asset-resolver: resolveSprite (happy path)', () => {
+  it('resolves an id to its .sprite by stem and returns its frames', () => {
+    const r = resolveSprite(
+      'player',
+      manifest([], [], ['player.sprite']),
+      reader({ 'player.sprite': spriteFile() })
+    )
+    expect(r.kind).toBe('sprite')
+    expect(r.id).toBe('player')
+    expect(r.rel).toBe('player.sprite')
+    expect(r.frames.length).toBe(1)
+    expect(r.frames[0].length).toBe(SPRITE_BYTES)
+  })
+
+  it('passes painted sprite bytes through unchanged, per frame', () => {
+    const r = resolveSprite(
+      'p',
+      manifest([], [], ['p.sprite']),
+      reader({ 'p.sprite': spriteFile([frame({ 0: 255, 62: 9 })]) })
+    )
+    expect(r.frames[0][0]).toBe(255)
+    expect(r.frames[0][62]).toBe(9)
+    expect(r.frames[0][1]).toBe(0)
+  })
+
+  it('keeps multiple animation frames in order', () => {
+    const r = resolveSprite(
+      'p',
+      manifest([], [], ['p.sprite']),
+      reader({ 'p.sprite': spriteFile([frame({ 0: 1 }), frame({ 0: 2 }), frame({ 0: 3 })]) })
+    )
+    expect(r.frames.length).toBe(3)
+    expect(r.frames[0][0]).toBe(1)
+    expect(r.frames[1][0]).toBe(2)
+    expect(r.frames[2][0]).toBe(3)
+  })
+})
+
+describe('asset-resolver: resolveSprite (strict, eager errors)', () => {
+  it('throws on unknown id and lists known sprites', () => {
+    expect(() =>
+      resolveSprite('ghost', manifest([], [], ['player.sprite']), reader({ 'player.sprite': spriteFile() }))
+    ).toThrowError(/unbekanntes Sprite 'ghost'.*player/)
+  })
+
+  it('throws when the file is missing', () => {
+    expect(() =>
+      resolveSprite('p', manifest([], [], ['p.sprite']), reader({}))
+    ).toThrowError(/Sprite-Datei fehlt/)
+  })
+
+  it('throws on broken JSON', () => {
+    expect(() =>
+      resolveSprite('p', manifest([], [], ['p.sprite']), reader({ 'p.sprite': '{ nope' }))
+    ).toThrowError(/kein gültiges \.sprite/)
+  })
+
+  it('throws when there are no frames', () => {
+    const json = JSON.stringify({ format: 'breadcraft.sprite', version: 1, frames: [] })
+    expect(() =>
+      resolveSprite('p', manifest([], [], ['p.sprite']), reader({ 'p.sprite': json }))
+    ).toThrowError(/keine 'frames'-Daten/)
+  })
+
+  it('throws on a wrong-length frame', () => {
+    const json = JSON.stringify({ frames: [new Array(10).fill(0)] })
+    expect(() =>
+      resolveSprite('p', manifest([], [], ['p.sprite']), reader({ 'p.sprite': json }))
+    ).toThrowError(/Frame 0: erwartet 63 Bytes/)
+  })
+
+  it('throws on an out-of-range byte value', () => {
+    const json = JSON.stringify({ frames: [frame({ 0: 300 })] })
+    expect(() =>
+      resolveSprite('p', manifest([], [], ['p.sprite']), reader({ 'p.sprite': json }))
+    ).toThrowError(/Frame 0, Byte 0/)
+  })
+
+  it('raises AssetResolveError specifically', () => {
+    try {
+      resolveSprite('ghost', manifest([], [], []), reader({}))
+      throw new Error('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(AssetResolveError)
+    }
   })
 })
