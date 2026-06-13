@@ -103,6 +103,26 @@ This is the honest part.
   install yourself and point BreadCraft at in the settings.
 - Rough edges throughout. Expect things to be missing or to change.
 
+## The refinement ladder
+
+BreadCraft is hardened in named stages — a metal ladder climbed one rung at a
+time, from rough to refined. A stage is only reached once the work it stands for
+is demonstrably done; only then does development move up to the next. The rungs,
+in order, are:
+
+**Rost → Eisen → Stahl → Bronze → Silber → Gold → Platin**
+
+(rust, iron, steel, bronze, silver, gold, platinum). *Rost* is the raw starting
+state; *Platin* is the far end, where only polish is left to do.
+
+The stage BreadCraft stands on today:
+
+<p align="center">
+  <img src="EISEN.png" alt="Eisen — current stage" width="200">
+</p>
+
+<p align="center"><i>Eisen — raw, but load-bearing.</i></p>
+
 ## Building it
 
 It is an [Electron](https://www.electronjs.org/) app (Vue + TypeScript).
