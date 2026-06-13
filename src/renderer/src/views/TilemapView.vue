@@ -65,13 +65,20 @@ const paintedTiles = computed<number[]>(() => {
 const selectedTile = ref(0)
 
 // The Color-RAM colour the pen writes into each painted cell — the free 4th MC
-// colour per 8×8 cell (TILEMAP_EDITOR.md §4, only meaningful in multicolor). All
-// 16 C64 colours are pickable; default light grey (15).
-const activeColor = ref(15)
+// colour (the %11 bit-pair) per 8×8 cell (TILEMAP_EDITOR.md §4, only meaningful in
+// multicolor). HARDWARE TRUTH: in multicolor-text mode this colour comes from the
+// LOW THREE bits of Color-RAM, so only the first 8 C64 colours (0–7) can be the free
+// colour — picking light grey is simply not on offer (the C64 would show its low-3-bit
+// twin instead). We therefore offer exactly those 8 and never lie in the preview.
+const MC_COLOR_COUNT = 8
+const mcColors = C64_PALETTE.slice(0, MC_COLOR_COUNT)
+const activeColor = ref(1) // white — a visible "not yet chosen" default within 0–7
 
-/** Hex of a cell's Color-RAM colour, for rendering its tile's index-3 pixels. */
+/** Hex of a cell's Color-RAM colour, for rendering its tile's index-3 pixels. Masked
+ *  to the low 3 bits so the editor shows EXACTLY what the C64 will (legacy maps may
+ *  hold an 8–15 value from before this limit was enforced). */
 function cellColorHex(col: number, row: number): string {
-  return C64_PALETTE[tilemap.colorAt(col, row)]?.hex ?? C64_PALETTE[15].hex
+  return C64_PALETTE[tilemap.colorAt(col, row) & 7]?.hex ?? C64_PALETTE[1].hex
 }
 
 // ---- map canvas ----
@@ -155,7 +162,7 @@ function showGhost(col: number, row: number): void {
   hoverIndex = idx
   octx.save()
   octx.globalAlpha = 0.5
-  const ramHex = C64_PALETTE[activeColor.value]?.hex ?? C64_PALETTE[15].hex
+  const ramHex = C64_PALETTE[activeColor.value & 7]?.hex ?? C64_PALETTE[1].hex
   drawChar(octx, charset.chars[selectedTile.value], col * CHAR_PX, row * CHAR_PX, 1, indexPalette.value, isMC.value, ramHex)
   octx.restore()
 }
@@ -281,7 +288,7 @@ function paintTilePreview(canvas: HTMLCanvasElement | null, tn: number): void {
   if (!c) return
   // The brush preview shows index 3 in the active Color-RAM colour, so the swatch
   // matches what painting will stamp into a cell.
-  const ramHex = C64_PALETTE[activeColor.value]?.hex ?? C64_PALETTE[15].hex
+  const ramHex = C64_PALETTE[activeColor.value & 7]?.hex ?? C64_PALETTE[1].hex
   drawChar(c, charset.chars[tn], 0, 0, tileScale, indexPalette.value, isMC.value, ramHex)
 }
 /** Vue ref callback fan-out: each preview canvas paints itself when mounted. */
@@ -386,7 +393,7 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
         <p class="tm-hint">{{ t('tilemap.colorRamHint') }}</p>
         <div class="tm-swatches">
           <button
-            v-for="c in C64_PALETTE"
+            v-for="c in mcColors"
             :key="c.index"
             class="tm-swatch"
             :class="{ 'is-sel': activeColor === c.index }"

@@ -1,7 +1,9 @@
 import type { VocabItem } from '@shared/ssot-types'
+import type { Locale } from '@shared/ipc'
 import type { Token } from '../lexer/token'
 import { TokenType } from '../lexer/token'
 import { buildClassifier } from '../lexer'
+import { messages, DEFAULT_LOCALE, type ParserMessages, type RoleKey } from '../messages'
 import type {
   Expr,
   Identifier,
@@ -68,15 +70,19 @@ class Parser {
   /** lowercased spelling → canonical spelling, for the "meintest Du `If`?" hint when a
    *  word is a CRUMB word in the wrong case (M2.T2). */
   private readonly canonical: Map<string, string>
+  /** Locale-bound diagnostic catalog (STAHL S5b) — every parser error reads its text
+   *  from here, so an English IDE shows English parse errors. */
+  private readonly M: ParserMessages
   private pos = 0
   private readonly errors: ParseError[] = []
   /** True while parsing a function body — used to forbid nested Function defs and to
    *  flag a `Return` that sits outside any function (Sprachdef §C.1: top-level only). */
   private inFunction = false
 
-  constructor(tokens: Token[], vocabulary: VocabItem[]) {
+  constructor(tokens: Token[], vocabulary: VocabItem[], msgs: ParserMessages) {
     this.tokens = tokens
     this.classifier = buildClassifier(vocabulary)
+    this.M = msgs
     this.canonical = new Map()
     for (const item of vocabulary) {
       const key = item.name.toLowerCase()
@@ -113,11 +119,8 @@ class Parser {
   }
 
   /** Record the "`X` is a CRUMB word" error for a reserved word used as a name. */
-  private reservedError(t: Token, role: string): void {
-    this.error(
-      `'${t.value}' ist ein CRUMB-Wort und kann kein ${role} sein — schreib es z. B. klein (${t.value.toLowerCase()})`,
-      t
-    )
+  private reservedError(t: Token, role: RoleKey): void {
+    this.error(this.M.reservedAsRole(t.value, role, t.value.toLowerCase()), t)
   }
 
   /**
@@ -138,10 +141,10 @@ class Parser {
    * field). It must be a non-reserved Word (Sprachdef §B.1, N1). Records an error and
    * returns null otherwise; the caller recovers.
    */
-  private takeName(role: string): Token | null {
+  private takeName(role: RoleKey): Token | null {
     const t = this.peek()
     if (t.type !== TokenType.Word) {
-      this.error(`${role} erwartet`, t)
+      this.error(this.M.roleExpected(role), t)
       return null
     }
     if (this.classifier.has(t.value)) {
@@ -216,7 +219,7 @@ class Parser {
     // generic keyword path; a non-reserved word here is a normal assignment (fire = 1).
     if (t.type === TokenType.Word && this.looksLikeAssignment()) {
       if (this.classifier.has(t.value)) {
-        this.reservedError(t, 'Zuweisungsziel')
+        this.reservedError(t, 'assignTarget')
         return null
       }
       return this.parseAssignment()
@@ -249,10 +252,7 @@ class Parser {
           return this.parseReturn()
         default:
           // Other keywords (Select, …) are a later layer.
-          this.error(
-            `Anweisung beginnend mit '${t.value}' wird in diesem Schritt noch nicht unterstützt`,
-            t
-          )
+          this.error(this.M.statementNotSupported(t.value), t)
           return null
       }
     }
@@ -267,20 +267,14 @@ class Parser {
     if (t.type === TokenType.Word) {
       const canon = this.keywordTypo(t)
       if (canon) {
-        this.error(
-          `'${t.value}' ist kein CRUMB-Wort — meintest Du '${canon}'? CRUMB unterscheidet Groß- und Kleinschreibung`,
-          t
-        )
+        this.error(this.M.didYouMean(t.value, canon), t)
         return null
       }
       return this.parseCallStatement()
     }
 
     // Punctuation/literal at statement start — not a valid statement.
-    this.error(
-      `Anweisung beginnend mit '${t.value || t.type}' wird in diesem Schritt noch nicht unterstützt`,
-      t
-    )
+    this.error(this.M.statementNotSupported(t.value || String(t.type)), t)
     return null
   }
 
@@ -309,7 +303,7 @@ class Parser {
   /** Consume a terminator keyword, or record an error if it's missing. */
   private expectKeyword(name: string): void {
     if (this.atKeyword(name.toLowerCase())) this.advance()
-    else this.error(`'${name}' erwartet`, this.peek())
+    else this.error(this.M.tokenExpected(name), this.peek())
   }
 
   /**
@@ -397,12 +391,12 @@ class Parser {
 
   private parseFor(): Statement {
     const kw = this.advance() // For
-    if (this.isReserved(this.peek())) this.reservedError(this.peek(), 'Schleifenvariable')
+    if (this.isReserved(this.peek())) this.reservedError(this.peek(), 'loopVar')
     const variable = this.parseIdentifier()
     if (this.peek().type === TokenType.Operator && this.peek().value === '=') {
       this.advance()
     } else {
-      this.error("'=' erwartet in For-Schleife", this.peek())
+      this.error(this.M.forEqualsExpected(), this.peek())
     }
     const from = this.parseExpr(0)
     this.expectKeyword('To')
@@ -433,7 +427,7 @@ class Parser {
       }
     }
     if (this.peek().type === TokenType.RParen) this.advance()
-    else this.error("')' erwartet", this.peek())
+    else this.error(this.M.closeParenExpected(), this.peek())
     return args
   }
 
@@ -531,7 +525,7 @@ class Parser {
     const target = this.parseIdentifierOrIndex()
     const opTok = this.peek()
     if (opTok.type !== TokenType.Operator || opTok.value !== '=') {
-      this.error("'=' erwartet (nur Zuweisungen werden in diesem Schritt unterstützt)", opTok)
+      this.error(this.M.assignEqualsExpected(), opTok)
       return null
     }
     this.advance() // '='
@@ -543,13 +537,13 @@ class Parser {
   private parseGlobal(): Statement | null {
     const kw = this.advance() // Global
     if (this.isReserved(this.peek())) {
-      this.reservedError(this.peek(), 'Variablenname')
+      this.reservedError(this.peek(), 'varName')
       return null
     }
     const target = this.parseIdentifier()
     const opTok = this.peek()
     if (opTok.type !== TokenType.Operator || opTok.value !== '=') {
-      this.error("'=' erwartet — Global braucht eine Pflicht-Initialisierung", opTok)
+      this.error(this.M.globalEqualsExpected(), opTok)
       return null
     }
     this.advance() // '='
@@ -560,11 +554,11 @@ class Parser {
   /** `Const NAME = wert` — compile-time constant; no type suffix (Sprachdef §C). */
   private parseConst(): Statement | null {
     const kw = this.advance() // Const
-    const nameTok = this.takeName('Name')
+    const nameTok = this.takeName('name')
     if (!nameTok) return null
     const opTok = this.peek()
     if (opTok.type !== TokenType.Operator || opTok.value !== '=') {
-      this.error("'=' erwartet in Const-Deklaration", opTok)
+      this.error(this.M.constEqualsExpected(), opTok)
       return null
     }
     this.advance() // '='
@@ -586,25 +580,19 @@ class Parser {
   private parseDim(): Statement | null {
     const kw = this.advance() // Dim
     if (this.isReserved(this.peek())) {
-      this.reservedError(this.peek(), 'Arrayname')
+      this.reservedError(this.peek(), 'arrayName')
       return null
     }
     const target = this.parseIdentifier()
     if (this.peek().type !== TokenType.LBracket) {
-      this.error("'[' erwartet — Dim braucht eine Größenangabe, z. B. Dim feld.b[10]", this.peek())
+      this.error(this.M.dimBracketExpected(), this.peek())
       return null
     }
     const sizes = this.parseBracketList()
     if (sizes.length < 1) {
-      this.error('Dim braucht mindestens eine Dimension, z. B. Dim feld.b[10]', kw)
+      this.error(this.M.dimNeedsDimension(), kw)
     } else if (sizes.length > 2) {
-      this.error(
-        'Der C64 unterstützt nur 1- und 2-dimensionale Arrays. Mehr Dimensionen brauchen ' +
-          'pro Zugriff mehrere Multiplikationen (der 6502 hat keine Hardware-Multiplikation) ' +
-          'und kosten schnell sehr viel RAM. Lege stattdessen ein 2D-Array an und rechne die ' +
-          'dritte Dimension selbst in den Index (so bleibt die Kostenrechnung sichtbar).',
-        kw
-      )
+      this.error(this.M.dimTooManyDims(), kw)
     }
     return { kind: 'DimStmt', target, sizes, line: kw.line, col: kw.col }
   }
@@ -619,14 +607,14 @@ class Parser {
    */
   private parseType(): Statement | null {
     const kw = this.advance() // Type
-    const nameTok = this.takeName('Typname')
+    const nameTok = this.takeName('typeName')
     if (!nameTok) return null
     const fields: FieldDecl[] = []
     this.skipSeparators()
     while (!this.atEnd() && !this.atKeyword('endtype')) {
       if (this.atKeyword('field')) {
         this.advance() // Field
-        const fNameTok = this.takeName('Feldname')
+        const fNameTok = this.takeName('fieldName')
         if (fNameTok) {
           let suffix: string | undefined
           if (this.peek().type === TokenType.TypeSuffix) suffix = this.advance().value
@@ -635,7 +623,7 @@ class Parser {
           this.recover()
         }
       } else {
-        this.error("'Field' oder 'EndType' erwartet im Type-Block", this.peek())
+        this.error(this.M.fieldOrEndTypeExpected(), this.peek())
         this.recover()
       }
       this.skipSeparators()
@@ -656,13 +644,13 @@ class Parser {
   private parseFunction(): Statement | null {
     const kw = this.advance() // Function
     if (this.inFunction) {
-      this.error('Funktionen dürfen nicht ineinander verschachtelt werden', kw)
+      this.error(this.M.nestedFunction(), kw)
       // Recover: skip to the matching EndFunction so the rest of the file still parses.
       this.skipToKeyword('endfunction')
       return null
     }
 
-    const nameTok = this.takeName('Funktionsname')
+    const nameTok = this.takeName('funcName')
     if (!nameTok) return null
     // Return type = optional suffix on the name (.b/.w/$). None = no return value.
     let returnSuffix: string | undefined
@@ -691,13 +679,13 @@ class Parser {
   private parseParamList(): ParamDecl[] {
     const params: ParamDecl[] = []
     if (this.peek().type !== TokenType.LParen) {
-      this.error("'(' erwartet nach dem Funktionsnamen (auch leer: Name())", this.peek())
+      this.error(this.M.funcParenExpected(), this.peek())
       return params
     }
     this.advance() // '('
     if (this.peek().type !== TokenType.RParen) {
       for (;;) {
-        const nameTok = this.takeName('Parametername')
+        const nameTok = this.takeName('paramName')
         if (!nameTok) break
         let suffix: string | undefined
         if (this.peek().type === TokenType.TypeSuffix) suffix = this.advance().value
@@ -710,7 +698,7 @@ class Parser {
       }
     }
     if (this.peek().type === TokenType.RParen) this.advance()
-    else this.error("')' erwartet am Ende der Parameterliste", this.peek())
+    else this.error(this.M.paramListCloseExpected(), this.peek())
     return params
   }
 
@@ -718,7 +706,7 @@ class Parser {
   private parseReturn(): Statement | null {
     const kw = this.advance() // Return
     if (!this.inFunction) {
-      this.error("'Return' steht außerhalb einer Funktion", kw)
+      this.error(this.M.returnOutsideFunction(), kw)
       // not fatal — keep parsing, but still consume an optional expression below
     }
     let value: Expr | undefined
@@ -750,7 +738,7 @@ class Parser {
       }
     }
     if (this.peek().type === TokenType.RBracket) this.advance()
-    else this.error("']' erwartet", this.peek())
+    else this.error(this.M.closeBracketExpected(), this.peek())
     return items
   }
 
@@ -813,12 +801,12 @@ class Parser {
         this.advance()
         const inner = this.parseExpr(0)
         if (this.peek().type === TokenType.RParen) this.advance()
-        else this.error("')' erwartet", this.peek())
+        else this.error(this.M.closeParenExpected(), this.peek())
         return { kind: 'Grouping', expr: inner, line: t.line, col: t.col }
       }
       default:
         // Nothing valid here — record and synthesize a zero so parsing can go on.
-        this.error(`Ausdruck erwartet, '${t.value || t.type}' gefunden`, t)
+        this.error(this.M.expressionExpected(t.value || String(t.type)), t)
         if (!this.atStatementEnd()) this.advance()
         return { kind: 'NumberLit', raw: '0', base: 'dec', line: t.line, col: t.col }
     }
@@ -831,7 +819,7 @@ class Parser {
     if (this.peek().type === TokenType.LParen) {
       args = this.parseParenArgs()
     } else {
-      this.error(`'(' erwartet nach Funktion '${nameTok.value}'`, this.peek())
+      this.error(this.M.funcCallParenExpected(nameTok.value), this.peek())
     }
     return { kind: 'CallExpr', callee: nameTok.value, args, line: nameTok.line, col: nameTok.col }
   }
@@ -874,7 +862,7 @@ class Parser {
         this.advance()
         return { kind: 'FieldExpr', base, field: fieldTok.value, line: id.line, col: id.col }
       }
-      this.error("Feldname erwartet nach '\\'", fieldTok)
+      this.error(this.M.fieldNameAfterBackslash(), fieldTok)
     }
     return base
   }
@@ -886,6 +874,10 @@ class Parser {
  * classification off the lexer, EISEN M2.T1) — pass the same SSOT vocabulary used to
  * tokenize.
  */
-export function parse(tokens: Token[], vocabulary: VocabItem[]): ParseResult {
-  return new Parser(tokens, vocabulary).parseProgram()
+export function parse(
+  tokens: Token[],
+  vocabulary: VocabItem[],
+  locale: Locale = DEFAULT_LOCALE
+): ParseResult {
+  return new Parser(tokens, vocabulary, messages(locale).parser).parseProgram()
 }

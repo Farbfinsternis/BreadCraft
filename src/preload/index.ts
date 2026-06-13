@@ -82,8 +82,8 @@ const api = {
       ipcRenderer.invoke('settings:browseVice', current)
   },
   build: {
-    run: (source: string, projectDir: string): Promise<BuildResult> =>
-      ipcRenderer.invoke('build:run', source, projectDir)
+    run: (source: string, projectDir: string, runAfterBuild = true): Promise<BuildResult> =>
+      ipcRenderer.invoke('build:run', source, projectDir, runAfterBuild)
   }
 }
 

@@ -16,7 +16,16 @@
  * asset, unreadable file, wrong format, bad byte shape all surface NOW, at the
  * resolving command's position, long before cc65 runs. An honest cost-safety net,
  * never a silent fallback.
+ *
+ * The on-disk SHAPE itself lives once in `@shared/asset-formats` (Befund 23); this
+ * resolver is the STRICT layer on top — it lets a structural AssetFormatError surface
+ * as an AssetResolveError (file path + position), then validates element ranges
+ * itself. The renderer asset store shares the same codecs with the opposite,
+ * tolerant policy.
  */
+import * as fmt from '@shared/asset-formats'
+import { messages, DEFAULT_LOCALE, type ResolverMessages } from '../messages'
+import type { Locale } from '@shared/ipc'
 
 /** The manifest slice the resolver needs (mirror of shared `BreadAssets`). */
 export interface AssetManifest {
@@ -50,24 +59,41 @@ export interface ResolvedCharset {
  *  attaches source position + severity when turning it into a CodeGenError. */
 export class AssetResolveError extends Error {}
 
-const CHAR_COUNT = 256
-const BYTES_PER_CHAR = 8
+/** Run a shared structural codec; rephrase its AssetFormatError as an
+ *  AssetResolveError carrying the asset label + path (the strict-layer policy). The
+ *  shared message is a predicate phrase, so this reads as one sentence:
+ *  `Tileset 'main.petscii' ist kein gültiges .petscii (JSON kaputt)`. */
+function withFormatError<T>(label: string, rel: string, run: () => T): T {
+  try {
+    return run()
+  } catch (e) {
+    if (e instanceof fmt.AssetFormatError) {
+      throw new AssetResolveError(`${label} '${rel}' ${e.message}`)
+    }
+    throw e
+  }
+}
 
-/** C64 screen tilemap: 40×25 = 1000 cells. */
-const MAP_W = 40
-const MAP_H = 25
-const MAP_CELLS = MAP_W * MAP_H
+// Format dimensions/constants come from the shared codecs (one place — Befund 21/23).
+const CHAR_COUNT = fmt.CHAR_COUNT
+const BYTES_PER_CHAR = fmt.BYTES_PER_CHAR
+const MAP_W = fmt.MAP_W
+const MAP_H = fmt.MAP_H
+const MAP_CELLS = fmt.MAP_CELLS
+const SPRITE_BYTES = fmt.SPRITE_BYTES
 
-/** A C64 hardware sprite shape: 24×21 pixels = 3 bytes/row × 21 = 63 bytes. */
-const SPRITE_BYTES = 63
-
-/** A successfully resolved tilemap: 1000 tile numbers, ready to bake into C. */
+/** A successfully resolved tilemap: 1000 tile numbers PLUS the parallel per-cell
+ *  Color-RAM colours, ready to bake into C. */
 export interface ResolvedTilemap {
   kind: 'tilemap'
   id: string
   rel: string
   /** 1000 tile numbers (0–255), row-major (cell = row*40 + col). */
   tiles: Uint8Array
+  /** 1000 per-cell Color-RAM colours (0–15), row-major — the free 4th MC colour the
+   *  editor painted per 8×8 cell. Parallel to `tiles`; cells past the stored data (or
+   *  files predating per-cell colour) carry DEFAULT_COLOR_RAM. */
+  colors: Uint8Array
   width: number
   height: number
 }
@@ -111,21 +137,23 @@ function idOf(rel: string): string {
 export function resolveCharset(
   id: string,
   manifest: AssetManifest,
-  readFile: AssetReader
+  readFile: AssetReader,
+  locale: Locale = DEFAULT_LOCALE
 ): ResolvedCharset {
+  const M = messages(locale).resolver
   const rel = manifest.charsets.find((c) => relMatches(c, id))
   if (!rel) {
     const known = manifest.charsets.map(idOf)
-    const hint = known.length ? known.join(', ') : '(keine)'
-    throw new AssetResolveError(`unbekanntes Tileset '${id}' — Projekt kennt: ${hint}`)
+    const hint = known.length ? known.join(', ') : M.noneKnown
+    throw new AssetResolveError(M.unknownTileset(id, hint))
   }
 
   const text = readFile(rel)
   if (text === null) {
-    throw new AssetResolveError(`Tileset-Datei fehlt: ${rel}`)
+    throw new AssetResolveError(M.tilesetFileMissing(rel))
   }
 
-  return { kind: 'charset', id, rel, bytes: parsePetsciiBytes(rel, text), charCount: CHAR_COUNT }
+  return { kind: 'charset', id, rel, bytes: parsePetsciiBytes(rel, text, locale), charCount: CHAR_COUNT }
 }
 
 /**
@@ -133,36 +161,20 @@ export function resolveCharset(
  * `{ chars: number[][] }` (256 rows of 8 bytes) — the editor's serializeCharset
  * truth. Any deviation is a hard error (strict bridge), not a guess.
  */
-function parsePetsciiBytes(rel: string, text: string): Uint8Array {
-  let raw: { chars?: unknown }
-  try {
-    raw = JSON.parse(text) as { chars?: unknown }
-  } catch {
-    throw new AssetResolveError(`Tileset '${rel}' ist kein gültiges .petscii (JSON kaputt)`)
-  }
-  if (!Array.isArray(raw.chars)) {
-    throw new AssetResolveError(`Tileset '${rel}' hat keine 'chars'-Daten`)
-  }
-  if (raw.chars.length !== CHAR_COUNT) {
-    throw new AssetResolveError(
-      `Tileset '${rel}' hat ${raw.chars.length} Zeichen, erwartet ${CHAR_COUNT}`
-    )
-  }
+function parsePetsciiBytes(rel: string, text: string, locale: Locale): Uint8Array {
+  const M = messages(locale).resolver
+  const rows = withFormatError(M.labelTileset, rel, () => fmt.parseCharset(text, locale))
 
   const bytes = new Uint8Array(CHAR_COUNT * BYTES_PER_CHAR)
   for (let i = 0; i < CHAR_COUNT; i++) {
-    const row = raw.chars[i]
+    const row = rows[i]
     if (!Array.isArray(row) || row.length !== BYTES_PER_CHAR) {
-      throw new AssetResolveError(
-        `Tileset '${rel}', Zeichen ${i}: erwartet ${BYTES_PER_CHAR} Bytes`
-      )
+      throw new AssetResolveError(M.charByteCountWrong(rel, i, BYTES_PER_CHAR))
     }
     for (let j = 0; j < BYTES_PER_CHAR; j++) {
       const b = row[j]
       if (typeof b !== 'number' || b < 0 || b > 255 || !Number.isInteger(b)) {
-        throw new AssetResolveError(
-          `Tileset '${rel}', Zeichen ${i}, Byte ${j}: kein gültiger Bytewert (0–255)`
-        )
+        throw new AssetResolveError(M.charByteBad(rel, i, j))
       }
       bytes[i * BYTES_PER_CHAR + j] = b
     }
@@ -179,55 +191,64 @@ function parsePetsciiBytes(rel: string, text: string): Uint8Array {
 export function resolveTilemap(
   id: string,
   manifest: AssetManifest,
-  readFile: AssetReader
+  readFile: AssetReader,
+  locale: Locale = DEFAULT_LOCALE
 ): ResolvedTilemap {
+  const M = messages(locale).resolver
   const rel = manifest.tilemaps.find((m) => relMatches(m, id))
   if (!rel) {
     const known = manifest.tilemaps.map(idOf)
-    const hint = known.length ? known.join(', ') : '(keine)'
-    throw new AssetResolveError(`unbekannte Karte '${id}' — Projekt kennt: ${hint}`)
+    const hint = known.length ? known.join(', ') : M.noneKnown
+    throw new AssetResolveError(M.unknownMap(id, hint))
   }
 
   const text = readFile(rel)
   if (text === null) {
-    throw new AssetResolveError(`Karten-Datei fehlt: ${rel}`)
+    throw new AssetResolveError(M.mapFileMissing(rel))
   }
 
-  return { kind: 'tilemap', id, rel, tiles: parseTilemapTiles(rel, text), width: MAP_W, height: MAP_H }
+  const { tiles, colors } = parseTilemapData(rel, text, locale)
+  return { kind: 'tilemap', id, rel, tiles, colors, width: MAP_W, height: MAP_H }
 }
 
 /**
- * Parse the `.tilemap` JSON into a flat 1000-tile array. Shape is
- * `{ layers: [{ type, tiles: number[] }] }`; reads the `grafik` layer. Strict:
- * malformed structure is a hard error (the bake must not poke garbage into the
- * screen). A short layer is padded with 0 (empty tile) — that's a valid partial map.
+ * Parse the `.tilemap` JSON into parallel flat 1000-element tile + Color-RAM arrays.
+ * Shape is `{ layers: [{ type, tiles: number[], colors: number[] | null }] }`; reads
+ * the `grafik` layer. Strict: malformed structure or an out-of-range value is a hard
+ * error (the bake must not poke garbage into Screen/Color RAM). A short `tiles` layer
+ * is padded with 0 (empty tile); a short/absent `colors` is padded with the default
+ * per-cell colour — both are valid partial / pre-colour maps.
  */
-function parseTilemapTiles(rel: string, text: string): Uint8Array {
-  let raw: { layers?: unknown }
-  try {
-    raw = JSON.parse(text) as { layers?: unknown }
-  } catch {
-    throw new AssetResolveError(`Karte '${rel}' ist kein gültiges .tilemap (JSON kaputt)`)
-  }
-  if (!Array.isArray(raw.layers)) {
-    throw new AssetResolveError(`Karte '${rel}' hat keine 'layers'-Daten`)
-  }
-  const layers = raw.layers as { type?: string; tiles?: unknown }[]
-  const grafik = layers.find((l) => l.type === 'grafik') ?? layers[0]
-  if (!grafik || !Array.isArray(grafik.tiles)) {
-    throw new AssetResolveError(`Karte '${rel}' hat keinen Grafik-Layer mit Kacheln`)
-  }
+function parseTilemapData(
+  rel: string,
+  text: string,
+  locale: Locale
+): { tiles: Uint8Array; colors: Uint8Array } {
+  const M = messages(locale).resolver
+  const { tiles: srcTiles, colors: srcColors } = withFormatError(M.labelMap, rel, () =>
+    fmt.parseTilemap(text, locale)
+  )
 
-  const src = grafik.tiles as unknown[]
   const tiles = new Uint8Array(MAP_CELLS)
-  for (let i = 0; i < MAP_CELLS && i < src.length; i++) {
-    const n = src[i]
+  for (let i = 0; i < MAP_CELLS && i < srcTiles.length; i++) {
+    const n = srcTiles[i]
     if (typeof n !== 'number' || n < 0 || n > 255 || !Number.isInteger(n)) {
-      throw new AssetResolveError(`Karte '${rel}', Zelle ${i}: keine gültige Kachel-Nummer (0–255)`)
+      throw new AssetResolveError(M.tileNumberBad(rel, i))
     }
     tiles[i] = n
   }
-  return tiles
+
+  const colors = new Uint8Array(MAP_CELLS).fill(fmt.DEFAULT_COLOR_RAM)
+  if (srcColors) {
+    for (let i = 0; i < MAP_CELLS && i < srcColors.length; i++) {
+      const c = srcColors[i]
+      if (typeof c !== 'number' || c < 0 || c > 15 || !Number.isInteger(c)) {
+        throw new AssetResolveError(M.colorRamBad(rel, i))
+      }
+      colors[i] = c
+    }
+  }
+  return { tiles, colors }
 }
 
 /** A successfully resolved palette: the three SHARED C64 colour registers as
@@ -258,26 +279,26 @@ export const DEFAULT_PALETTE: ResolvedPalette = {
  * A PRESENT but garbled file is still a hard error (strict bridge) — a broken file
  * the user did create should surface, not silently revert.
  */
-export function resolvePalette(manifest: AssetManifest, readFile: AssetReader): ResolvedPalette {
+export function resolvePalette(
+  manifest: AssetManifest,
+  readFile: AssetReader,
+  locale: Locale = DEFAULT_LOCALE
+): ResolvedPalette {
   if (!manifest.palette) return DEFAULT_PALETTE
   const text = readFile(manifest.palette)
   if (text === null) return DEFAULT_PALETTE // referenced but missing → defaults, not a crash
-  return parsePaletteIndices(manifest.palette, text)
+  return parsePaletteIndices(manifest.palette, text, locale)
 }
 
 /** Parse a `.palette` JSON into the three shared indices. Shape is
  *  `{ background, shared1, shared2 }` (each 0–15) — the editor's serializePalette
  *  truth. Out-of-range or non-integer values are a hard error. */
-function parsePaletteIndices(rel: string, text: string): ResolvedPalette {
-  let raw: { background?: unknown; shared1?: unknown; shared2?: unknown }
-  try {
-    raw = JSON.parse(text)
-  } catch {
-    throw new AssetResolveError(`Palette '${rel}' ist kein gültiges .palette (JSON kaputt)`)
-  }
+function parsePaletteIndices(rel: string, text: string, locale: Locale): ResolvedPalette {
+  const M = messages(locale).resolver
+  const raw = withFormatError(M.labelPalette, rel, () => fmt.parsePalette(text, locale))
   const idx = (v: unknown, name: string): number => {
     if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 15) {
-      throw new AssetResolveError(`Palette '${rel}', ${name}: kein gültiger Farb-Index (0–15)`)
+      throw new AssetResolveError(M.paletteIndexBad(rel, name))
     }
     return v
   }
@@ -305,7 +326,7 @@ export interface ResolvedSprite {
 }
 
 /** Default individual sprite colour (white, index 1) for pre-colour `.sprite` files. */
-const DEFAULT_SPRITE_COLOR = 1
+const DEFAULT_SPRITE_COLOR = fmt.DEFAULT_SPRITE_COLOR
 
 /**
  * Resolve a sprite id (`"player"`) to its animation frames' raw C64 bytes. Same
@@ -316,71 +337,64 @@ const DEFAULT_SPRITE_COLOR = 1
 export function resolveSprite(
   id: string,
   manifest: AssetManifest,
-  readFile: AssetReader
+  readFile: AssetReader,
+  locale: Locale = DEFAULT_LOCALE
 ): ResolvedSprite {
+  const M = messages(locale).resolver
   const rel = manifest.sprites.find((s) => relMatches(s, id))
   if (!rel) {
     const known = manifest.sprites.map(idOf)
-    const hint = known.length ? known.join(', ') : '(keine)'
-    throw new AssetResolveError(`unbekanntes Sprite '${id}' — Projekt kennt: ${hint}`)
+    const hint = known.length ? known.join(', ') : M.noneKnown
+    throw new AssetResolveError(M.unknownSprite(id, hint))
   }
 
   const text = readFile(rel)
   if (text === null) {
-    throw new AssetResolveError(`Sprite-Datei fehlt: ${rel}`)
+    throw new AssetResolveError(M.spriteFileMissing(rel))
   }
 
-  return { kind: 'sprite', id, rel, frames: parseSpriteFrames(rel, text), color: parseSpriteColor(text) }
-}
-
-/** Read the optional individual colour (0–15) from a `.sprite`; default white if
- *  absent (old files) or out of range. Parse errors are caught by parseSpriteFrames. */
-function parseSpriteColor(text: string): number {
-  try {
-    const raw = JSON.parse(text) as { color?: unknown }
-    const c = raw.color
-    return typeof c === 'number' && Number.isInteger(c) && c >= 0 && c <= 15 ? c : DEFAULT_SPRITE_COLOR
-  } catch {
-    return DEFAULT_SPRITE_COLOR
-  }
+  const { frames, color } = parseSpriteData(rel, text, locale)
+  return { kind: 'sprite', id, rel, frames, color }
 }
 
 /**
- * Parse the `.sprite` JSON into one byte array per frame. Shape is
- * `{ frames: number[][] }` — each frame 63 bytes (the editor's serializeSprite
- * truth). Strict: a missing/empty `frames`, a wrong-length frame, or a bad byte
- * value is a hard error (the bake must not poke a garbled shape into sprite RAM).
+ * Parse the `.sprite` JSON into one byte array per frame PLUS the individual colour,
+ * from ONE structural parse (the shared codec — no double JSON.parse, Befund 25).
+ * Shape is `{ frames: number[][], color? }` — each frame 63 bytes (the editor's
+ * serializeSprite truth). Strict: a missing/empty `frames`, a wrong-length frame, or
+ * a bad byte value is a hard error (the bake must not poke a garbled shape into
+ * sprite RAM). The colour defaults to white if absent (old files) or out of range.
  */
-function parseSpriteFrames(rel: string, text: string): Uint8Array[] {
-  let raw: { frames?: unknown }
-  try {
-    raw = JSON.parse(text) as { frames?: unknown }
-  } catch {
-    throw new AssetResolveError(`Sprite '${rel}' ist kein gültiges .sprite (JSON kaputt)`)
-  }
-  if (!Array.isArray(raw.frames) || raw.frames.length === 0) {
-    throw new AssetResolveError(`Sprite '${rel}' hat keine 'frames'-Daten`)
+function parseSpriteData(
+  rel: string,
+  text: string,
+  locale: Locale
+): { frames: Uint8Array[]; color: number } {
+  const M = messages(locale).resolver
+  const raw = withFormatError(M.labelSprite, rel, () => fmt.parseSprite(text, locale))
+  if (raw.frames.length === 0) {
+    throw new AssetResolveError(M.spriteNoFrames(rel))
   }
 
   const frames: Uint8Array[] = []
   for (let f = 0; f < raw.frames.length; f++) {
     const frame = raw.frames[f]
     if (!Array.isArray(frame) || frame.length !== SPRITE_BYTES) {
-      throw new AssetResolveError(
-        `Sprite '${rel}', Frame ${f}: erwartet ${SPRITE_BYTES} Bytes`
-      )
+      throw new AssetResolveError(M.spriteFrameLenWrong(rel, f, SPRITE_BYTES))
     }
     const bytes = new Uint8Array(SPRITE_BYTES)
     for (let j = 0; j < SPRITE_BYTES; j++) {
       const b = frame[j]
       if (typeof b !== 'number' || b < 0 || b > 255 || !Number.isInteger(b)) {
-        throw new AssetResolveError(
-          `Sprite '${rel}', Frame ${f}, Byte ${j}: kein gültiger Bytewert (0–255)`
-        )
+        throw new AssetResolveError(M.spriteByteBad(rel, f, j))
       }
       bytes[j] = b
     }
     frames.push(bytes)
   }
-  return frames
+
+  const c = raw.color
+  const color =
+    typeof c === 'number' && Number.isInteger(c) && c >= 0 && c <= 15 ? c : DEFAULT_SPRITE_COLOR
+  return { frames, color }
 }

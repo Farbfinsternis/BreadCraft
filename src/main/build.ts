@@ -8,6 +8,7 @@ import { compile, ramInfo } from '../transpiler'
 import type { AssetContext } from '../transpiler'
 import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
+import { resolveLanguage } from './config'
 import { listAssets, readAsset } from './project'
 import type { BuildLogLine, BuildResult } from '../shared/ipc'
 
@@ -28,10 +29,17 @@ function run(tool: string, args: string[], cwd: string): Promise<{ code: number;
 }
 
 /**
- * Compile `source` to C, build a .prg with the bundled cc65, and (if configured)
- * launch it in VICE. Output goes to `<projectDir>/build/` (main.c, main.prg).
+ * Compile `source` to C, build a .prg with the bundled cc65, and (if `runAfterBuild`
+ * and a VICE path is configured) launch it in VICE. Output goes to
+ * `<projectDir>/build/` (main.c, main.prg). With `runAfterBuild === false` (the plain
+ * "Build" button, M4.T2) the VICE step is skipped entirely — it returns at stage
+ * 'cc65' WITHOUT `needsVicePath`, so a missing VICE path is not treated as a problem.
  */
-export async function buildAndRun(source: string, projectDir: string): Promise<BuildResult> {
+export async function buildAndRun(
+  source: string,
+  projectDir: string,
+  runAfterBuild = true
+): Promise<BuildResult> {
   const buildDir = join(projectDir, 'build')
   const log: BuildLogLine[] = []
   const add = (level: BuildLogLine['level'], text: string): void => {
@@ -45,7 +53,14 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
     manifest: listAssets(projectDir),
     readFile: (rel: string) => readAsset(projectDir, rel)
   }
-  const { code, errors, linkerConfig, mainCeiling, perf } = compile(source, vocabulary, assets)
+  // Compiler diagnostics follow the IDE's language (STAHL S5b): an English UI gets
+  // English parse errors, a German UI German ones.
+  const { code, errors, linkerConfig, mainCeiling, perf } = compile(
+    source,
+    vocabulary,
+    assets,
+    resolveLanguage()
+  )
   // The per-frame cost estimate is valid as soon as the code parsed — feed it to the
   // PERF health-bar on every outcome where we actually compiled something.
   const perfInfo = perf ?? undefined
@@ -103,7 +118,13 @@ export async function buildAndRun(source: string, projectDir: string): Promise<B
     `RAM: ${ram.usedBytes} von ${ram.budgetBytes} Bytes belegt (bis $${mainCeiling.toString(16).toUpperCase()})`
   )
 
-  // 3) run in VICE if a path is set
+  // 3) run in VICE — unless this was a plain Build (no run requested). Skipping is a
+  // clean success at stage 'cc65', NOT a needsVicePath case (don't nudge Settings).
+  if (!runAfterBuild) {
+    add('info', '.prg gebaut — Start übersprungen (nur Build).')
+    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, ram, perf: perfInfo }
+  }
+
   const vicePath = readSettings().vicePath
   if (!vicePath || !existsSync(vicePath)) {
     add('info', 'Kein gültiger VICE-Pfad gesetzt — .prg gebaut, aber nicht gestartet.')

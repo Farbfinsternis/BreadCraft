@@ -33,6 +33,8 @@ import {
   type ResolvedPalette
 } from '../assets'
 import { planMemory } from './memory-map'
+import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
+import type { Locale } from '@shared/ipc'
 
 /** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
  *  The project palette stores indices; the generated C reads as named colours. */
@@ -335,8 +337,16 @@ class Generator {
   private localScope: Map<string, LocalSym> | undefined
   /** Name of the function currently being emitted — to forbid direct recursion. */
   private currentFunc: string | undefined
+  /** Locale-bound diagnostic catalog (STAHL S5b) — every codegen error reads its text
+   *  from here, so an English IDE shows English codegen errors. */
+  private readonly M: CodegenMessages
 
-  constructor(private readonly assets?: AssetContext) {}
+  constructor(
+    private readonly assets?: AssetContext,
+    private readonly locale: Locale = DEFAULT_LOCALE
+  ) {
+    this.M = messages(locale).codegen
+  }
 
   /** The project's shared palette colours, resolved once and cached. UseTileset +
    *  UseSprite read this so the running program's colours match the editor. With no
@@ -350,7 +360,7 @@ class Generator {
       return this.paletteCache
     }
     try {
-      this.paletteCache = resolvePalette(this.assets.manifest, this.assets.readFile)
+      this.paletteCache = resolvePalette(this.assets.manifest, this.assets.readFile, this.locale)
     } catch (e) {
       this.err(e instanceof AssetResolveError ? e.message : String(e), at)
       this.paletteCache = { kind: 'palette', background: 0, shared1: 9, shared2: 14 }
@@ -674,7 +684,7 @@ class Generator {
    *  return); a record suffix means a record return (→ out-pointer in C). */
   private collectFunction(s: FunctionDecl): void {
     if (this.functions.has(s.name)) {
-      this.err(`Funktion '${s.name}' ist mehrfach definiert`, s)
+      this.err(this.M.funcRedefined(s.name), s)
       return
     }
     const returnRecord = recordSuffixName(s.returnSuffix)
@@ -704,7 +714,7 @@ class Generator {
     for (const p of info.params) {
       if (p.recordType) {
         const rec = this.records.get(p.recordType)
-        if (!rec) this.err(`Funktion '${s.name}': unbekannter Record '${p.recordType}' im Parameter '${p.name}'`, s)
+        if (!rec) this.err(this.M.paramUnknownRecord(s.name, p.recordType, p.name), s)
         // const-pointer: read-only view, no record copy (the doctrine).
         cParams.push(`const struct ${cName(p.recordType)} *${cName(p.name)}`)
         scope.set(p.name, { cName: cName(p.name), recordType: p.recordType, isPointer: true })
@@ -772,12 +782,12 @@ class Generator {
   private genCallStatement(s: CallStmt): void {
     const info = this.functions.get(s.callee)
     if (!info) {
-      this.err(`Unbekannte Funktion '${s.callee}' — fehlt eine 'Function ${s.callee}…'?`, s)
+      this.err(this.M.unknownFunction(s.callee), s)
       this.emit(`/* TODO: ${s.callee}(...) nicht definiert */`)
       return
     }
     if (s.callee === this.currentFunc) {
-      this.err(`Rekursion ist nicht erlaubt (Funktion '${s.callee}' ruft sich selbst auf) — der 6502 hat keinen echten Variablen-Stack; formuliere es iterativ`, s)
+      this.err(this.M.recursion(s.callee), s)
     }
     this.emit(`${info.cName}(${this.callArgs(info, s.args)});`)
   }
@@ -849,7 +859,7 @@ class Generator {
         : target.kind === 'IndexExpr'
           ? `'${target.name}[…]'`
           : `'\\${target.field}'`
-    this.err(`Verkleinerung beim Schreiben in ${where}: ${reason}`, target, 'warn')
+    this.err(this.M.narrowing(where, reason), target, 'warn')
   }
 
   // ---- statements ----
@@ -955,12 +965,12 @@ class Generator {
         if (a.length >= 3) {
           this.emit(`cputsxy(${this.expr(a[0])}, ${this.expr(a[1])}, ${this.expr(a[2])});`)
         } else {
-          this.err('DrawText erwartet x, y, Ausdruck', s)
+          this.err(this.M.drawTextArgs(), s)
           this.emit('/* DrawText: zu wenige Argumente */')
         }
         break
       default:
-        this.err(`Befehl '${s.name}' hat in diesem Schritt noch kein C-Mapping`, s)
+        this.err(this.M.commandNoMapping(s.name), s)
         this.emit(`/* TODO: ${s.name} ${a.map((x) => this.expr(x)).join(', ')} */`)
     }
   }
@@ -978,16 +988,16 @@ class Generator {
     // conio gives you) — so `Graphics TEXT` alone is the common UI/text case.
     const color = s.args.length >= 2 ? this.constArg(s.args[1]) : 'HIRES'
     if (area !== 'TEXT' && area !== 'BITMAP') {
-      this.err("Graphics: erstes Argument muss TEXT oder BITMAP sein", s)
+      this.err(this.M.graphicsFirstArg(), s)
       return
     }
     if (color !== 'HIRES' && color !== 'MULTICOLOR') {
-      this.err("Graphics: zweites Argument muss HIRES oder MULTICOLOR sein", s)
+      this.err(this.M.graphicsSecondArg(), s)
       return
     }
     // Phase-1 forbids BITMAP,HIRES (Sprachdef §E lists only the three valid combos).
     if (area === 'BITMAP' && color === 'HIRES') {
-      this.err('Graphics BITMAP, HIRES ist in Phase 1 nicht vorgesehen (nur TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)', s)
+      this.err(this.M.graphicsBitmapHires(), s)
       return
     }
     this.gfxArea = area
@@ -1021,16 +1031,16 @@ class Generator {
   private genUseTileset(s: CommandStmt): void {
     const id = this.stringArg(s.args[0])
     if (!id) {
-      this.err('UseTileset erwartet einen Tileset-Namen in Anführungszeichen, z. B. UseTileset "main"', s)
+      this.err(this.M.useTilesetName(), s)
       return
     }
     if (!this.assets) {
-      this.err(`UseTileset "${id}": kein Projekt-Kontext — Assets können nur in einem Projekt aufgelöst werden`, s)
+      this.err(this.M.useTilesetNoProject(id), s)
       return
     }
     let bytes: Uint8Array
     try {
-      bytes = resolveCharset(id, this.assets.manifest, this.assets.readFile).bytes
+      bytes = resolveCharset(id, this.assets.manifest, this.assets.readFile, this.locale).bytes
     } catch (e) {
       this.err(e instanceof AssetResolveError ? e.message : String(e), s)
       return
@@ -1065,38 +1075,48 @@ class Generator {
   private genDrawMap(s: CommandStmt): void {
     const id = this.stringArg(s.args[0])
     if (!id) {
-      this.err('DrawMap erwartet einen Karten-Namen in Anführungszeichen, z. B. DrawMap "level1"', s)
+      this.err(this.M.drawMapName(), s)
       return
     }
     if (!this.assets) {
-      this.err(`DrawMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`, s)
+      this.err(this.M.drawMapNoProject(id), s)
       return
     }
     if (!this.activeTileset) {
-      this.err(`DrawMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`, s)
+      this.err(this.M.drawMapNoTileset(id), s)
       return
     }
     let tiles: Uint8Array
+    let colors: Uint8Array
     try {
-      tiles = resolveTilemap(id, this.assets.manifest, this.assets.readFile).tiles
+      const map = resolveTilemap(id, this.assets.manifest, this.assets.readFile, this.locale)
+      tiles = map.tiles
+      colors = map.colors
     } catch (e) {
       this.err(e instanceof AssetResolveError ? e.message : String(e), s)
       return
     }
 
     const cName = `map_${safeAssetName(id)}`
+    const colName = `mapcol_${safeAssetName(id)}`
     this.bakedData.push(
       `static const unsigned char ${cName}[${tiles.length}] = {`,
       byteRows(tiles),
       '};'
     )
+    // Bake the per-cell Color-RAM colours with bit 3 set (multicolor in MC-text) right
+    // in the table, so the copy loop is a plain memcpy — the colour the editor painted
+    // per 8×8 cell reaches the VIC (no longer a fixed grey).
+    this.bakedData.push(
+      `static const unsigned char ${colName}[${colors.length}] = {`,
+      byteRows(colors.map((c) => (c & 0x0f) | 8)),
+      '};'
+    )
 
     this.emit(`/* DrawMap "${id}" */`)
-    // Copy tile numbers to screen RAM; give every cell a multicolor per-cell colour
-    // (bit 3 set = multicolor in MC-text). A fixed light grey for now — per-cell colour
-    // arrives with MetaTiles (TILEMAP_EDITOR.md).
+    // Copy tile numbers to screen RAM and the painted per-cell colours to Color-RAM.
     this.emit(
-      `{ unsigned int _c; for (_c = 0; _c < ${tiles.length}; ++_c) { BC_SCREEN[_c] = ${cName}[_c]; COLOR_RAM[_c] = COLOR_GRAY1 | 8; } }`
+      `{ unsigned int _c; for (_c = 0; _c < ${tiles.length}; ++_c) { BC_SCREEN[_c] = ${cName}[_c]; COLOR_RAM[_c] = ${colName}[_c]; } }`
     )
   }
 
@@ -1109,7 +1129,7 @@ class Generator {
   private genSetTile(s: CommandStmt): void {
     const a = s.args
     if (a.length < 4) {
-      this.err('SetTile erwartet spalte, zeile, tile, farbe', s)
+      this.err(this.M.setTileArgs(), s)
       this.emit('/* SetTile: zu wenige Argumente */')
       return
     }
@@ -1136,6 +1156,11 @@ class Generator {
    *   - cc65's VIC.spr_pos[8] array (c64.h cc65 mode) lets n be any expression.
    * `Sprite n, OFF` is the overloaded off-variant (SSOT): the 2nd arg is the
    * SpriteState constant OFF → just disable the sprite (same as HideSprite n).
+   *
+   * `n` is a VIRTUAL sprite id (Sprachdef "Sprite-IDs", STAHL S3), not inherently a
+   * hardware slot — today it maps 1:1 onto VIC slot n (this direct emit), but a future
+   * multiplexer will own the 8 physical slots and remap, with the user's id unchanged.
+   * Emit stays slot n; the indirection is the contract, not a code layer (yet).
    */
   private genSprite(s: CommandStmt): void {
     const a = s.args
@@ -1145,7 +1170,7 @@ class Generator {
       return
     }
     if (a.length < 3) {
-      this.err('Sprite erwartet n, x, y (oder n, OFF)', s)
+      this.err(this.M.spriteArgs(), s)
       this.emit('/* Sprite: zu wenige Argumente */')
       return
     }
@@ -1163,7 +1188,7 @@ class Generator {
   private genSpriteEnable(s: CommandStmt, on: boolean): void {
     const a = s.args
     if (a.length < 1) {
-      this.err(`${s.name} erwartet die Sprite-Nummer n (0–7)`, s)
+      this.err(this.M.spriteNumberRange(s.name), s)
       this.emit(`/* ${s.name}: fehlende Sprite-Nummer */`)
       return
     }
@@ -1199,16 +1224,16 @@ class Generator {
   private genUseSprite(s: CommandStmt): void {
     const a = s.args
     if (a.length < 2) {
-      this.err('UseSprite erwartet einen Slot (0–7) und einen Sprite-Namen, z. B. UseSprite 0, "player"', s)
+      this.err(this.M.useSpriteArgs(), s)
       return
     }
     const id = this.stringArg(a[1])
     if (!id) {
-      this.err('UseSprite: das zweite Argument muss ein Sprite-Name in Anführungszeichen sein, z. B. UseSprite 0, "player"', s)
+      this.err(this.M.useSpriteSecondArg(), s)
       return
     }
     if (!this.assets) {
-      this.err(`UseSprite "${id}": kein Projekt-Kontext — Assets können nur in einem Projekt aufgelöst werden`, s)
+      this.err(this.M.useSpriteNoProject(id), s)
       return
     }
     // A constant slot we can range-check now (the doctrine: translate the error, don't
@@ -1216,7 +1241,7 @@ class Generator {
     if (a[0].kind === 'NumberLit') {
       const slotNum = Number(a[0].raw)
       if (!Number.isInteger(slotNum) || slotNum < 0 || slotNum > 7) {
-        this.err(`UseSprite: Slot ${slotNum} gibt es nicht — der C64 hat genau 8 Sprite-Slots (0–7)`, s)
+        this.err(this.M.useSpriteSlotRange(slotNum), s)
         return
       }
     }
@@ -1224,7 +1249,7 @@ class Generator {
     let frames: Uint8Array[]
     let spriteColor: number
     try {
-      const resolved = resolveSprite(id, this.assets.manifest, this.assets.readFile)
+      const resolved = resolveSprite(id, this.assets.manifest, this.assets.readFile, this.locale)
       frames = resolved.frames
       spriteColor = resolved.color
     } catch (e) {
@@ -1301,7 +1326,7 @@ class Generator {
   private indexExpr(e: IndexExpr): string {
     const arr = this.arrays.get(e.name)
     if (!arr) {
-      this.err(`Unbekanntes Array '${e.name}' — fehlt ein 'Dim ${e.name}…'?`, e)
+      this.err(this.M.unknownArray(e.name), e)
       return `/* TODO: ${e.name}[] nicht deklariert */ 0`
     }
     if (e.indices.length === 2) {
@@ -1313,7 +1338,7 @@ class Generator {
     if (e.indices.length === 1) {
       return `${arr.cName}[${this.expr(e.indices[0])}]`
     }
-    this.err(`Array '${e.name}' erwartet 1 oder 2 Indizes`, e)
+    this.err(this.M.arrayIndexCount(e.name), e)
     return `${arr.cName}[0]`
   }
 
@@ -1360,7 +1385,7 @@ class Generator {
   private fieldExpr(e: FieldExpr): string {
     const rec = this.recordOf(e.base)
     if (rec && !rec.fields.has(e.field)) {
-      this.err(`Record '${rec.cName}' hat kein Feld '${e.field}'`, e)
+      this.err(this.M.recordNoField(rec.cName, e.field), e)
     }
     // A local record-pointer param (`const struct X *p`) dereferences with `->`.
     if (e.base.kind === 'Identifier') {
@@ -1409,8 +1434,7 @@ class Generator {
     if (isConstOne(s.cond)) {
       if (!bodyHasVWait(s.body)) {
         this.err(
-          'Frame-Schleife (While 1) ohne VWait: ohne Frame-Sync läuft die Schleife so ' +
-            'schnell wie möglich (Bewegung rast davon, Tearing). Setz ein VWait in die Schleife.',
+          this.M.frameLoopNoVWait(),
           s,
           'warn'
         )
@@ -1475,7 +1499,7 @@ class Generator {
 
     // A constant Step 0 never moves the counter → endless loop. Catch it honestly.
     if (s.step && stepVal === 0) {
-      this.err('For … Step 0 würde endlos laufen — der Zähler bewegt sich nie', s)
+      this.err(this.M.forStep0(), s)
       return
     }
 
@@ -1485,10 +1509,7 @@ class Generator {
       // `For i = 10 To 0 Step -1` on a .b counter). Only a signed .i counter can step
       // through 0 into the negatives, so its `>=` comparison terminates correctly.
       if (counterType !== 'sint') {
-        this.err(
-          `Abwärts zählen (Step ${stepVal}) braucht einen .i-Zähler — unsigned kennt kein „unter null" (schreib z. B. \`For ${declName}.i = …\`)`,
-          s
-        )
+        this.err(this.M.forDownNeedsSint(stepVal, declName), s)
         return
       }
       const mag = Math.abs(stepVal)
@@ -1504,10 +1525,12 @@ class Generator {
     // for word/sint there is no wider unsigned, so it is an honest dead end.
     const max = TYPE_MAX[counterType]
     if (max !== undefined && this.constInt(s.to) === max) {
-      const advice =
-        counterType === 'byte' ? ` — nimm .w für den Zähler (\`For ${declName}.w = …\`)` : ''
       this.err(
-        `Zähler läuft bis ${max} (${TYPE_LABEL[counterType]}-Maximum) und würde beim letzten Schritt überlaufen${advice}`,
+        this.M.forCounterOverflow(
+          max,
+          TYPE_LABEL[counterType],
+          counterType === 'byte' ? declName : undefined
+        ),
         s
       )
       return
@@ -1559,10 +1582,7 @@ class Generator {
         // value-function (C5). Parens are mandatory (Konvention §E), so this is an
         // honest, fix-it-yourself error — not a cryptic cc65 failure later.
         if (this.functions.has(e.name) && !this.isDeclaredName(e.name)) {
-          this.err(
-            `'${e.name}' ist eine Funktion und gibt einen Wert zurück — ruf sie mit Klammern auf, z. B. ${e.name}(…)`,
-            e
-          )
+          this.err(this.M.valueFuncNeedsParens(e.name), e)
         }
         return cName(e.name)
       case 'Grouping':
@@ -1598,7 +1618,7 @@ class Generator {
       case 'gettile': {
         // GetTile(col, row[, layer]) — layer 0 = display (Screen-RAM), 1 = data layer.
         if (a.length < 2) {
-          this.err('GetTile erwartet spalte, zeile [, layer]', e)
+          this.err(this.M.getTileArgs(), e)
           return '/* GetTile: zu wenige Argumente */ 0'
         }
         this.usesTileWorld = true
@@ -1612,7 +1632,7 @@ class Generator {
       }
       case 'tileat':
         if (a.length < 2) {
-          this.err('TileAt erwartet px, py', e)
+          this.err(this.M.tileAtArgs(), e)
           return '/* TileAt: zu wenige Argumente */ 0'
         }
         this.usesTileWorld = true
@@ -1620,7 +1640,7 @@ class Generator {
         return `bc_tile_at(${this.expr(a[0])}, ${this.expr(a[1])})`
       case 'tilesolid':
         if (a.length < 2) {
-          this.err('TileSolid erwartet px, py', e)
+          this.err(this.M.tileSolidArgs(), e)
           return '/* TileSolid: zu wenige Argumente */ 0'
         }
         this.usesTileWorld = true
@@ -1633,7 +1653,7 @@ class Generator {
         // are unsigned — the collision-distance case (the reason Into The Deep needs
         // it). cc65 has abs(); we just include <stdlib.h> when used.
         if (a.length < 1) {
-          this.err('Abs erwartet einen Wert: Abs(n)', e)
+          this.err(this.M.absArgs(), e)
           return '/* Abs: Argument fehlt */ 0'
         }
         this.usesStdlib = true
@@ -1645,7 +1665,7 @@ class Generator {
         // side-effecting call as an argument would run twice; fine for the plain scalar
         // values these are used with (Min(hp + potion, MAXHP), Max(x, 0)).
         if (a.length < 2) {
-          this.err(`${name === 'min' ? 'Min' : 'Max'} erwartet zwei Werte: ${name === 'min' ? 'Min' : 'Max'}(a, b)`, e)
+          this.err(this.M.minMaxArgs(name === 'min'), e)
           return '/* Min/Max: zu wenige Argumente */ 0'
         }
         const op = name === 'min' ? '<' : '>'
@@ -1658,15 +1678,12 @@ class Generator {
         // game.c read. The argument is a JoyDir constant (LEFT/RIGHT/UP/DOWN/FIRE);
         // anything else is an honest error (no axis values — C64 sticks are 5-bit).
         if (a.length < 1 || a[0].kind !== 'ConstantRef') {
-          this.err('Joystick erwartet eine Richtung: LEFT, RIGHT, UP, DOWN oder FIRE', e)
+          this.err(this.M.joystickDirArg(), e)
           return '/* Joystick: Richtung fehlt */ 0'
         }
         const macro = JOY_MACRO[a[0].name.toUpperCase()]
         if (!macro) {
-          this.err(
-            `Joystick: '${a[0].name}' ist keine Richtung — erlaubt sind LEFT, RIGHT, UP, DOWN, FIRE`,
-            e
-          )
+          this.err(this.M.joystickBadDir(a[0].name), e)
           return '/* Joystick: ungültige Richtung */ 0'
         }
         this.usesJoystick = true
@@ -1680,11 +1697,7 @@ class Generator {
         // cc65 symbols yet ("vollständige Belegung folgt"); no preflight proves the
         // matrix table. Honest deferral to a keyboard-input milestone, like UseSprite
         // / SetMetaTile — not a silent gap. Joystick already drives a playable sprite.
-        this.err(
-          `${e.callee} kommt mit der Tastatur-Eingabe (eigener Milestone): die C64-Tastaturmatrix ` +
-            'und die Tasten-Konstanten sind noch nicht verdrahtet. Joystick() funktioniert bereits.',
-          e
-        )
+        this.err(this.M.keyboardDeferred(e.callee), e)
         return `/* TODO ${e.callee}() (Tastatur-Milestone) */ 0`
       default: {
         // A user-defined value function call (P1.T3): `Distance(a, b)`.
@@ -1693,18 +1706,15 @@ class Generator {
           if (info.returnRecord) {
             // A record-returning function uses an out-pointer, so it can't be a plain
             // sub-expression. Honest error pointing at the supported form.
-            this.err(
-              `Funktion '${e.callee}' gibt einen Record zurück — weise sie direkt einer Record-Variable zu (r.${info.returnRecord} = ${e.callee}(…)), nicht mitten in einem Ausdruck`,
-              e
-            )
+            this.err(this.M.recordReturnInExpr(e.callee, info.returnRecord), e)
             return `/* ${e.callee}(): Record-Rückgabe nur als direkte Zuweisung */ 0`
           }
           if (e.callee === this.currentFunc) {
-            this.err(`Rekursion ist nicht erlaubt (Funktion '${e.callee}' ruft sich selbst auf) — der 6502 hat keinen echten Variablen-Stack; formuliere es iterativ`, e)
+            this.err(this.M.recursion(e.callee), e)
           }
           return `${info.cName}(${this.callArgs(info, e.args)})`
         }
-        this.err(`Funktion '${e.callee}' hat in diesem Schritt noch kein C-Mapping`, e)
+        this.err(this.M.funcNoMapping(e.callee), e)
         return `/* TODO ${e.callee}() */ 0`
       }
     }
@@ -1714,7 +1724,7 @@ class Generator {
    *  an honest note (the data layer is a compile-time choice in Phase 1). */
   private constLayer(e: Expr): number {
     if (e.kind === 'NumberLit' && e.base === 'dec') return e.raw === '1' ? 1 : 0
-    this.err('GetTile: layer muss 0 oder 1 sein (fester Wert)', e)
+    this.err(this.M.getTileLayerConst(), e)
     return 0
   }
 }
@@ -1775,6 +1785,10 @@ function byteRows(bytes: Uint8Array): string {
 
 /** Generate cc65-C from a parsed program. Never throws; errors are collected.
  *  `assets` lets tile/sprite commands bake real C64 bytes from the .bread. */
-export function generate(program: Program, assets?: AssetContext): CodeGenResult {
-  return new Generator(assets).generate(program)
+export function generate(
+  program: Program,
+  assets?: AssetContext,
+  locale: Locale = DEFAULT_LOCALE
+): CodeGenResult {
+  return new Generator(assets, locale).generate(program)
 }

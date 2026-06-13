@@ -36,7 +36,15 @@ function fakeAssets(): AssetContext {
   })
   const tilemap = JSON.stringify({
     format: 'breadcraft.tilemap',
-    layers: [{ type: 'grafik', tiles: Array.from({ length: 1000 }, (_, i) => (i === 0 ? 1 : 0)) }]
+    layers: [
+      {
+        type: 'grafik',
+        tiles: Array.from({ length: 1000 }, (_, i) => (i === 0 ? 1 : 0)),
+        // Cell 0 painted red (2); the rest light grey (15) — proves the painted
+        // per-cell Color-RAM reaches the bake.
+        colors: Array.from({ length: 1000 }, (_, i) => (i === 0 ? 2 : 15))
+      }
+    ]
   })
   // Two frames so a test can confirm UseSprite bakes ONLY frame 0.
   const sprite = JSON.stringify({
@@ -859,7 +867,15 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
     expect(errors).toEqual([])
     expect(code).toContain('static const unsigned char map_level1[1000]')
     expect(code).toContain('BC_SCREEN[_c] = map_level1[_c]')
-    expect(code).toContain('COLOR_RAM[_c]')
+    expect(code).toContain('COLOR_RAM[_c] = mapcol_level1[_c]')
+  })
+
+  it('bakes the painted per-cell Color-RAM colours (multicolor bit set)', () => {
+    const { code, errors } = gen('UseTileset "main"\nDrawMap "level1"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('static const unsigned char mapcol_level1[1000]')
+    // cell 0 = red (2) | 8 = 10, rest = light grey (15) | 8 = 15.
+    expect(code).toMatch(/mapcol_level1\[1000\] = \{\s*10, 15, 15/)
   })
 
   it('errors honestly when DrawMap has no active tileset', () => {

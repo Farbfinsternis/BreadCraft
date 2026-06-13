@@ -90,8 +90,8 @@ function registerIpc(): void {
   })
 
   // Build & Run: transpile the given source, compile with bundled cc65, run in VICE.
-  ipcMain.handle('build:run', (_event, source: string, projectDir: string) =>
-    buildAndRun(source, projectDir)
+  ipcMain.handle('build:run', (_event, source: string, projectDir: string, runAfterBuild = true) =>
+    buildAndRun(source, projectDir, runAfterBuild)
   )
 }
 

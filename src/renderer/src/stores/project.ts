@@ -199,6 +199,29 @@ export const useProjectStore = defineStore('project', () => {
     activeRel.value = rel
   }
 
+  /**
+   * Open a crumb from the file tree as the active code tab (Befund 7). If its
+   * content isn't already loaded — a `.crumb` that lives on disk but isn't in
+   * `bread.crumbs` (copied in, made with the OS or another tool) — READ it from
+   * disk FIRST. Otherwise the editor would show an empty buffer and the next
+   * Ctrl+S would write that emptiness back over the real file (data loss).
+   *
+   * Opening is NOT saving: the `.bread` manifest is deliberately left untouched
+   * here (N12 — manifest adoption belongs to the filesystem-as-truth work, not
+   * EISEN). A file that vanished between tree-read and click reads as null; we
+   * throw rather than open an empty, savable tab over a path we can't read.
+   */
+  async function openCrumb(rel: string): Promise<void> {
+    if (contents[rel] === undefined) {
+      if (!dir.value) return
+      const text = await window.breadcraft.assets.read(dir.value, rel)
+      if (text === null) throw new Error(`Datei nicht gefunden: ${rel}`)
+      contents[rel] = text
+      dirty[rel] = false
+    }
+    setActiveTab(rel)
+  }
+
   function addFile(rel: string, content: string): void {
     contents[rel] = content
     if (!openFiles.value.includes(rel)) openFiles.value.push(rel)
@@ -235,6 +258,7 @@ export const useProjectStore = defineStore('project', () => {
     activeContent,
     load,
     setActiveTab,
+    openCrumb,
     addFile,
     saveActive,
     toggleDebug,

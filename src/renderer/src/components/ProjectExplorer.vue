@@ -64,8 +64,9 @@ async function openNode(node: TreeNode): Promise<void> {
     if (target.kind) {
       await project.openAsset(target.kind, node.rel)
     } else {
-      // a crumb → make it the active code tab
-      project.setActiveTab(node.rel)
+      // a crumb → load its content from disk (if not already open) before making
+      // it the active code tab, so an unmanifested file never opens empty (Befund 7).
+      await project.openCrumb(node.rel)
     }
     if (router.currentRoute.value.name !== target.route) await router.push({ name: target.route })
   } catch (e) {

@@ -1,9 +1,10 @@
 import type { VocabItem } from '@shared/ssot-types'
-import type { PerfInfo } from '@shared/ipc'
+import type { PerfInfo, Locale } from '@shared/ipc'
 import { tokenize } from './lexer'
 import { parse } from './parser'
 import { generate } from './codegen'
 import { estimateFramePerf } from './codegen/perf-estimate'
+import { DEFAULT_LOCALE } from './messages'
 import type { AssetContext } from './codegen'
 
 // The transpiler's front door: .crumb source → cc65-C, in one call. Runs the
@@ -39,15 +40,18 @@ export interface CompileResult {
 
 /** Compile .crumb source to cc65-C using the given SSOT vocabulary. `assets` lets
  *  tile/sprite commands bake real C64 bytes from the project's .bread (optional —
- *  without it those commands report an honest "no project" error). */
+ *  without it those commands report an honest "no project" error). `locale` localizes
+ *  compiler diagnostics (STAHL S5b); defaults to German (the parser stage is localized
+ *  so far — lexer/codegen still emit German until the follow-up S5b blocks). */
 export function compile(
   source: string,
   vocabulary: VocabItem[],
-  assets?: AssetContext
+  assets?: AssetContext,
+  locale: Locale = DEFAULT_LOCALE
 ): CompileResult {
-  const tokens = tokenize(source, vocabulary)
-  const { program, errors: parseErrors } = parse(tokens, vocabulary)
-  const { code, errors: codegenErrors, linkerConfig, mainCeiling } = generate(program, assets)
+  const tokens = tokenize(source, vocabulary, locale)
+  const { program, errors: parseErrors } = parse(tokens, vocabulary, locale)
+  const { code, errors: codegenErrors, linkerConfig, mainCeiling } = generate(program, assets, locale)
 
   const errors: CompileError[] = [
     ...parseErrors.map((e) => ({ stage: 'parse' as const, severity: 'error' as const, ...e })),

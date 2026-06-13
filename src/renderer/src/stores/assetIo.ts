@@ -3,6 +3,12 @@
  * The main process does the raw file write/read + .bread manifest; here we turn
  * editor state into the on-disk FORMAT and back. One small module both asset
  * stores (palette, charset) lean on — closes memory breadcraft-asset-io-debt.
+ *
+ * The on-disk SHAPE itself lives once in `@shared/asset-formats` (Befund 23); this
+ * module is the renderer's TOLERANT layer on top: it packs/unpacks index grids per
+ * graphics mode and turns any format error into a quiet null / clamped value (the
+ * editor loads what it can rather than crashing). The build resolver shares the same
+ * codecs with the opposite, strict policy.
  */
 import {
   indicesToBytesHires,
@@ -15,10 +21,10 @@ import {
   bytesToIndicesSpriteHires,
   indicesToBytesSpriteMC,
   bytesToIndicesSpriteMC,
-  pixelsPerSprite,
-  SPRITE_BYTES
+  pixelsPerSprite
 } from '@renderer/pixel-engine/spriteBytes'
 import type { GraphicsMode } from '@shared/ipc'
+import * as fmt from '@shared/asset-formats'
 
 /** Default file names for the single-per-project assets. */
 export const PALETTE_FILE = 'project.palette'
@@ -26,7 +32,7 @@ export const CHARSET_FILE = 'main.petscii'
 export const TILEMAP_FILE = 'main.tilemap'
 export const SPRITE_FILE = 'main.sprite'
 
-const CHAR_COUNT = 256
+const CHAR_COUNT = fmt.CHAR_COUNT
 
 /** A char's index-grid size depends on the mode: hi-res 8×8 = 64, MC 4×8 = 32
  *  double-pixels (the converters' shapes, PETSCII_FORMAT.md §1.1). One truth the
@@ -46,9 +52,9 @@ function charsetCodec(mode: GraphicsMode): {
 }
 
 /** Standard C64 screen — one tilemap cell per character cell. */
-export const MAP_W = 40
-export const MAP_H = 25
-const MAP_CELLS = MAP_W * MAP_H // 1000
+export const MAP_W = fmt.MAP_W
+export const MAP_H = fmt.MAP_H
+const MAP_CELLS = fmt.MAP_CELLS // 1000
 
 // ---- Palette (.palette) ----
 
@@ -60,26 +66,24 @@ export interface PaletteData {
 
 /** Serialize the project palette to the `.palette` JSON (PALETTE_FORMAT.md). */
 export function serializePalette(p: PaletteData): string {
-  return JSON.stringify(
-    { format: 'breadcraft.palette', version: 1, ...p },
-    null,
-    2
-  )
+  return fmt.serializePalette(p)
 }
 
-/** Parse a `.palette` file; returns null if malformed. */
+/** Parse a `.palette` file; returns null if malformed. Each field clamps to its
+ *  readable default on a bad/out-of-range value (the editor's tolerant policy). */
 export function parsePalette(text: string): PaletteData | null {
+  let raw: fmt.PaletteRaw
   try {
-    const raw = JSON.parse(text) as Partial<PaletteData>
-    const clamp = (n: unknown, d: number): number =>
-      typeof n === 'number' && n >= 0 && n <= 15 ? n : d
-    return {
-      background: clamp(raw.background, 0),
-      shared1: clamp(raw.shared1, 9),
-      shared2: clamp(raw.shared2, 14)
-    }
+    raw = fmt.parsePalette(text)
   } catch {
     return null
+  }
+  const clamp = (n: unknown, d: number): number =>
+    typeof n === 'number' && n >= 0 && n <= 15 ? n : d
+  return {
+    background: clamp(raw.background, 0),
+    shared1: clamp(raw.shared1, 9),
+    shared2: clamp(raw.shared2, 14)
   }
 }
 
@@ -100,7 +104,7 @@ export function serializeCharset(chars: Record<number, Uint8Array>, mode: Graphi
     const cells = chars[i]
     out.push(Array.from(cells ? pack(cells) : new Uint8Array(8)))
   }
-  return JSON.stringify({ format: 'breadcraft.petscii', version: 1, charCount: CHAR_COUNT, chars: out })
+  return fmt.serializeCharset(out)
 }
 
 /**
@@ -113,30 +117,31 @@ export function parseCharset(
   text: string,
   mode: GraphicsMode
 ): Record<number, Uint8Array> | null {
+  let rows: number[][]
   try {
-    const raw = JSON.parse(text) as { chars?: number[][] }
-    if (!Array.isArray(raw.chars)) return null
-    const { unpack } = charsetCodec(mode)
-    const expected = pixelsPerChar(mode)
-    const result: Record<number, Uint8Array> = {}
-    for (let i = 0; i < raw.chars.length && i < CHAR_COUNT; i++) {
-      const bytes = raw.chars[i]
-      if (!Array.isArray(bytes) || bytes.length !== 8) continue
-      if (bytes.every((b) => b === 0)) continue // empty slot → stay sparse
-      const cells = unpack(Uint8Array.from(bytes))
-      if (cells.length === expected) result[i] = cells
-    }
-    return result
+    rows = fmt.parseCharset(text)
   } catch {
     return null
   }
+  const { unpack } = charsetCodec(mode)
+  const expected = pixelsPerChar(mode)
+  const result: Record<number, Uint8Array> = {}
+  for (let i = 0; i < rows.length && i < CHAR_COUNT; i++) {
+    const bytes = rows[i]
+    if (!Array.isArray(bytes) || bytes.length !== 8) continue
+    if (bytes.every((b) => b === 0)) continue // empty slot → stay sparse
+    const cells = unpack(Uint8Array.from(bytes))
+    if (cells.length === expected) result[i] = cells
+  }
+  return result
 }
 
 // ---- Tilemap (.tilemap) ----
 
-/** Default Color-RAM colour for cells (light grey, C64 index 15) — the free 4th
- *  MC colour a cell starts with until the user picks one. */
-export const DEFAULT_COLOR_RAM = 15
+/** Default Color-RAM colour for cells (white, C64 index 1) — the free 4th MC colour
+ *  a cell starts with until the user picks one. Lives in 0–7 (the only colours the
+ *  C64 can show as the free %11 colour in multicolor-text mode). */
+export const DEFAULT_COLOR_RAM = fmt.DEFAULT_COLOR_RAM
 
 /** The graphics layer's two parallel per-cell arrays: tile numbers (0–255) and
  *  Color-RAM colours (C64 index 0–15, the free MC colour per 8×8 cell). */
@@ -154,13 +159,7 @@ export interface TilemapData {
  * Color-RAM colours (0–15, the free MC colour per cell, §4 "+ zugehöriges Color-RAM").
  */
 export function serializeTilemap(data: TilemapData): string {
-  return JSON.stringify({
-    format: 'breadcraft.tilemap',
-    version: 1,
-    width: MAP_W,
-    height: MAP_H,
-    layers: [{ type: 'grafik', tiles: Array.from(data.tiles), colors: Array.from(data.colors) }]
-  })
+  return fmt.serializeTilemap(Array.from(data.tiles), Array.from(data.colors))
 }
 
 /**
@@ -168,34 +167,31 @@ export function serializeTilemap(data: TilemapData): string {
  * RAM). Reads the first `grafik` layer (Phase 1 has exactly one). Color-RAM is
  * forward-compatible: files predating it (no `colors`) default every cell to
  * DEFAULT_COLOR_RAM. Returns null if malformed (wrong format, missing/short tiles)
- * so the editor starts empty rather than loading garbage.
+ * so the editor starts empty rather than loading garbage. Out-of-range tile/colour
+ * values clamp to 0 / DEFAULT_COLOR_RAM (the editor's tolerant policy).
  */
 export function parseTilemap(text: string): TilemapData | null {
+  let raw: fmt.TilemapLayerRaw
   try {
-    const raw = JSON.parse(text) as {
-      layers?: { type?: string; tiles?: number[]; colors?: number[] }[]
-    }
-    if (!Array.isArray(raw.layers)) return null
-    const grafik = raw.layers.find((l) => l.type === 'grafik') ?? raw.layers[0]
-    if (!grafik || !Array.isArray(grafik.tiles)) return null
-
-    const tiles = new Uint8Array(MAP_CELLS)
-    for (let i = 0; i < MAP_CELLS && i < grafik.tiles.length; i++) {
-      const n = grafik.tiles[i]
-      tiles[i] = typeof n === 'number' && n >= 0 && n <= 255 ? n : 0
-    }
-
-    const colors = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
-    if (Array.isArray(grafik.colors)) {
-      for (let i = 0; i < MAP_CELLS && i < grafik.colors.length; i++) {
-        const c = grafik.colors[i]
-        if (typeof c === 'number' && c >= 0 && c <= 15) colors[i] = c
-      }
-    }
-    return { tiles, colors }
+    raw = fmt.parseTilemap(text)
   } catch {
     return null
   }
+
+  const tiles = new Uint8Array(MAP_CELLS)
+  for (let i = 0; i < MAP_CELLS && i < raw.tiles.length; i++) {
+    const n = raw.tiles[i]
+    tiles[i] = typeof n === 'number' && n >= 0 && n <= 255 ? n : 0
+  }
+
+  const colors = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
+  if (raw.colors) {
+    for (let i = 0; i < MAP_CELLS && i < raw.colors.length; i++) {
+      const c = raw.colors[i]
+      if (typeof c === 'number' && c >= 0 && c <= 15) colors[i] = c
+    }
+  }
+  return { tiles, colors }
 }
 
 // ---- Sprite (.sprite) ----
@@ -226,7 +222,7 @@ export interface SpriteData {
 
 /** Default individual sprite colour (white, C64 index 1) — the "10" pair until the
  *  user picks one in the sprite editor. */
-export const DEFAULT_SPRITE_COLOR = 1
+export const DEFAULT_SPRITE_COLOR = fmt.DEFAULT_SPRITE_COLOR
 
 /**
  * Serialize a sprite to the `.sprite` JSON: a `frames` array, each frame 63 raw
@@ -239,14 +235,7 @@ export function serializeSprite(sprite: SpriteData, mode: GraphicsMode): string 
   const { pack } = spriteCodec(mode)
   const frames = sprite.frames.length ? sprite.frames : [new Uint8Array(pixelsPerSprite(mode))]
   const out = frames.map((cells) => Array.from(pack(cells)))
-  const color = clampColorIndex(sprite.color)
-  return JSON.stringify({
-    format: 'breadcraft.sprite',
-    version: 1,
-    frameCount: out.length,
-    color,
-    frames: out
-  })
+  return fmt.serializeSprite(out, clampColorIndex(sprite.color))
 }
 
 /** Clamp any value to a valid C64 colour index 0–15 (default white on garbage). */
@@ -261,21 +250,21 @@ function clampColorIndex(n: unknown): number {
  * something to draw on. Returns null if malformed (wrong format / no frames).
  */
 export function parseSprite(text: string, mode: GraphicsMode): SpriteData | null {
+  let raw: fmt.SpriteRaw
   try {
-    const raw = JSON.parse(text) as { frames?: number[][]; color?: number }
-    if (!Array.isArray(raw.frames)) return null
-    const { unpack } = spriteCodec(mode)
-    const expected = pixelsPerSprite(mode)
-    const frames: Uint8Array[] = []
-    for (const bytes of raw.frames) {
-      if (!Array.isArray(bytes) || bytes.length !== SPRITE_BYTES) continue
-      const cells = unpack(Uint8Array.from(bytes))
-      if (cells.length === expected) frames.push(cells)
-    }
-    if (frames.length === 0) frames.push(new Uint8Array(expected))
-    // `color` is optional — old files (pre-individual-colour) default to white.
-    return { frames, color: clampColorIndex(raw.color) }
+    raw = fmt.parseSprite(text)
   } catch {
     return null
   }
+  const { unpack } = spriteCodec(mode)
+  const expected = pixelsPerSprite(mode)
+  const frames: Uint8Array[] = []
+  for (const bytes of raw.frames) {
+    if (!Array.isArray(bytes) || bytes.length !== fmt.SPRITE_BYTES) continue
+    const cells = unpack(Uint8Array.from(bytes))
+    if (cells.length === expected) frames.push(cells)
+  }
+  if (frames.length === 0) frames.push(new Uint8Array(expected))
+  // `color` is optional — old files (pre-individual-colour) default to white.
+  return { frames, color: clampColorIndex(raw.color) }
 }

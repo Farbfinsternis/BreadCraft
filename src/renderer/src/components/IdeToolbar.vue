@@ -32,8 +32,14 @@ watch(menuOpen, (open) => {
 })
 onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
-/** Build (and optionally run) the active .crumb file. */
-async function buildAndRun(): Promise<void> {
+/**
+ * Build the active .crumb file, optionally running it in VICE afterwards. The plain
+ * "Build" button passes runAfterBuild=false (just produce the .prg, M4.T2); "Build &
+ * Run" passes true. Both build the ACTIVE file (Befund 9 — building the entry crumb
+ * regardless of the active tab — is a separate, later task); the Build button's
+ * tooltip says so honestly.
+ */
+async function runBuild(runAfterBuild: boolean): Promise<void> {
   if (output.busy) return
   const rel = project.activeRel
   if (!project.dir || !rel) {
@@ -52,11 +58,11 @@ async function buildAndRun(): Promise<void> {
   output.busy = true
   output.clear()
   if (ui.collapsed.console) ui.expand('console')
-  output.append({ level: 'info', text: t('build.start', { rel }) })
+  output.append({ level: 'info', text: t(runAfterBuild ? 'build.start' : 'build.startBuild', { rel }) })
   try {
     await project.saveActive() // build from the on-disk truth
     const source = project.contents[rel] ?? ''
-    const result = await window.breadcraft.build.run(source, project.dir)
+    const result = await window.breadcraft.build.run(source, project.dir, runAfterBuild)
     output.appendMany(result.log)
     output.ram = result.ram ?? null // feed the RAM health-bar (STAHL S1c)
     output.perf = result.perf ?? null // feed the PERF health-bar (estimated cost)
@@ -69,6 +75,16 @@ async function buildAndRun(): Promise<void> {
   } finally {
     output.busy = false
   }
+}
+
+/** Toolbar "Build": produce the .prg from the active file, no VICE launch. */
+function build(): Promise<void> {
+  return runBuild(false)
+}
+
+/** Toolbar "Build & Run": build the active file and launch it in VICE if configured. */
+function buildAndRun(): Promise<void> {
+  return runBuild(true)
 }
 
 const editors = computed(() => [
@@ -173,7 +189,12 @@ async function openProject(): Promise<void> {
           <span>{{ t('toolbar.debug') }}</span>
           <span class="led" />
         </button>
-        <button class="tbtn tbtn-lg tbtn-ghost" :title="t('toolbar.build')">
+        <button
+          class="tbtn tbtn-lg tbtn-ghost"
+          :title="t('toolbar.buildHint')"
+          :disabled="output.busy"
+          @click="build"
+        >
           <svg class="ico" viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7z" /><path d="m3 7 9 5 9-5M12 12v10" /></svg>
           <span>{{ t('toolbar.build') }}</span>
         </button>

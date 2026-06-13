@@ -1,6 +1,8 @@
 import type { VocabItem } from '@shared/ssot-types'
+import type { Locale } from '@shared/ipc'
 import type { Token } from './token'
 import { TokenType } from './token'
+import { messages, DEFAULT_LOCALE, type LexerMessages } from '../messages'
 
 // The .crumb lexer: source text → classified token stream. Pure and synchronous;
 // no I/O, no throwing. Unknown/broken input becomes an Error token so the parser
@@ -80,14 +82,17 @@ export function buildClassifier(vocabulary: VocabItem[]): Map<string, TokenType>
 class Scanner {
   private readonly src: string
   private readonly classifier: Map<string, TokenType>
+  /** Locale-bound diagnostics (STAHL S5b) for the Error tokens this scanner emits. */
+  private readonly M: LexerMessages
   private pos = 0
   private line = 1
   private col = 1
   private readonly tokens: Token[] = []
 
-  constructor(src: string, classifier: Map<string, TokenType>) {
+  constructor(src: string, classifier: Map<string, TokenType>, msgs: LexerMessages) {
     this.src = src
     this.classifier = classifier
+    this.M = msgs
   }
 
   private peek(ahead = 0): string {
@@ -223,7 +228,7 @@ class Scanner {
         const line = this.line
         const col = this.col
         const bad = this.advance()
-        this.push(TokenType.Error, bad, line, col, 1, `Unerwartetes Zeichen '${bad}'`)
+        this.push(TokenType.Error, bad, line, col, 1, this.M.unexpectedChar(bad))
       }
     }
 
@@ -269,14 +274,7 @@ class Scanner {
       value += this.advance()
     }
     // Reached EOL/EOF without a closing quote.
-    this.push(
-      TokenType.Error,
-      value,
-      line,
-      col,
-      value.length + 1,
-      'Nicht geschlossener Text (fehlendes \")'
-    )
+    this.push(TokenType.Error, value, line, col, value.length + 1, this.M.unterminatedString())
   }
 
   private scanDollar(): void {
@@ -290,7 +288,7 @@ class Scanner {
       return
     }
     // A lone '$' not forming a hex literal and not attached to a name.
-    this.push(TokenType.Error, '$', line, col, 1, "Ungültiges '$' (Hex-Zahl oder Typ-Suffix erwartet)")
+    this.push(TokenType.Error, '$', line, col, 1, this.M.invalidDollar())
   }
 
   private scanBinary(): void {
@@ -303,7 +301,7 @@ class Scanner {
       this.push(TokenType.NumberBin, digits, line, col, digits.length + 1)
       return
     }
-    this.push(TokenType.Error, '%', line, col, 1, "Ungültige Binärzahl nach '%'")
+    this.push(TokenType.Error, '%', line, col, 1, this.M.invalidBinary())
   }
 
   private scanDecimal(): void {
@@ -443,8 +441,12 @@ export function normalize(tokens: Token[]): Token[] {
  * `Word`; the vocabulary is used only for the `$`-name boundary (Left$ et al.). The
  * grammar class of each Word is resolved later, in the parser (EISEN M2.T1).
  */
-export function tokenize(source: string, vocabulary: VocabItem[]): Token[] {
+export function tokenize(
+  source: string,
+  vocabulary: VocabItem[],
+  locale: Locale = DEFAULT_LOCALE
+): Token[] {
   const classifier = buildClassifier(vocabulary)
-  const tokens = new Scanner(source, classifier).scan()
+  const tokens = new Scanner(source, classifier, messages(locale).lexer).scan()
   return normalize(tokens)
 }

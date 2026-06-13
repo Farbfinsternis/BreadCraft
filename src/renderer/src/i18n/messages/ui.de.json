@@ -25,6 +25,7 @@
   "toolbar.debug": "Debug",
   "toolbar.debugToggle": "Debug-Modus umschalten",
   "toolbar.build": "Build",
+  "toolbar.buildHint": "Baut die aktive Datei (ohne Start)",
   "toolbar.buildAndRun": "Build & Run",
   "toolbar.building": "Baut …",
   "toolbar.openEditor": "Editor öffnen",
@@ -44,6 +45,7 @@
   "build.noActiveFile": "Keine aktive Datei zum Bauen.",
   "build.notCrumbFile": "'{rel}' ist keine .crumb-Datei.",
   "build.start": "Build & Run: {rel}",
+  "build.startBuild": "Build: {rel}",
   "build.viceHint": "Tipp: VICE-Pfad in den globalen Einstellungen setzen, dann startet das Programm automatisch.",
 
   "settings.title": "Globale Einstellungen",

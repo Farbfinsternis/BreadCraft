@@ -7,6 +7,64 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+- **Die freie Tile-Farbe landet jetzt auch in VICE, nicht nur im Editor.** Im Tilemap-Editor
+  durftest du für jede 8×8-Zelle die freie vierte Multicolor-Farbe (das Color-RAM) wählen, und im
+  Editor sah das hübsch aus — beim Build auf den echten C64 war dann aber alles einheitlich grau.
+  Der Grund: `DrawMap` stempelte stur eine feste Farbe in jede Zelle und warf die gemalten Farben weg
+  (ein „kommt später"-Platzhalter). Jetzt liest der Asset-Resolver die `colors` aus der `.tilemap` mit
+  und `DrawMap` backt sie — mit gesetztem Multicolor-Bit — Zelle für Zelle ins Color-RAM. Was du malst,
+  siehst du auch im Emulator. Alte `.tilemap`-Dateien ohne Farben fallen sauber auf den Standard zurück.
+- **Die freie Tile-Farbe zeigt jetzt nur noch die 8 Farben, die der C64 wirklich kann (Kosten-Ehrlichkeit).**
+  Der Editor bot für die freie vierte Multicolor-Farbe alle 16 C64-Farben an — aber im Multicolor-Text-Modus
+  stammt diese Farbe aus den unteren **drei** Bits des Color-RAM, also kann sie nur eine der **ersten 8**
+  Farben sein. Hellgrau, Dunkelgrau & Co. hätte der echte C64 stillschweigend durch ihren 3-Bit-Zwilling
+  ersetzt (Hellgrau → Gelb, Dunkelgrau → Cyan). Statt diese Lüge im Editor stehenzulassen, bietet die
+  Color-RAM-Palette jetzt genau die 8 möglichen Farben an, und die Vorschau zeigt für alte Karten ehrlich,
+  was wirklich erscheint. Der Standard ist jetzt Weiß (statt des unmöglichen Hellgrau).
+- **Compiler-Fehler sprechen jetzt Deine Sprache — alle (STAHL S5b, komplett).**
+  Die IDE kann längst Deutsch und Englisch, aber der Übersetzer brüllte jeden Fehler stur auf Deutsch
+  zurück — für einen englischsprachigen Nutzer eine Wand aus Fremdsprache genau im Moment des Stolperns.
+  Ab jetzt folgt **jede** Fehlermeldung der UI-Sprache: aus dem Lexer (kaputtes Zeichen, nicht
+  geschlossener Text), dem Parser (fehlende Klammern, Groß-/Kleinschreibung), dem Code-Generator
+  (unbekannte Funktion, Rekursion, falsche Befehls-Argumente) und beim Laden der Assets („Tileset nicht
+  gefunden", „kein gültiges .petscii" …) — Englisch in der englischen IDE, Deutsch in der deutschen. Der
+  deutsche Wortlaut bleibt Wort für Wort wie zuvor, das Englische kommt sauber dazu. (Befund 5b)
+- **Der „Build"-Knopf tut jetzt etwas (EISEN M4.T2).** Neben „Build & Run" saß ein zweiter,
+  gleich großer „Build"-Knopf — der aber an gar nichts hing: ein Klick, und nichts geschah. Jetzt
+  baut er die aktive `.crumb` bis zur fertigen `.prg` durch (gebündelter cc65), **ohne** den Emulator
+  zu starten — für den schnellen „kompiliert das überhaupt?"-Durchlauf. Fehlt ein VICE-Pfad, ist das
+  hier kein Problem (es wird ja nichts gestartet) und es springt auch keine Einstellungs-Aufforderung
+  auf — die kommt weiter nur bei „Build & Run". Der Tooltip sagt ehrlich, was passiert: „Baut die
+  aktive Datei (ohne Start)". (Befund 8)
+- **Eine Crumb aus dem Datei-Baum öffnen frisst sie nicht mehr auf (EISEN M4.T1).** Lag im Projekt
+  eine `.crumb`, die BreadCraft noch nicht „kannte" (von Hand reinkopiert, mit dem Datei-Manager
+  angelegt, aus einem anderen Tool) und du klicktest sie im Explorer an, ging ein **leerer** Tab auf —
+  und ein beherztes Strg+S schrieb diese Leere prompt über deine echte Datei. Genau dein neues
+  Hintergrund-Tile, dein zweites Level, dein reinkopierter Code: weg. Jetzt liest der Editor den Inhalt
+  erst von der Platte, BEVOR der Tab aufgeht — du sieht, was wirklich drinsteht. Verschwindet die Datei
+  zwischen Anzeigen und Klicken, sagt BreadCraft das ehrlich, statt einen speicherbaren Leer-Tag
+  aufzumachen. Das bloße Öffnen rührt das Projekt-Manifest (`.bread`) nicht an — Öffnen ist kein
+  Speichern. (Befund 7)
+
+### Intern
+- **Der Into-The-Deep-Bau-Harness läuft nicht mehr bei jedem Testlauf mit (EISEN M3.T2).** Ein
+  „TEMP"-Test zog beim normalen `npm test` jedes Mal das echte ITD-Projekt über feste Maschinenpfade
+  durch cl65 — praktisch als Lauf-Probe, aber auf jeder anderen Maschine/CI ein garantiertes Rot. Er
+  ist jetzt aus dem Test-Glob raus, liegt als manuell aufrufbares Dev-Werkzeug in `_intern/` (nicht in
+  git) und holt seine Pfade aus Umgebungsvariablen (Fallback = Dev-Layout), mit Skip statt Fehler, wenn
+  die Pfade fehlen. Die normale Test-Zahl sinkt dadurch bewusst um eins. (Befund 24)
+- **Ein Dateiformat, eine Wahrheit — Editor und Build lesen Deine Assets nicht mehr aus zwei
+  getrennten Büchern (EISEN M3.T1).** Eine `.petscii`, `.tilemap`, `.palette` oder `.sprite` wurde
+  bislang von zwei Stellen unabhängig zerlegt: der Editor las sie nachsichtig (im Zweifel leer laden,
+  Wackelwerte glattbügeln), der Übersetzer streng (jeder Fehler sofort sichtbar, bevor cc65 läuft).
+  Zwei Leser desselben Formats driften — und das war schon passiert (der Build kannte das Farb-Feld
+  der Karte gar nicht). Jetzt liegt die *Form* des Formats an genau einer Stelle (`shared/asset-formats`):
+  Feldnamen, Struktur, Maße, das zukunftssichere Ebenen-Array. Beide Seiten rufen denselben Codec und
+  setzen nur noch ihre Haltung obendrauf — der Editor bleibt nachsichtig, der Build streng. Ändert sich
+  ein Feld, ändert es sich für beide. (Nebenbei gefallen: der Übersetzer las eine `.sprite` nicht mehr
+  zweimal, und das Karten-Farb-Feld ist jetzt sauber lösbar.) (Befund 23/25)
+
 ## [0.2.1] - 2026-06-12
 
 ### Hinzugefügt
