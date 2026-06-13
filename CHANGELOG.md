@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-13
+
 ### Behoben
 - **Die freie Tile-Farbe landet jetzt auch in VICE, nicht nur im Editor.** Im Tilemap-Editor
   durftest du für jede 8×8-Zelle die freie vierte Multicolor-Farbe (das Color-RAM) wählen, und im
