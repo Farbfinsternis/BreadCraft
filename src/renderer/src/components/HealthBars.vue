@@ -27,7 +27,13 @@ const fillClass = computed(() => {
 // never a runtime measurement — the `~` says so). It climbs as the .crumb does more
 // expensive work, so the cost is visible while you write.
 const perf = computed(() => output.perf)
-const perfPct = computed(() => (perf.value ? Math.min(100, Math.round(perf.value.fraction * 100)) : 0))
+// STAHL S6: "over" is the one state a newbie must READ, not just see as red — the
+// logic no longer fits one frame, so VWait silently halves the game to 25 fps.
+const perfOver = computed(() => perf.value?.state === 'over')
+// The value text shows the HONEST percent (uncapped — an over-budget frame reads e.g.
+// "~135 %"), while the bar fill can't be more than full, so its width caps at 100%.
+const perfPct = computed(() => (perf.value ? Math.round(perf.value.fraction * 100) : 0))
+const perfWidth = computed(() => Math.min(100, perfPct.value))
 const perfFillClass = computed(() => {
   if (!perf.value) return 'hb-fill-filament'
   if (perf.value.state === 'over') return 'hb-fill-over'
@@ -58,13 +64,16 @@ const perfFillClass = computed(() => {
       <div class="hb">
         <div class="hb-top">
           <span class="bc-label">PERF · FRAME</span>
-          <span class="hb-val" :class="{ 'hb-nodata': !perf }">{{ perf ? '~' + perfPct + ' %' : '—' }}</span>
+          <span class="hb-val" :class="{ 'hb-nodata': !perf, 'hb-val-over': perfOver }">{{ perf ? '~' + perfPct + ' %' : '—' }}</span>
         </div>
         <div class="hb-track">
-          <div class="hb-fill" :class="perfFillClass" :style="{ width: perfPct + '%' }" />
+          <div class="hb-fill" :class="perfFillClass" :style="{ width: perfWidth + '%' }" />
         </div>
-        <div class="hb-meta">
-          <template v-if="perf">~{{ perf.cyclesPerFrame }} Takte/Frame von {{ perf.budgetCycles }} · geschätzt</template>
+        <div class="hb-meta" :class="{ 'hb-meta-over': perfOver }">
+          <template v-if="perfOver">
+            <strong>{{ t('health.perf.full') }}</strong> — {{ t('health.perf.fullHint') }}
+          </template>
+          <template v-else-if="perf">{{ t('health.perf.estimate', { cycles: perf.cyclesPerFrame, budget: perf.budgetCycles }) }}</template>
           <template v-else>{{ t('health.perf.meta') }}</template>
         </div>
       </div>
@@ -82,5 +91,14 @@ const perfFillClass = computed(() => {
 }
 .hb-fill-over {
   background: var(--bc-danger, #d04040);
+}
+/* STAHL S6: the "FRAME VOLL" state reads as an alarm, not just a red bar. */
+.hb-val-over,
+.hb-meta-over {
+  color: var(--bc-danger, #d04040);
+}
+.hb-meta-over strong {
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 </style>

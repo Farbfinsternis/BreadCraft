@@ -214,5 +214,8 @@
   "console.railLabel": "Output-Konsole",
 
   "health.ram.meta": "noch kein Build · cc65-Map liefert den Wert",
-  "health.perf.meta": "noch kein Build · grobe Schätzung aus dem Code"
+  "health.perf.meta": "noch kein Build · grobe Schätzung aus dem Code",
+  "health.perf.estimate": "~{cycles} Takte/Frame von {budget} · geschätzt",
+  "health.perf.full": "FRAME VOLL",
+  "health.perf.fullHint": "deine Logik passt nicht in ein Frame → VWait halbiert still auf 25 fps"
 }

@@ -7,6 +7,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Geändert
+- **Die PERF-Bar sagt jetzt, wann das Frame überläuft — nicht nur, dass es eng wird.** Bisher wurde
+  ein zu teures Frame einfach ein roter Balken bei 100 % — ununterscheidbar von „RAM voll", und der
+  eigentliche Punkt blieb stumm. Jetzt hat der Überlauf einen eigenen, lesbaren Zustand: **„FRAME
+  VOLL — deine Logik passt nicht in ein Frame → VWait halbiert still auf 25 fps"**, und der Prozent-
+  Wert wird ehrlich *nicht* mehr bei 100 % gedeckelt (ein überfülltes Frame liest sich als „~135 %",
+  der Balken bleibt voll). Es bleibt eine Schätzung aus dem Code (das `~` sagt es) — kein neuer
+  Messmechanismus, nur eine ehrliche Anzeige obendrauf. Die ganze PERF-Zeile folgt jetzt zudem der
+  UI-Sprache (auch das vorher hart deutsche „Takte/Frame … · geschätzt").
+
 ### Behoben
 - **Die Konsole spricht jetzt wirklich komplett Deine Sprache.** Die Compiler-Fehler folgten zwar
   schon der UI-Sprache (0.2.2), aber alles *drumherum* in der Ausgabe-Konsole war fest auf Deutsch
