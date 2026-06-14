@@ -8,6 +8,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Der Werkzeugkasten für Text ist jetzt vollständig — ehrlich abgegrenzt.** Vier String-Funktionen
+  rechnen ab sofort wirklich: `Int(s$)` macht aus Text wieder eine Zahl (die Gegenrichtung zu `Str$`),
+  `Len(s$)` zählt die Zeichen, `Asc(s$)` gibt den Code des ersten Zeichens, `Chr$(n)` baut ein Zeichen
+  aus seinem Code. **C64-Eigenheit (ehrlich gesagt statt versteckt):** `Asc`/`Chr$` arbeiten in PETSCII,
+  dem echten Zeichensatz des C64 — `Asc("A")` ist 193, nicht 65; dafür rundet `Chr$(Asc("A"))` sauber
+  zurück. Die textverarbeitenden Brocken `Left$`, `Right$`, `Mid$` und `Find` werden zwar schon erkannt,
+  melden sich aber mit einem klaren „kommt mit der vollen String-Stufe (Adventure-Phase)" statt mit einer
+  kryptischen Fehlermeldung — kein Wort der Sprache fällt mehr stumm durchs Raster.
 - **Text-Variablen, die man auch zusammenbauen kann.** Eine `$`-Variable war bisher eine Attrappe
   (intern ein einziges Byte) — zuweisen ging schief, Aneinanderhängen ergab Datenmüll. Jetzt sind es
   echte Text-Puffer: `name$ = "Bob"` legt einen Puffer in der Länge des Textes an, und mit `+` klebst

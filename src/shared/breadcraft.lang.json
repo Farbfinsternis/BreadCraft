@@ -1396,7 +1396,7 @@
       "frameSafe": true,
       "cost": "free",
       "since": "phase1",
-      "proven": false,
+      "proven": true,
       "returns": {
         "type": ".b",
         "i18nKey": "fn.len.returns"
@@ -1532,7 +1532,7 @@
       "frameSafe": true,
       "cost": "cheap",
       "since": "phase1",
-      "proven": false,
+      "proven": true,
       "returns": {
         "type": ".w",
         "i18nKey": "fn.int.returns"
@@ -1555,7 +1555,7 @@
       "frameSafe": true,
       "cost": "medium",
       "since": "phase1",
-      "proven": false,
+      "proven": true,
       "returns": {
         "type": "$",
         "i18nKey": "fn.str.returns"
@@ -1578,7 +1578,8 @@
       "frameSafe": true,
       "cost": "cheap",
       "since": "phase1",
-      "proven": false,
+      "proven": true,
+      "$note": "1-Zeichen-String aus einem PETSCII-Code (C64-Realität): Chr$(193)=\"A\". Paart mit Asc.",
       "returns": {
         "type": "$",
         "i18nKey": "fn.chr.returns"
@@ -1600,7 +1601,8 @@
       "frameSafe": true,
       "cost": "cheap",
       "since": "phase1",
-      "proven": false,
+      "proven": true,
+      "$note": "PETSCII-Code des ersten Zeichens (C64-Realität, nicht ASCII): Asc(\"A\")=193. Paart mit Chr$.",
       "returns": {
         "type": ".b",
         "i18nKey": "fn.asc.returns"

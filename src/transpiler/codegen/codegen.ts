@@ -351,6 +351,12 @@ class Generator {
    *  helpers (bc_scpy/bc_scat) and pull in <string.h>. */
   private usesStrBuf = false
 
+  // ---- string functions (STAHL S8.T3) ----
+  /** Len() used → needs <string.h> for strlen (but not the buffer helpers). */
+  private usesStrLen = false
+  /** Chr$() used → emit the single-char string helper (bc_chr). */
+  private usesChr = false
+
   // ---- functions (P1.T3) ----
   /** All user functions, by name → signature (collected first pass). */
   private readonly functions = new Map<string, FuncInfo>()
@@ -484,12 +490,14 @@ class Generator {
     // Math built-ins (P1.T4): cc65's abs() lives in stdlib. Min/Max are inline.
     // String conversion (S8.T1) also needs stdlib (utoa) — include it once for either.
     if (this.usesStdlib || this.usesStrConv) {
-      const why = this.usesStdlib && this.usesStrConv ? 'abs(), utoa()' : this.usesStdlib ? 'abs()' : 'utoa()'
-      header.push(`#include <stdlib.h> /* ${why} */`, '')
+      const libs: string[] = []
+      if (this.usesStdlib) libs.push('abs()/atoi()')
+      if (this.usesStrConv) libs.push('utoa()')
+      header.push(`#include <stdlib.h> /* ${libs.join(', ')} */`, '')
     }
-    // String buffers (S8.T2): truncating copy/append need strncpy/strncat/strlen.
-    if (this.usesStrBuf) {
-      header.push('#include <string.h> /* strncpy/strncat for string buffers */', '')
+    // String helpers (S8.T2/T3): truncating copy/append (strncpy/strncat) and Len (strlen).
+    if (this.usesStrBuf || this.usesStrLen) {
+      header.push('#include <string.h> /* strncpy/strncat/strlen for strings */', '')
     }
     // Const → #define (compile-time, free at runtime, Sprachdef §C).
     const defines: string[] = []
@@ -553,6 +561,14 @@ class Generator {
         '/* number → decimal text (shared scratch buffer; one Str$ per line) */',
         'static char bc_strbuf[6];',
         'static char* bc_str(unsigned int n) { return utoa(n, bc_strbuf, 10); }',
+        ''
+      )
+    }
+    if (this.usesChr) {
+      strHelpers.push(
+        '/* a single character as a 1-char string (shared scratch buffer) */',
+        'static char bc_chrbuf[2];',
+        'static char* bc_chr(unsigned char c) { bc_chrbuf[0] = c; bc_chrbuf[1] = 0; return bc_chrbuf; }',
         ''
       )
     }
@@ -1132,6 +1148,12 @@ class Generator {
     if (this.exprType(e) === 'string') return this.expr(e)
     this.usesStrConv = true
     return `bc_str(${this.expr(e)})`
+  }
+
+  /** Report a missing argument for a string function (S8.T3) and yield a safe 0/"". */
+  private stringFnArgErr(e: CallExpr): string {
+    this.err(this.M.stringFnArg(e.callee), e)
+    return `/* ${e.callee}: Argument fehlt */ 0`
   }
 
   /**
@@ -1846,6 +1868,33 @@ class Generator {
         this.usesStrConv = true
         return `bc_str(${this.expr(a[0])})`
       }
+      // ---- string functions (S8.T3): the cheap/HUD-useful ones are real ----
+      case 'int':
+        // Int(s$) → string → number (atoi). Invalid text → 0 (Sprachdef §E note).
+        if (a.length < 1) return this.stringFnArgErr(e)
+        this.usesStdlib = true
+        return `((unsigned int)atoi(${this.expr(a[0])}))`
+      case 'len':
+        // Len(s$) → character count (strlen), as a byte.
+        if (a.length < 1) return this.stringFnArgErr(e)
+        this.usesStrLen = true
+        return `((unsigned char)strlen(${this.expr(a[0])}))`
+      case 'asc':
+        // Asc(s$) → code of the first character (0 on an empty string).
+        if (a.length < 1) return this.stringFnArgErr(e)
+        return `((unsigned char)(${this.expr(a[0])})[0])`
+      case 'chr$':
+        // Chr$(n) → a 1-character string, via the shared scratch buffer.
+        if (a.length < 1) return this.stringFnArgErr(e)
+        this.usesChr = true
+        return `bc_chr(${this.expr(a[0])})`
+      // ---- the rich ones stay an honest "comes in Gate 3" stub, not a generic gap ----
+      case 'left$':
+      case 'right$':
+      case 'mid$':
+      case 'find':
+        this.err(this.M.stringFnDeferred(e.callee), e)
+        return `/* TODO ${e.callee}() (Gate 3) */ 0`
       case 'keydown':
       case 'keyhit':
         // Held/edge keyboard reads need a raw keyboard-matrix scan (column select +

@@ -75,6 +75,8 @@ export interface CodegenMessages {
   narrowSintReason(): string
   drawTextArgs(): string
   strArgs(): string
+  stringFnArg(name: string): string
+  stringFnDeferred(name: string): string
   commandNoMapping(name: string): string
   graphicsFirstArg(): string
   graphicsSecondArg(): string
@@ -270,6 +272,9 @@ const DE_CODEGEN: CodegenMessages = {
   narrowSintReason: () => `ein .w-Wert über 32767 kippt im signed .i ins Negative`,
   drawTextArgs: () => `DrawText erwartet x, y, Ausdruck`,
   strArgs: () => `Str$ erwartet eine Zahl: Str$(n)`,
+  stringFnArg: (name) => `${name} erwartet ein Argument`,
+  stringFnDeferred: (name) =>
+    `${name} kommt mit der vollen String-Stufe (Adventure-Phase) — in diesem Schritt noch nicht verfügbar`,
   commandNoMapping: (name) => `Befehl '${name}' hat in diesem Schritt noch kein C-Mapping`,
   graphicsFirstArg: () => `Graphics: erstes Argument muss TEXT oder BITMAP sein`,
   graphicsSecondArg: () => `Graphics: zweites Argument muss HIRES oder MULTICOLOR sein`,
@@ -344,6 +349,9 @@ const EN_CODEGEN: CodegenMessages = {
   narrowSintReason: () => `a .w value above 32767 flips negative in a signed .i`,
   drawTextArgs: () => `DrawText expects x, y, expression`,
   strArgs: () => `Str$ expects a number: Str$(n)`,
+  stringFnArg: (name) => `${name} expects one argument`,
+  stringFnDeferred: (name) =>
+    `${name} comes with the full string stage (adventure phase) — not available yet at this step`,
   commandNoMapping: (name) => `command '${name}' has no C mapping yet at this step`,
   graphicsFirstArg: () => `Graphics: the first argument must be TEXT or BITMAP`,
   graphicsSecondArg: () => `Graphics: the second argument must be HIRES or MULTICOLOR`,

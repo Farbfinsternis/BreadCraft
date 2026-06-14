@@ -692,6 +692,48 @@ describe('codegen: string buffers (STAHL S8.T2) — sizing, assignment, concaten
   })
 })
 
+describe('codegen: string functions (STAHL S8.T3) — Int/Len/Asc/Chr$ real, rest stubbed', () => {
+  it('Int(s$) → atoi (string → number)', () => {
+    const { code, errors } = gen(['name$ = "42"', 'n.w = Int(name$)'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('n = ((unsigned int)atoi(name));')
+    expect(code).toContain('#include <stdlib.h>')
+  })
+
+  it('Len(s$) → strlen as a byte; pulls in string.h (not the buffer helpers)', () => {
+    const { code, errors } = gen(['name$ = "Bob"', 'l.b = Len(name$)'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('l = ((unsigned char)strlen(name));')
+    expect(code).toContain('#include <string.h>')
+  })
+
+  it('Asc(s$) → code of the first character', () => {
+    const { code, errors } = gen('c.b = Asc("A")')
+    expect(errors).toEqual([])
+    expect(code).toContain('c = ((unsigned char)("A")[0]);')
+  })
+
+  it('Chr$(n) → a 1-character string via its own helper', () => {
+    const { code, errors } = gen('DrawText 0, 0, Chr$(65)')
+    expect(errors).toEqual([])
+    expect(code).toContain('static char* bc_chr(unsigned char c)')
+    expect(code).toContain('cputsxy(0, 0, bc_chr(65));')
+  })
+
+  it('Left$/Right$/Mid$/Find are recognized but stubbed honestly (not a generic gap)', () => {
+    for (const fn of ['Left$("hi", 1)', 'Right$("hi", 1)', 'Mid$("hi", 1, 1)', 'Find("hi", "i")']) {
+      const { errors } = gen(`x$ = "z"\ny$ = ${fn}`)
+      // The honest deferral message, NOT the generic "no C mapping".
+      expect(errors.some((e) => /volle?n? String-Stufe|Adventure/.test(e))).toBe(true)
+      expect(errors.some((e) => /kein C-Mapping/.test(e))).toBe(false)
+    }
+  })
+
+  it('a string function with no argument fails honestly', () => {
+    expect(gen('n.b = Len()').errors.some((e) => /Len erwartet/.test(e))).toBe(true)
+  })
+})
+
 describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
   it('emits a value function before main, returning its scalar type', () => {
     const src = ['Function Distance.w(a.w, b.w)', '  Return a + b', 'EndFunction'].join('\n')
