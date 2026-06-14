@@ -9,6 +9,7 @@ import type { AssetContext } from '../transpiler'
 import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
 import { resolveLanguage } from './config'
+import { buildMessages } from './build-messages'
 import { listAssets, readAsset } from './project'
 import type { BuildLogLine, BuildResult } from '../shared/ipc'
 
@@ -46,21 +47,19 @@ export async function buildAndRun(
     log.push({ level, text })
   }
 
+  // Every console line — diagnostics AND this orchestration around them — follows
+  // the IDE's language (STAHL S5b): an English UI must never get a wall of German.
+  const locale = resolveLanguage()
+  const M = buildMessages(locale)
+
   // 1) .crumb → C. Hand the transpiler the project's asset bridge so tile/sprite
   // commands can bake real C64 bytes from the .bread (resolved at compile time).
-  add('info', 'Transpiliere .crumb → C …')
+  add('info', M.transpiling)
   const assets: AssetContext = {
     manifest: listAssets(projectDir),
     readFile: (rel: string) => readAsset(projectDir, rel)
   }
-  // Compiler diagnostics follow the IDE's language (STAHL S5b): an English UI gets
-  // English parse errors, a German UI German ones.
-  const { code, errors, linkerConfig, mainCeiling, perf } = compile(
-    source,
-    vocabulary,
-    assets,
-    resolveLanguage()
-  )
+  const { code, errors, linkerConfig, mainCeiling, perf } = compile(source, vocabulary, assets, locale)
   // The per-frame cost estimate is valid as soon as the code parsed — feed it to the
   // PERF health-bar on every outcome where we actually compiled something.
   const perfInfo = perf ?? undefined
@@ -70,20 +69,20 @@ export async function buildAndRun(
   }
   // Warnings (e.g. narrowing) are honest hints, not blockers; only real errors stop the build.
   if (errors.some((e) => e.severity === 'error')) {
-    add('error', 'Transpilieren fehlgeschlagen.')
+    add('error', M.transpileFailed)
     return { ok: false, stage: 'compile', log, cCode: code, perf: perfInfo }
   }
 
   // 2) write C, invoke bundled cl65 → .prg
   if (!cc65Available()) {
-    add('error', 'Gebündelter cc65 nicht gefunden (resources/cc65/bin/cl65).')
+    add('error', M.cc65Missing)
     return { ok: false, stage: 'compile', log, cCode: code, perf: perfInfo }
   }
   mkdirSync(buildDir, { recursive: true })
   const cPath = join(buildDir, 'main.c')
   const prgPath = join(buildDir, 'main.prg')
   writeFileSync(cPath, code, 'utf8')
-  add('info', `C geschrieben: ${cPath}`)
+  add('info', M.cWritten(cPath))
 
   // The project-aware linker config reserves the VIC island ($3000/$3800) only when
   // used, so a growing game can't silently overwrite itself (STAHL S1). Addresses here
@@ -101,44 +100,44 @@ export async function buildAndRun(
     const overflow = /overflows memory area \S+ by (\d+) bytes/i.exec(cc.out)
     if (overflow) {
       const over = Number(overflow[1])
-      add('error', `Zu groß für den Speicher: dein Programm überschreitet den nutzbaren Bereich um ${over} Bytes. Mach den Code/die Assets kleiner — oder die Health-Bar zeigt, wie nah du an der Grenze bist.`)
+      add('error', M.tooLarge(over))
       // Feed a synthetic .prg size so usedBytes = budget + overflow → state 'over'.
       return { ok: false, stage: 'cc65', log, cCode: code, ram: ramInfo(mainCeiling - 0x0801 + over + 2, mainCeiling), perf: perfInfo }
     }
-    add('error', 'cc65-Build fehlgeschlagen.')
+    add('error', M.cc65Failed)
     return { ok: false, stage: 'cc65', log, cCode: code, perf: perfInfo }
   }
-  add('ok', `Build erfolgreich → ${prgPath}`)
+  add('ok', M.buildOk(prgPath))
 
   // RAM health (STAHL S1c): in the S1a layout the .prg is one contiguous image from
   // $0801, so its size IS the bytes used — measured against the planned ceiling.
   const ram = ramInfo(statSync(prgPath).size, mainCeiling)
   add(
     ram.state === 'ok' ? 'info' : 'warn',
-    `RAM: ${ram.usedBytes} von ${ram.budgetBytes} Bytes belegt (bis $${mainCeiling.toString(16).toUpperCase()})`
+    M.ramLine(ram.usedBytes, ram.budgetBytes, mainCeiling.toString(16).toUpperCase())
   )
 
   // 3) run in VICE — unless this was a plain Build (no run requested). Skipping is a
   // clean success at stage 'cc65', NOT a needsVicePath case (don't nudge Settings).
   if (!runAfterBuild) {
-    add('info', '.prg gebaut — Start übersprungen (nur Build).')
+    add('info', M.buildOnlySkipped)
     return { ok: true, stage: 'cc65', log, cCode: code, prgPath, ram, perf: perfInfo }
   }
 
   const vicePath = readSettings().vicePath
   if (!vicePath || !existsSync(vicePath)) {
-    add('info', 'Kein gültiger VICE-Pfad gesetzt — .prg gebaut, aber nicht gestartet.')
+    add('info', M.noVicePath)
     return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram, perf: perfInfo }
   }
 
-  add('cmd', `Starte VICE: ${vicePath} "${prgPath}"`)
+  add('cmd', M.startingVice(vicePath, prgPath))
   try {
     const child = spawn(vicePath, [prgPath], { detached: true, stdio: 'ignore' })
     child.unref()
-    add('ok', 'VICE gestartet.')
+    add('ok', M.viceStarted)
     return { ok: true, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
   } catch (e) {
-    add('error', `VICE-Start fehlgeschlagen: ${String((e as Error).message ?? e)}`)
+    add('error', M.viceStartFailed(String((e as Error).message ?? e)))
     return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
   }
 }

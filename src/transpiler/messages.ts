@@ -70,6 +70,9 @@ export interface CodegenMessages {
   unknownFunction(callee: string): string
   recursion(name: string): string
   narrowing(where: string, reason: string): string
+  narrowByteReason(): string
+  narrowWordReason(): string
+  narrowSintReason(): string
   drawTextArgs(): string
   commandNoMapping(name: string): string
   graphicsFirstArg(): string
@@ -260,6 +263,10 @@ const DE_CODEGEN: CodegenMessages = {
   recursion: (name) =>
     `Rekursion ist nicht erlaubt (Funktion '${name}' ruft sich selbst auf) — der 6502 hat keinen echten Variablen-Stack; formuliere es iterativ`,
   narrowing: (where, reason) => `Verkleinerung beim Schreiben in ${where}: ${reason}`,
+  narrowByteReason: () => `der Wert passt nicht in ein Byte (.b, 0…255) — höhere Bits gehen verloren`,
+  narrowWordReason: () =>
+    `ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl`,
+  narrowSintReason: () => `ein .w-Wert über 32767 kippt im signed .i ins Negative`,
   drawTextArgs: () => `DrawText erwartet x, y, Ausdruck`,
   commandNoMapping: (name) => `Befehl '${name}' hat in diesem Schritt noch kein C-Mapping`,
   graphicsFirstArg: () => `Graphics: erstes Argument muss TEXT oder BITMAP sein`,
@@ -329,6 +336,10 @@ const EN_CODEGEN: CodegenMessages = {
   recursion: (name) =>
     `recursion is not allowed (function '${name}' calls itself) — the 6502 has no real variable stack; rewrite it iteratively`,
   narrowing: (where, reason) => `narrowing when writing to ${where}: ${reason}`,
+  narrowByteReason: () => `the value doesn't fit in a byte (.b, 0–255) — the high bits are lost`,
+  narrowWordReason: () =>
+    `a signed value (.i) becomes unsigned (.w) — a negative value turns into a large number`,
+  narrowSintReason: () => `a .w value above 32767 flips negative in a signed .i`,
   drawTextArgs: () => `DrawText expects x, y, expression`,
   commandNoMapping: (name) => `command '${name}' has no C mapping yet at this step`,
   graphicsFirstArg: () => `Graphics: the first argument must be TEXT or BITMAP`,

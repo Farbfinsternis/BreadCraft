@@ -17,6 +17,13 @@ function errs(src: string, locale?: 'de' | 'en'): string {
     .join(' | ')
 }
 
+function warns(src: string, locale?: 'de' | 'en'): string {
+  return compile(src, vocab, undefined, locale)
+    .errors.filter((e) => e.severity === 'warn')
+    .map((e) => e.message)
+    .join(' | ')
+}
+
 describe('codegen diagnostics: localization (S5b part 2)', () => {
   it('recursion error: German by default, English on locale en', () => {
     const src = ['Function Foo()', '  Foo', 'EndFunction'].join('\n')
@@ -40,5 +47,17 @@ describe('codegen diagnostics: localization (S5b part 2)', () => {
   it('default locale is byte-identical to explicit German', () => {
     const src = ['Function Foo()', '  Foo', 'EndFunction'].join('\n')
     expect(errs(src)).toBe(errs(src, 'de'))
+  })
+
+  it('a narrowing warning translates BOTH its template and its reason', () => {
+    const src = 'gross.w = 1000\nklein.b = gross'
+    // German: template ("Verkleinerung") + reason ("passt nicht in ein Byte").
+    expect(warns(src)).toMatch(/Verkleinerung beim Schreiben/)
+    expect(warns(src)).toMatch(/passt nicht in ein Byte/)
+    // English: both halves English, no German leaking through (the reason was the gap).
+    const en = warns(src, 'en')
+    expect(en).toMatch(/narrowing when writing/)
+    expect(en).toMatch(/doesn't fit in a byte/)
+    expect(en).not.toMatch(/Verkleinerung|Byte \(\.b, 0–255\) — höhere/)
   })
 })

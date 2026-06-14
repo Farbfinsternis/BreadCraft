@@ -846,11 +846,11 @@ class Generator {
     if (!tt || !vt) return
     let reason: string | undefined
     if (tt === 'byte' && (vt === 'word' || vt === 'sint')) {
-      reason = 'der Wert passt nicht in ein Byte (.b, 0…255) — höhere Bits gehen verloren'
+      reason = this.M.narrowByteReason()
     } else if (tt === 'word' && vt === 'sint') {
-      reason = 'ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl'
+      reason = this.M.narrowWordReason()
     } else if (tt === 'sint' && vt === 'word') {
-      reason = 'ein .w-Wert über 32767 kippt im signed .i ins Negative'
+      reason = this.M.narrowSintReason()
     }
     if (!reason) return
     const where =

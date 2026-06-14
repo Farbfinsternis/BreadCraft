@@ -7,6 +7,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+- **Die Konsole spricht jetzt wirklich komplett Deine Sprache.** Die Compiler-Fehler folgten zwar
+  schon der UI-Sprache (0.2.2), aber alles *drumherum* in der Ausgabe-Konsole war fest auf Deutsch
+  verdrahtet: „Transpiliere …", „Build erfolgreich →", die RAM-Zeile, „Starte VICE", „VICE gestartet"
+  — und sogar die Begründung einer Verkleinerungs-Warnung („ein vorzeichenbehafteter Wert (.i) wird
+  unsigned …") rutschte deutsch durch, während der Satz drumherum schon englisch war. In einer
+  englischen IDE war das eine Wand aus Fremdsprache. Jetzt folgt **jede** Konsolen-Zeile der UI-Sprache
+  — die Build-Orchestrierung und die letzten drei deutschen Warnungs-Begründungen inklusive. Der
+  deutsche Wortlaut bleibt Wort für Wort, das Englische kommt sauber dazu.
+
 ## [0.2.2] - 2026-06-13
 
 ### Behoben
