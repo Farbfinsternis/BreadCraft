@@ -328,6 +328,12 @@ class Generator {
   /** Abs() used → pull in <stdlib.h> for cc65's abs(). (Min/Max are inline, no header.) */
   private usesStdlib = false
 
+  // ---- strings (STAHL S8.T1) ----
+  /** Str$() or a numeric DrawText arg used → emit the number→text helper (utoa into a
+   *  shared scratch buffer) and pull in <stdlib.h>. One buffer, so a single Str$ per
+   *  drawn line is the supported HUD case (score/lives); concatenation is S8.T2. */
+  private usesStrConv = false
+
   // ---- functions (P1.T3) ----
   /** All user functions, by name → signature (collected first pass). */
   private readonly functions = new Map<string, FuncInfo>()
@@ -459,8 +465,10 @@ class Generator {
       header.push('#include <joystick.h>', '')
     }
     // Math built-ins (P1.T4): cc65's abs() lives in stdlib. Min/Max are inline.
-    if (this.usesStdlib) {
-      header.push('#include <stdlib.h> /* abs() */', '')
+    // String conversion (S8.T1) also needs stdlib (utoa) — include it once for either.
+    if (this.usesStdlib || this.usesStrConv) {
+      const why = this.usesStdlib && this.usesStrConv ? 'abs(), utoa()' : this.usesStdlib ? 'abs()' : 'utoa()'
+      header.push(`#include <stdlib.h> /* ${why} */`, '')
     }
     // Const → #define (compile-time, free at runtime, Sprachdef §C).
     const defines: string[] = []
@@ -511,6 +519,19 @@ class Generator {
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
 
+    // Number→text helper (S8.T1): one shared scratch buffer big enough for an unsigned
+    // int (65535 = 5 digits + NUL). Lets DrawText show a score/lives count and backs
+    // Str$(). One buffer means one conversion per drawn line — the HUD case; richer
+    // composition (concatenation) waits for the $[N] buffers in S8.T2.
+    const strHelpers = this.usesStrConv
+      ? [
+          '/* number → decimal text (shared scratch buffer; one Str$ per line) */',
+          'static char bc_strbuf[6];',
+          'static char* bc_str(unsigned int n) { return utoa(n, bc_strbuf, 10); }',
+          ''
+        ]
+      : []
+
     // One-time setup that must run at the very top of main, before the user's body
     // (e.g. installing the joystick driver). Kept apart from this.lines so it can't
     // be reordered by the user's code. Mirrors _preflight/game.c's joy_install.
@@ -531,6 +552,7 @@ class Generator {
       ...arrayDecls,
       ...baked,
       ...tileWorld,
+      ...strHelpers,
       ...globalDecls,
       ...funcs,
       'int main(void) {',
@@ -828,6 +850,14 @@ class Generator {
         if (l === 'byte' || r === 'byte') return 'byte'
         return undefined
       }
+      case 'CallExpr': {
+        // The string-returning built-ins (S8) and any $-suffixed function yield a
+        // string; that's all DrawText needs to tell "already text" from "a number to
+        // convert". Other built-ins/functions fall through to their declared type.
+        const n = e.callee.toLowerCase()
+        if (n === 'str$' || n === 'chr$' || n === 'left$' || n === 'right$' || n === 'mid$') return 'string'
+        return this.functions.get(e.callee)?.returnType
+      }
       default:
         // Number literals and unknown calls: type follows the assignment target.
         return undefined
@@ -961,9 +991,11 @@ class Generator {
         this.emit('clrscr();')
         break
       case 'drawtext':
-        // DrawText x, y, expr → cputsxy(x, y, expr)
+        // DrawText x, y, value → cputsxy(x, y, <text>). A string value (literal, $-var,
+        // Str$/Chr$ …) is drawn as-is; a NUMBER is run through Str$ first (S8.T1) so a
+        // score/lives count actually shows — cputsxy wants a char*, not an int.
         if (a.length >= 3) {
-          this.emit(`cputsxy(${this.expr(a[0])}, ${this.expr(a[1])}, ${this.expr(a[2])});`)
+          this.emit(`cputsxy(${this.expr(a[0])}, ${this.expr(a[1])}, ${this.textArg(a[2])});`)
         } else {
           this.err(this.M.drawTextArgs(), s)
           this.emit('/* DrawText: zu wenige Argumente */')
@@ -1019,6 +1051,14 @@ class Generator {
   /** Read a string-literal arg (an asset id like "main"); undefined if not a string. */
   private stringArg(e: Expr | undefined): string | undefined {
     return e && e.kind === 'StringLit' ? e.value : undefined
+  }
+
+  /** A value being drawn as text (S8.T1): a string expression passes through; anything
+   *  else is treated as a number and wrapped in Str$ (bc_str) so cputsxy gets a char*. */
+  private textArg(e: Expr): string {
+    if (this.exprType(e) === 'string') return this.expr(e)
+    this.usesStrConv = true
+    return `bc_str(${this.expr(e)})`
   }
 
   /**
@@ -1688,6 +1728,15 @@ class Generator {
         }
         this.usesJoystick = true
         return `${macro}(joy_read(JOY_2))`
+      }
+      case 'str$': {
+        // Str$(n) → decimal text of a number, via the shared scratch buffer (S8.T1).
+        if (a.length < 1) {
+          this.err(this.M.strArgs(), e)
+          return '/* Str$: Argument fehlt */ ""'
+        }
+        this.usesStrConv = true
+        return `bc_str(${this.expr(a[0])})`
       }
       case 'keydown':
       case 'keyhit':

@@ -74,6 +74,7 @@ export interface CodegenMessages {
   narrowWordReason(): string
   narrowSintReason(): string
   drawTextArgs(): string
+  strArgs(): string
   commandNoMapping(name: string): string
   graphicsFirstArg(): string
   graphicsSecondArg(): string
@@ -268,6 +269,7 @@ const DE_CODEGEN: CodegenMessages = {
     `ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl`,
   narrowSintReason: () => `ein .w-Wert über 32767 kippt im signed .i ins Negative`,
   drawTextArgs: () => `DrawText erwartet x, y, Ausdruck`,
+  strArgs: () => `Str$ erwartet eine Zahl: Str$(n)`,
   commandNoMapping: (name) => `Befehl '${name}' hat in diesem Schritt noch kein C-Mapping`,
   graphicsFirstArg: () => `Graphics: erstes Argument muss TEXT oder BITMAP sein`,
   graphicsSecondArg: () => `Graphics: zweites Argument muss HIRES oder MULTICOLOR sein`,
@@ -341,6 +343,7 @@ const EN_CODEGEN: CodegenMessages = {
     `a signed value (.i) becomes unsigned (.w) — a negative value turns into a large number`,
   narrowSintReason: () => `a .w value above 32767 flips negative in a signed .i`,
   drawTextArgs: () => `DrawText expects x, y, expression`,
+  strArgs: () => `Str$ expects a number: Str$(n)`,
   commandNoMapping: (name) => `command '${name}' has no C mapping yet at this step`,
   graphicsFirstArg: () => `Graphics: the first argument must be TEXT or BITMAP`,
   graphicsSecondArg: () => `Graphics: the second argument must be HIRES or MULTICOLOR`,

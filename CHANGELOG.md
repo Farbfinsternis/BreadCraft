@@ -7,6 +7,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Endlich Zahlen auf dem Schirm: ein Punktestand, der sich auch ändert.** Bisher konnte `DrawText`
+  nur fest getippten Text zeigen — eine Variable hinzuwerfen (`DrawText 7, 1, score`) ergab Kauderwelsch
+  oder gar nichts, weil der C64 eine Zahl nicht für Text hält. Jetzt wandelt BreadCraft eine Zahl an
+  dieser Stelle automatisch in ihre Ziffern um (über `Str$`, das es ab sofort auch direkt gibt): `Str$(n)`
+  liefert den Text zu einer Zahl, und `DrawText` schluckt eine Zahl genauso bereitwillig wie ein Wort.
+  Damit kommt der erste echte HUD-Wert — Score, Leben — sichtbar ins Spiel. (Das ist der erste Schritt
+  der String-Stufe; echte Text-Variablen `$[N]` und das Zusammenkleben von Strings folgen.)
+
 ### Geändert
 - **Die PERF-Bar sagt jetzt, wann das Frame überläuft — nicht nur, dass es eng wird.** Bisher wurde
   ein zu teures Frame einfach ein roter Balken bei 100 % — ununterscheidbar von „RAM voll", und der

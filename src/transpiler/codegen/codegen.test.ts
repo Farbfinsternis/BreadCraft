@@ -594,6 +594,42 @@ describe('codegen: math built-ins (P1.T4) — Abs/Min/Max', () => {
   })
 })
 
+describe('codegen: HUD strings (STAHL S8.T1) — Str$ + numeric DrawText', () => {
+  it('DrawText of a number is run through Str$ so a score actually shows', () => {
+    const { code, errors } = gen('Global score.w = 0\nDrawText 1, 1, score')
+    expect(errors).toEqual([])
+    expect(code).toContain('cputsxy(1, 1, bc_str(score));')
+    // The helper + its header are emitted exactly when conversion is used.
+    expect(code).toContain('#include <stdlib.h>')
+    expect(code).toContain('static char bc_strbuf[6];')
+    expect(code).toContain('char* bc_str(unsigned int n) { return utoa(n, bc_strbuf, 10); }')
+  })
+
+  it('DrawText of a string literal stays a plain string (no conversion)', () => {
+    const { code } = gen('DrawText 0, 0, "GAME OVER"')
+    expect(code).toContain('cputsxy(0, 0, "GAME OVER");')
+    expect(code).not.toContain('bc_str')
+    expect(code).not.toContain('bc_strbuf')
+  })
+
+  it('Str$(n) maps to the conversion helper', () => {
+    const { code, errors } = gen('Global lives.b = 3\nDrawText 5, 0, Str$(lives)')
+    expect(errors).toEqual([])
+    // Already a string → DrawText does not double-wrap it.
+    expect(code).toContain('cputsxy(5, 0, bc_str(lives));')
+  })
+
+  it('no string helper is emitted when nothing converts', () => {
+    const { code } = gen('DrawText 0, 0, "HI"')
+    expect(code).not.toContain('bc_str')
+    expect(code).not.toContain('stdlib.h')
+  })
+
+  it('Str$ with no argument fails honestly', () => {
+    expect(gen('DrawText 0, 0, Str$()').errors.some((e) => /Str\$ erwartet/.test(e))).toBe(true)
+  })
+})
+
 describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
   it('emits a value function before main, returning its scalar type', () => {
     const src = ['Function Distance.w(a.w, b.w)', '  Return a + b', 'EndFunction'].join('\n')
