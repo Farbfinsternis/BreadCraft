@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-14
+
 ### Hinzugefügt
 - **Der Werkzeugkasten für Text ist jetzt vollständig — ehrlich abgegrenzt.** Vier String-Funktionen
   rechnen ab sofort wirklich: `Int(s$)` macht aus Text wieder eine Zahl (die Gegenrichtung zu `Str$`),
