@@ -116,8 +116,15 @@ const C_TYPE: Record<VarType, string> = {
   byte: 'unsigned char',
   word: 'unsigned int',
   sint: 'int', // signed 16-bit (-32768..32767) — velocities, deltas, offsets
-  string: 'char' // emitted as `char name[…]` — buffer sizing is a later (string) layer
+  string: 'char' // emitted as `char name[size]`; size from the assigned value (S8.T2)
 }
+
+/** Fallback string-buffer size when a string var is never sized by an assigned literal
+ *  (S8.T2) — generous enough for a label, small enough to be cheap on the 6502. */
+const DEFAULT_STR_CAP = 16
+/** Max digits Str$ can produce (unsigned int 65535 = 5) — used to size buffers that hold
+ *  a concatenation including Str$. */
+const STR_NUM_MAX = 5
 
 /** Inclusive maximum value each scalar type can hold — used by genFor to catch the
  *  unsigned-wrap traps (Befund 3). undefined = not a counting type. */
@@ -226,6 +233,9 @@ interface Symbol {
   cName: string
   type: VarType
   global: boolean
+  /** For a string ($) var: the C buffer size, sized from the longest value assigned
+   *  to it (S8.T2). Undefined for non-strings. */
+  strSize?: number
 }
 
 /**
@@ -243,6 +253,8 @@ interface LocalSym {
   recordType?: string
   /** True for a record PARAMETER (passed as `const struct X *` → field access via `->`). */
   isPointer?: boolean
+  /** String ($) buffer size (S8.T2), as on Symbol. */
+  strSize?: number
 }
 
 /** A user-defined function (Function…EndFunction), collected in the first pass. */
@@ -333,6 +345,11 @@ class Generator {
    *  shared scratch buffer) and pull in <stdlib.h>. One buffer, so a single Str$ per
    *  drawn line is the supported HUD case (score/lives); concatenation is S8.T2. */
   private usesStrConv = false
+
+  // ---- string buffers (STAHL S8.T2) ----
+  /** A string variable was assigned/concatenated → emit the truncating copy/append
+   *  helpers (bc_scpy/bc_scat) and pull in <string.h>. */
+  private usesStrBuf = false
 
   // ---- functions (P1.T3) ----
   /** All user functions, by name → signature (collected first pass). */
@@ -470,6 +487,10 @@ class Generator {
       const why = this.usesStdlib && this.usesStrConv ? 'abs(), utoa()' : this.usesStdlib ? 'abs()' : 'utoa()'
       header.push(`#include <stdlib.h> /* ${why} */`, '')
     }
+    // String buffers (S8.T2): truncating copy/append need strncpy/strncat/strlen.
+    if (this.usesStrBuf) {
+      header.push('#include <string.h> /* strncpy/strncat for string buffers */', '')
+    }
     // Const → #define (compile-time, free at runtime, Sprachdef §C).
     const defines: string[] = []
     for (const [name, value] of this.consts) {
@@ -482,7 +503,7 @@ class Generator {
     for (const rec of this.records.values()) {
       structDecls.push(`struct ${rec.cName} {`)
       for (const [fname, ftype] of rec.fields) {
-        structDecls.push(`  ${C_TYPE[ftype]} ${cName(fname)}${ftype === 'string' ? '[1]' : ''};`)
+        structDecls.push(`  ${C_TYPE[ftype]} ${cName(fname)}${ftype === 'string' ? `[${DEFAULT_STR_CAP}]` : ''};`)
       }
       structDecls.push('};')
     }
@@ -506,7 +527,10 @@ class Generator {
     const globalDecls: string[] = []
     const localDecls: string[] = []
     for (const sym of this.symbols.values()) {
-      const decl = `${C_TYPE[sym.type]} ${sym.cName}${sym.type === 'string' ? '[1]' : ' = 0'};`
+      const decl =
+        sym.type === 'string'
+          ? `char ${sym.cName}[${sym.strSize ?? DEFAULT_STR_CAP}];`
+          : `${C_TYPE[sym.type]} ${sym.cName} = 0;`
       if (sym.global) globalDecls.push(decl)
       else localDecls.push('  ' + decl)
     }
@@ -523,14 +547,25 @@ class Generator {
     // int (65535 = 5 digits + NUL). Lets DrawText show a score/lives count and backs
     // Str$(). One buffer means one conversion per drawn line — the HUD case; richer
     // composition (concatenation) waits for the $[N] buffers in S8.T2.
-    const strHelpers = this.usesStrConv
-      ? [
-          '/* number → decimal text (shared scratch buffer; one Str$ per line) */',
-          'static char bc_strbuf[6];',
-          'static char* bc_str(unsigned int n) { return utoa(n, bc_strbuf, 10); }',
-          ''
-        ]
-      : []
+    const strHelpers: string[] = []
+    if (this.usesStrConv) {
+      strHelpers.push(
+        '/* number → decimal text (shared scratch buffer; one Str$ per line) */',
+        'static char bc_strbuf[6];',
+        'static char* bc_str(unsigned int n) { return utoa(n, bc_strbuf, 10); }',
+        ''
+      )
+    }
+    // Truncating copy/append into a fixed buffer (S8.T2): a too-long result is cut at
+    // the buffer's capacity (cap includes the NUL), never an overflow — Sprachdef §C.
+    if (this.usesStrBuf) {
+      strHelpers.push(
+        '/* truncating string copy/append into a fixed buffer (cap incl. the NUL) */',
+        'static void bc_scpy(char* d, const char* s, unsigned int cap) { strncpy(d, s, cap - 1); d[cap - 1] = 0; }',
+        'static void bc_scat(char* d, const char* s, unsigned int cap) { unsigned int n = strlen(d); if (n < cap - 1) strncat(d, s, cap - 1 - n); }',
+        ''
+      )
+    }
 
     // One-time setup that must run at the very top of main, before the user's body
     // (e.g. installing the joystick driver). Kept apart from this.lines so it can't
@@ -656,10 +691,14 @@ class Generator {
       case 'AssignStmt':
         // Only a scalar target declares a variable; an array element (feld[i] = …)
         // does not create a new symbol — the array was declared by Dim.
-        if (s.target.kind === 'Identifier') this.declare(s.target)
+        if (s.target.kind === 'Identifier') {
+          this.declare(s.target)
+          this.sizeStringTarget(s.target.name, s.value)
+        }
         break
       case 'GlobalStmt':
         this.declare(s.target, { global: true })
+        this.sizeStringTarget(s.target.name, s.value)
         break
       case 'ConstStmt':
         this.consts.set(s.name, s.value)
@@ -696,6 +735,37 @@ class Generator {
         break
       default:
         break
+    }
+  }
+
+  /** Size a string variable's buffer from a value assigned to it (S8.T2). The buffer
+   *  grows to fit the LONGEST thing ever assigned (+1 for the NUL); a later, longer
+   *  value then truncates rather than overflows (Sprachdef §C, the user's chosen rule). */
+  private sizeStringTarget(name: string, value: Expr): void {
+    const sym = this.symbols.get(name)
+    if (!sym || sym.type !== 'string') return
+    sym.strSize = Math.max(sym.strSize ?? 0, this.estStrLen(value) + 1)
+  }
+
+  /** Estimate the longest text a string expression can produce, to size its buffer:
+   *  a literal is exact, Str$ up to 5 digits, Chr$ one char, a concatenation the sum,
+   *  a string var its own capacity; anything else (a number → Str$) a digit allowance. */
+  private estStrLen(e: Expr): number {
+    switch (e.kind) {
+      case 'StringLit':
+        return e.value.length
+      case 'Grouping':
+        return this.estStrLen(e.expr)
+      case 'Binary':
+        return e.op === '+' ? this.estStrLen(e.left) + this.estStrLen(e.right) : STR_NUM_MAX
+      case 'CallExpr':
+        return e.callee.toLowerCase() === 'chr$' ? 1 : STR_NUM_MAX
+      case 'Identifier': {
+        const s = this.symbols.get(e.name)
+        return (s?.strSize ?? DEFAULT_STR_CAP) - 1
+      }
+      default:
+        return STR_NUM_MAX
     }
   }
 
@@ -774,7 +844,8 @@ class Generator {
       const isParam = info.params.some((p) => p.name && cName(p.name) === l.cName)
       if (isParam) continue
       if (l.recordType) this.emit(`struct ${cName(l.recordType)} ${l.cName};`)
-      else this.emit(`${C_TYPE[l.type ?? 'byte']} ${l.cName}${l.type === 'string' ? '[1]' : ' = 0'};`)
+      else if (l.type === 'string') this.emit(`char ${l.cName}[${l.strSize ?? DEFAULT_STR_CAP}];`)
+      else this.emit(`${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
     }
     for (const st of s.body) this.genStatement(st)
 
@@ -912,7 +983,9 @@ class Generator {
         // Declared at file scope; the mandatory init runs here in main (so the
         // init expression may reference earlier setup, like a normal assignment).
         this.checkNarrowing(s.target, s.value)
-        this.emit(`${cName(s.target.name)} = ${this.expr(s.value)};`)
+        // A string global is a buffer → copy into it, like any string assignment (S8.T2).
+        if (this.exprType(s.target) === 'string') this.genStringAssign(s.target, s.value)
+        else this.emit(`${cName(s.target.name)} = ${this.expr(s.value)};`)
         break
       case 'ConstStmt':
         // Pure compile-time → a #define in the header; nothing to emit in the body.
@@ -1333,7 +1406,42 @@ class Generator {
 
   private genAssign(s: AssignStmt): void {
     this.checkNarrowing(s.target, s.value)
+    // A string variable can't be assigned with `=` in C (it's a buffer); copy/append
+    // into it instead, truncating at its capacity (S8.T2). Only a plain $-variable is
+    // a buffer; a string array element / record field stays on the scalar path.
+    if (s.target.kind === 'Identifier' && this.exprType(s.target) === 'string') {
+      this.genStringAssign(s.target, s.value)
+      return
+    }
     this.emit(`${this.lvalue(s.target)} = ${this.expr(s.value)};`)
+  }
+
+  /** Build a string buffer from an assignment (S8.T2): flatten the `+` chain, copy the
+   *  first operand, append the rest — all truncating. A numeric operand is rendered via
+   *  Str$ (textArg), so `"Score: " + n` works. `sizeof(dst)` gives the buffer capacity. */
+  private genStringAssign(target: Identifier, value: Expr): void {
+    this.usesStrBuf = true
+    const dst = this.lvalue(target)
+    const cap = `sizeof(${dst})`
+    const parts = this.flattenConcat(value)
+    // The common build idiom is `s$ = s$ + …`: if the first operand IS the target, the
+    // buffer already holds it — skip the no-op self-copy and just append the rest.
+    const selfStart = parts[0].kind === 'Identifier' && parts[0].name === target.name
+    if (!selfStart) this.emit(`bc_scpy(${dst}, ${this.textArg(parts[0])}, ${cap});`)
+    // parts[0] is now in the buffer (copied above, or already there if selfStart) →
+    // append the rest.
+    for (let i = 1; i < parts.length; i++) {
+      this.emit(`bc_scat(${dst}, ${this.textArg(parts[i])}, ${cap});`)
+    }
+  }
+
+  /** Flatten a left-leaning `a + b + c` string concatenation into [a, b, c]. */
+  private flattenConcat(e: Expr): Expr[] {
+    if (e.kind === 'Grouping') return this.flattenConcat(e.expr)
+    if (e.kind === 'Binary' && e.op === '+') {
+      return [...this.flattenConcat(e.left), ...this.flattenConcat(e.right)]
+    }
+    return [e]
   }
 
   /** The C element type for a Dim array: a scalar C type or `struct Name`. */

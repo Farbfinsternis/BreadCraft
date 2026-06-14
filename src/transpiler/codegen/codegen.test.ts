@@ -630,6 +630,68 @@ describe('codegen: HUD strings (STAHL S8.T1) — Str$ + numeric DrawText', () =>
   })
 })
 
+describe('codegen: string buffers (STAHL S8.T2) — sizing, assignment, concatenation', () => {
+  it('a string variable is sized from its literal and copied (not "=" assigned)', () => {
+    const { code, errors } = gen('name$ = "Bob"')
+    expect(errors).toEqual([])
+    expect(code).toContain('char name[4];') // "Bob" + NUL
+    expect(code).toContain('bc_scpy(name, "Bob", sizeof(name));')
+    expect(code).not.toContain('name = "Bob"') // never the illegal array assignment
+  })
+
+  it('the buffer grows to the LONGEST literal ever assigned (later longer ones truncate)', () => {
+    const { code } = gen(['msg$ = "hi"', 'msg$ = "a longer line"'].join('\n'))
+    expect(code).toContain('char msg[14];') // longest = "a longer line" (13) + NUL
+  })
+
+  it('concatenation copies the first part and appends the rest, truncating', () => {
+    const { code, errors } = gen(['Global score.w = 0', 'msg$ = "Score: " + Str$(score)'].join('\n'))
+    expect(errors).toEqual([])
+    // sized for "Score: " (7) + up to 5 digits + NUL = 13
+    expect(code).toContain('char msg[13];')
+    expect(code).toContain('bc_scpy(msg, "Score: ", sizeof(msg));')
+    expect(code).toContain('bc_scat(msg, bc_str(score), sizeof(msg));')
+    expect(code).toContain('#include <string.h>')
+    expect(code).toContain('static void bc_scpy(')
+    expect(code).toContain('static void bc_scat(')
+  })
+
+  it('a bare number in a concatenation is auto-converted (Str$)', () => {
+    const { code } = gen(['Global n.b = 0', 'msg$ = "x" + n'].join('\n'))
+    expect(code).toContain('bc_scat(msg, bc_str(n), sizeof(msg));')
+  })
+
+  it('a string global is copied into its buffer, not "=" assigned', () => {
+    const { code, errors } = gen('Global title$ = "DEEP"')
+    expect(errors).toEqual([])
+    expect(code).toContain('char title[5];')
+    expect(code).toContain('bc_scpy(title, "DEEP", sizeof(title));')
+  })
+
+  it('DrawText of a string variable passes it straight through (no conversion)', () => {
+    const { code } = gen(['name$ = "Bob"', 'DrawText 0, 0, name$'].join('\n'))
+    expect(code).toContain('cputsxy(0, 0, name);')
+  })
+
+  it('self-append (s$ = s$ + x) skips the no-op self-copy and just appends', () => {
+    const { code, errors } = gen(['Global p.b = 0', 'msg$ = "Score"', 'msg$ = msg$ + ": "', 'msg$ = msg$ + Str$(p)'].join('\n'))
+    expect(errors).toEqual([])
+    // The first assignment copies; the self-appends append only (no bc_scpy(msg, msg, …)).
+    expect(code).toContain('bc_scpy(msg, "Score", sizeof(msg));')
+    expect(code).toContain('bc_scat(msg, ": ", sizeof(msg));')
+    expect(code).toContain('bc_scat(msg, bc_str(p), sizeof(msg));')
+    expect(code).not.toContain('bc_scpy(msg, msg,')
+    // Buffer grew to fit "Score" + ": " + up to 5 digits + NUL = 13.
+    expect(code).toContain('char msg[13];')
+  })
+
+  it('no string-buffer helpers when no string variable is used', () => {
+    const { code } = gen('x.b = 1')
+    expect(code).not.toContain('bc_scpy')
+    expect(code).not.toContain('string.h')
+  })
+})
+
 describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
   it('emits a value function before main, returning its scalar type', () => {
     const src = ['Function Distance.w(a.w, b.w)', '  Return a + b', 'EndFunction'].join('\n')

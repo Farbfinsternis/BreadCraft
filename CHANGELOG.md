@@ -8,6 +8,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Text-Variablen, die man auch zusammenbauen kann.** Eine `$`-Variable war bisher eine Attrappe
+  (intern ein einziges Byte) — zuweisen ging schief, Aneinanderhängen ergab Datenmüll. Jetzt sind es
+  echte Text-Puffer: `name$ = "Bob"` legt einen Puffer in der Länge des Textes an, und mit `+` klebst
+  Du Stücke zusammen — `meldung$ = "SCORE: " + Str$(score)` ergibt genau das, was dasteht, Zahl
+  inklusive. Der Puffer richtet sich nach dem längsten Text, den Du der Variable je zuweist; wird es
+  später doch zu lang, schneidet BreadCraft sauber ab, statt über den Rand zu schreiben (so wie der
+  C64 mit festem Platz eben umgeht — ehrlich statt magisch).
 - **Endlich Zahlen auf dem Schirm: ein Punktestand, der sich auch ändert.** Bisher konnte `DrawText`
   nur fest getippten Text zeigen — eine Variable hinzuwerfen (`DrawText 7, 1, score`) ergab Kauderwelsch
   oder gar nichts, weil der C64 eine Zahl nicht für Text hält. Jetzt wandelt BreadCraft eine Zahl an
