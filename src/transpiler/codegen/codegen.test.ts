@@ -502,11 +502,20 @@ describe('codegen: tile world (M3.T1) — SetTile/GetTile/TileAt/TileSolid', () 
     expect(code).toContain('t = bc_tile_at(120, 100);')
   })
 
-  it('TileSolid folds its != 0 in at the call site — no wrapper function (STAHL S10)', () => {
+  it('TileSolid looks up solidity per tile via bc_solid[] — no wrapper function (STAHL S10/S11)', () => {
     const { code, errors } = gen('blocked.b = TileSolid(120, 100)')
     expect(errors).toEqual([])
-    expect(code).not.toContain('bc_tile_solid_at') // the extra call layer is gone
-    expect(code).toContain('blocked = (bc_tile_at(120, 100) != 0);') // default: tile 0 passable
+    expect(code).not.toContain('bc_tile_solid_at') // the extra call layer is gone (S10)
+    expect(code).toContain('blocked = bc_solid[bc_tile_at(120, 100)];') // solidity is a TILE property (S11)
+  })
+
+  it('without a tileset, bc_solid is all-zero — nothing solid by default (STAHL S11)', () => {
+    // The S11 default: an unpainted/absent charset blocks nothing, so DrawText/HUD letters
+    // (non-zero in Screen-RAM) never collide. The user paints walls in the editor.
+    const { code } = gen('blocked.b = TileSolid(120, 100)')
+    expect(code).toContain('static const unsigned char bc_solid[256] = {')
+    expect(code).toContain('  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,')
+    expect(code).not.toMatch(/bc_solid\[256\] = \{[^}]*[1-9]/) // no solid slot anywhere
   })
 
   it('bc_tile_at uses the row*40 table, not a per-pixel shift chain (STAHL S10)', () => {
@@ -1055,5 +1064,25 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
   it('errors when UseTileset gets no string id', () => {
     const { errors } = gen('UseTileset 5', fakeAssets())
     expect(errors.some((e) => /Tileset-Namen in/.test(e))).toBe(true)
+  })
+
+  it('bakes painted solid tiles into bc_solid[] so TileSolid blocks only marked tiles (STAHL S11)', () => {
+    // A charset that marks slots 1 and 5 solid (the editor's sparse "solid" list).
+    const charset = JSON.stringify({
+      format: 'breadcraft.petscii',
+      charCount: 256,
+      chars: Array.from({ length: 256 }, () => [0, 0, 0, 0, 0, 0, 0, 0]),
+      solid: [1, 5]
+    })
+    const assets: AssetContext = {
+      manifest: { palette: null, charsets: ['main.petscii'], tilemaps: [], sprites: [] },
+      readFile: (rel) => (rel === 'main.petscii' ? charset : null)
+    }
+    const { code, errors } = gen('UseTileset "main"\nblocked.b = TileSolid(120, 100)', assets)
+    expect(errors).toEqual([])
+    // Slots 1 and 5 are solid (1), every other slot is 0 — solidity travels with the charset.
+    expect(code).toContain('static const unsigned char bc_solid[256] = {')
+    expect(code).toContain('  0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,')
+    expect(code).toContain('blocked = bc_solid[bc_tile_at(120, 100)];')
   })
 })

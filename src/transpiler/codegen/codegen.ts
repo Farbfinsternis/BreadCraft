@@ -321,6 +321,14 @@ class Generator {
   private usesDataLayer = false
   /** TileAt/TileSolid used → emit the pixel→cell→tile helper (+ row*40 table). */
   private usesTileAt = false
+  /** TileSolid used → emit the bc_solid[256] lookup table (solidity is a property of
+   *  the TILE, STAHL S11). Separate from usesTileAt so a program using only TileAt
+   *  doesn't carry the table. */
+  private usesTileSolid = false
+  /** The active tileset's per-slot solidity (set by UseTileset). null until a tileset
+   *  is baked → bc_solid stays all-zero (nothing solid: the S11 default that makes a
+   *  DrawText/HUD collision structurally impossible until the user paints walls). */
+  private tilesetSolid: boolean[] | null = null
 
   // ---- text output (DrawText / Color) ----
   /** DrawText used → emit the bc_drawtext helper (writes C64 screen codes straight to
@@ -708,6 +716,25 @@ class Generator {
         '  if (col >= BC_SCR_W || row >= 25) return 0;',
         '  return BC_SCREEN[bc_row40[row] + col];',
         '}',
+        ''
+      )
+    }
+    if (this.usesTileSolid) {
+      // Solidity is a property of the TILE (STAHL S11), not its map cell: TileSolid is
+      // bc_solid[bc_tile_at(...)] — one `lda bc_solid,x` on the resolved tile number.
+      // Baked from the active tileset's painted "solid" marks; all-zero when no tileset
+      // (or none painted) → nothing solid, so HUD letters from DrawText never block.
+      const solid = new Uint8Array(256)
+      if (this.tilesetSolid) {
+        for (let i = 0; i < 256 && i < this.tilesetSolid.length; i++) {
+          if (this.tilesetSolid[i]) solid[i] = 1
+        }
+      }
+      out.push(
+        '/* tile → solid? (1 blocks the player); a tile property, painted in the editor */',
+        'static const unsigned char bc_solid[256] = {',
+        byteRows(solid),
+        '};',
         ''
       )
     }
@@ -1249,7 +1276,12 @@ class Generator {
     }
     let bytes: Uint8Array
     try {
-      bytes = resolveCharset(id, this.assets.manifest, this.assets.readFile, this.locale).bytes
+      const resolved = resolveCharset(id, this.assets.manifest, this.assets.readFile, this.locale)
+      bytes = resolved.bytes
+      // Remember which slots are solid so TileSolid can bake a bc_solid[256] table
+      // (solidity travels with the charset, STAHL S11). Last UseTileset wins, mirroring
+      // activeTileset — Phase 1 uses one charset.
+      this.tilesetSolid = resolved.solid
     } catch (e) {
       this.err(e instanceof AssetResolveError ? e.message : String(e), s)
       return
@@ -1889,10 +1921,13 @@ class Generator {
         }
         this.usesTileWorld = true
         this.usesTileAt = true
-        // Solidity folds into a plain compare at the call site — no wrapper function, so
-        // TileSolid loses a whole cc65 call layer (STAHL S10). Default rule: tile 0 is
-        // passable, every other tile is solid.
-        return `(bc_tile_at(${this.expr(a[0])}, ${this.expr(a[1])}) != 0)`
+        this.usesTileSolid = true
+        // Solidity is looked up per TILE (STAHL S11): bc_solid[bc_tile_at(...)] — one
+        // table-load on the resolved tile number, no wrapper function (it keeps the cheap
+        // single-call-layer win from S10). Which tiles are solid is painted in the editor
+        // and travels in the charset; an unmarked charset blocks nothing, so a wall blocks
+        // but DrawText/HUD letters (also non-zero in Screen-RAM) do NOT — the bug S11 fixes.
+        return `bc_solid[bc_tile_at(${this.expr(a[0])}, ${this.expr(a[1])})]`
       case 'abs':
         // Abs(n) → cc65's abs() (stdlib). The argument is cast to signed int so a
         // subtraction like Abs(a - b) reads as |a − b| even though BreadCraft values

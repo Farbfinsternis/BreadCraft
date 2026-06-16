@@ -1,6 +1,12 @@
 import { reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { CHARSET_FILE, parseCharset, serializeCharset, pixelsPerChar } from './assetIo'
+import {
+  CHARSET_FILE,
+  parseCharset,
+  parseCharsetSolid,
+  serializeCharset,
+  pixelsPerChar
+} from './assetIo'
 import { useProjectStore } from './project'
 
 /**
@@ -24,6 +30,10 @@ import { useProjectStore } from './project'
 export const useCharsetStore = defineStore('charset', () => {
   // Sparse: only edited chars are stored; unedited read as all-'0' (background).
   const chars = reactive<Record<number, Uint8Array>>({})
+  // Per-slot SOLIDITY (S11): a tile flagged here blocks the player. Collision is a
+  // property of the TILE, not its map position — marked in the PETSCII editor, baked
+  // into the build's bc_solid[] table. Sparse: only solid slots hold `true`.
+  const solid = reactive<Record<number, boolean>>({})
   const dirty = ref(false)
 
   // The project this charset belongs to (set on load). Saves target this dir.
@@ -64,23 +74,54 @@ export const useCharsetStore = defineStore('charset', () => {
     return n
   }
 
+  // ---- solidity (S11) ----
+
+  /** Is this tile marked solid (blocks the player)? */
+  function isSolid(charIndex: number): boolean {
+    return solid[charIndex] === true
+  }
+
+  /** Mark/unmark a tile solid. Marks dirty (explicit save persists it). */
+  function setSolid(charIndex: number, value: boolean): void {
+    if (charIndex < 0 || charIndex > 255) return
+    if (value) solid[charIndex] = true
+    else delete solid[charIndex]
+    dirty.value = true
+  }
+
+  /** A dense 256-entry boolean array for the serializer (true = solid). */
+  function solidFlags(): boolean[] {
+    const flags = new Array<boolean>(256).fill(false)
+    for (const idx of Object.keys(solid)) if (solid[Number(idx)]) flags[Number(idx)] = true
+    return flags
+  }
+
+  function solidCount(): number {
+    let n = 0
+    for (const idx of Object.keys(solid)) if (solid[Number(idx)]) n++
+    return n
+  }
+
   /** Load the project's charset asset from disk (called on project open). */
   async function loadForProject(dir: string, rel: string | null): Promise<void> {
     projectDir = dir
     assetRel = rel ?? CHARSET_FILE
     for (const key of Object.keys(chars)) delete chars[Number(key)]
+    for (const key of Object.keys(solid)) delete solid[Number(key)]
     dirty.value = false
     if (!rel) return // no charset asset yet — start empty
     const text = await window.breadcraft.assets.read(dir, rel)
     if (!text) return
     const parsed = parseCharset(text, useProjectStore().graphicsMode)
     if (parsed) for (const [k, v] of Object.entries(parsed)) chars[Number(k)] = v
+    const flags = parseCharsetSolid(text)
+    for (let i = 0; i < flags.length; i++) if (flags[i]) solid[i] = true
   }
 
   /** Write the charset to disk (explicit save: button / Ctrl+S). */
   async function save(): Promise<void> {
     if (!projectDir) return
-    const text = serializeCharset(chars, useProjectStore().graphicsMode)
+    const text = serializeCharset(chars, useProjectStore().graphicsMode, solidFlags())
     await window.breadcraft.assets.write(projectDir, 'charset', assetRel, text)
     dirty.value = false
   }
@@ -101,8 +142,9 @@ export const useCharsetStore = defineStore('charset', () => {
     projectDir = dir
     assetRel = rel
     for (const key of Object.keys(chars)) delete chars[Number(key)]
+    for (const key of Object.keys(solid)) delete solid[Number(key)]
     dirty.value = false
-    const text = serializeCharset(chars, useProjectStore().graphicsMode)
+    const text = serializeCharset(chars, useProjectStore().graphicsMode, solidFlags())
     await window.breadcraft.assets.write(dir, 'charset', rel, text)
   }
 
@@ -110,18 +152,22 @@ export const useCharsetStore = defineStore('charset', () => {
   async function saveTo(dir: string, rel: string): Promise<void> {
     projectDir = dir
     assetRel = rel
-    const text = serializeCharset(chars, useProjectStore().graphicsMode)
+    const text = serializeCharset(chars, useProjectStore().graphicsMode, solidFlags())
     await window.breadcraft.assets.write(dir, 'charset', rel, text)
     dirty.value = false
   }
 
   return {
     chars,
+    solid,
     dirty,
     pixels,
     setPixels,
     isUsed,
     usedCount,
+    isSolid,
+    setSolid,
+    solidCount,
     loadForProject,
     save,
     currentRel,

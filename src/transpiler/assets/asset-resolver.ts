@@ -53,6 +53,11 @@ export interface ResolvedCharset {
   bytes: Uint8Array
   /** Number of chars (always CHAR_COUNT for a charset; explicit for clarity). */
   charCount: number
+  /** Per-slot SOLIDITY (STAHL S11): solid[i] === true → tile i blocks the player.
+   *  Read TOLERANTLY (an old/untagged `.petscii` yields all-false — nothing solid by
+   *  default; the user paints walls in the editor). The codegen bakes this into a
+   *  `bc_solid[256]` table so TileSolid is a property of the TILE, not its map cell. */
+  solid: boolean[]
 }
 
 /** Raised when an asset can't be resolved. Carries a plain message; the caller
@@ -153,7 +158,16 @@ export function resolveCharset(
     throw new AssetResolveError(M.tilesetFileMissing(rel))
   }
 
-  return { kind: 'charset', id, rel, bytes: parsePetsciiBytes(rel, text, locale), charCount: CHAR_COUNT }
+  return {
+    kind: 'charset',
+    id,
+    rel,
+    bytes: parsePetsciiBytes(rel, text, locale),
+    charCount: CHAR_COUNT,
+    // Solidity is read tolerantly (the codec never throws): a malformed/old file just
+    // means "nothing solid". The strict byte validation above still guards the shape.
+    solid: fmt.parseCharsetSolid(text)
+  }
 }
 
 /**

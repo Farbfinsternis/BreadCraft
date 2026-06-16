@@ -7,7 +7,24 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-16
+
 ### Hinzugefügt
+- **Solide Kacheln: markiere im PETSCII-Editor, was die Figur blockt — und nur das.** Bisher entschied
+  BreadCraft die Kollision heimlich am Inhalt: alles, was nicht leer war, war eine Wand. Das ging gut, bis
+  `DrawText` echte Buchstaben aufs Spielfeld schrieb — plötzlich rannte die Figur gegen das Wort „PUNKTE".
+  Jetzt ist Solidität eine Eigenschaft der **Kachel selbst**: rechts neben der Zeichen-Übersicht hängt eine
+  kleine Eigenschaften-Leiste, und ihr erster Schalter heißt **Solide**. Häkchen setzen — fertig, diese Kachel
+  blockt. Wer viele Wände hat, drückt den **Pinsel** daneben und *malt* die Solidität übers Raster (Rechts-Ziehen
+  nimmt sie wieder weg). Solide Kacheln tragen einen stahlgrauen Rahmen, man sieht seine Wand-Karte auf einen
+  Blick. Frisch ist nichts solide — Du baust Deine Wände bewusst, und Buchstaben bleiben begehbar, von ganz allein.
+  Deine Wand-Karte überlebt den Neustart: die Solidität reist in der `.petscii` mit dem Zeichensatz mit, und ein
+  Zeichensatz ganz ohne Wände bleibt auf der Platte Byte für Byte der alte — ältere Projekte lesen sich klaglos weiter.
+  Und jetzt zählt das Häkchen auch im fertigen Spiel: BreadCraft bäckt aus Deinen Markierungen eine kleine
+  Nachschlage-Tabelle, und `TileSolid` fragt nicht mehr „ist hier *irgendwas*?", sondern „ist *diese Kachel* eine Wand?" —
+  ein einziger Tabellen-Zugriff, so gut wie gratis. Wer nichts anmalt, läuft durch alles hindurch (Buchstaben
+  inklusive); Deine angemalten Wände blocken, sonst nichts.
+  (Die Leiste ist zum Wachsen gebaut: weitere Kachel-Eigenschaften ziehen später hier ein.)
 - **Die Font-Linse: halt `G` gedrückt und sieh, wo die Buchstaben wohnen.** Sobald Du einen eigenen
   Zeichensatz baust, teilen sich Schrift und Kacheln dieselben 256 Plätze — und `DrawText` zeigt einen
   Buchstaben nur, wenn er an seinem angestammten Platz gemalt ist (das „A" auf Platz 1, das „B" auf 2 …).

@@ -14,7 +14,8 @@ export {
   CHAR_COUNT,
   BYTES_PER_CHAR,
   serializeCharset,
-  parseCharset
+  parseCharset,
+  parseCharsetSolid
 } from './charset'
 
 export {

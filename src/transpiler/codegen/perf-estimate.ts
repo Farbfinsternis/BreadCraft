@@ -32,7 +32,8 @@ const COST = {
 // bc_tile_at that the model's single COST.call doesn't see — so their body must carry
 // that extra call layer plus the 16-bit pixel math (STAHL S10: re-levelled against the
 // measured .s — ~8–9 jsr each, the priciest per-frame reads, near a software multiply).
-// After S10's F1 the solid wrapper is gone, so tilesolid ≈ tileat (just a `!= 0` more).
+// After S10's F1 the solid wrapper is gone, so tilesolid ≈ tileat (just a bc_solid[tile]
+// table-load on the result more — STAHL S11; an `lda bc_solid,x`, barely above the old `!= 0`).
 // GetTile is an inline Screen-RAM index (no call, no 16-bit px) — genuinely the cheaper
 // path, which is why it worked as a hand workaround. Setup commands cost ~0 per frame.
 const BUILTIN: Record<string, number> = {
@@ -49,7 +50,7 @@ const BUILTIN: Record<string, number> = {
   drawtext: 60,
   settile: 60,
   joystick: 30,
-  tilesolid: 120, // hidden bc_tile_at call + 16-bit pixel→cell + bounds + the `!= 0`
+  tilesolid: 122, // hidden bc_tile_at call + 16-bit pixel→cell + bounds + bc_solid[tile] load
   tileat: 115, // same minus the `!= 0`
   gettile: 30, // inline Screen-RAM index — no call, no 16-bit px
   min: 25,

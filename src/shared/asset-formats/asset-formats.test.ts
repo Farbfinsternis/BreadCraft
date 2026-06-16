@@ -40,6 +40,37 @@ describe('asset-formats: charset (.petscii)', () => {
     r[0] = [999, -1, 0, 0, 0, 0, 0, 0] // out of range, but structurally fine
     expect(fmt.parseCharset(fmt.serializeCharset(r))[0]).toEqual([999, -1, 0, 0, 0, 0, 0, 0])
   })
+
+  it('omits the solid tag when nothing is solid (untagged stays byte-identical, S11)', () => {
+    const r = rows()
+    expect(fmt.serializeCharset(r)).toBe(fmt.serializeCharset(r, new Array(256).fill(false)))
+    expect(JSON.parse(fmt.serializeCharset(r))).not.toHaveProperty('solid')
+  })
+
+  it('round-trips per-slot solidity as a sparse slot list (S11)', () => {
+    const r = rows()
+    const solid = new Array<boolean>(256).fill(false)
+    solid[5] = true
+    solid[200] = true
+    const json = JSON.parse(fmt.serializeCharset(r, solid))
+    expect(json.solid).toEqual([5, 200]) // sparse, ascending slot numbers
+    const back = fmt.parseCharsetSolid(fmt.serializeCharset(r, solid))
+    expect(back[5]).toBe(true)
+    expect(back[200]).toBe(true)
+    expect(back[6]).toBe(false)
+    expect(back).toHaveLength(256)
+  })
+
+  it('reads solidity tolerantly: old/malformed files yield all-false (S11)', () => {
+    expect(fmt.parseCharsetSolid('{ not json').every((b) => !b)).toBe(true)
+    expect(fmt.parseCharsetSolid(fmt.serializeCharset(rows())).every((b) => !b)).toBe(true)
+    // out-of-range / non-integer slot numbers are ignored, valid ones still land
+    const text = JSON.stringify({ chars: rows(), solid: [3, 999, -1, 2.5, 7] })
+    const flags = fmt.parseCharsetSolid(text)
+    expect(flags[3]).toBe(true)
+    expect(flags[7]).toBe(true)
+    expect(flags.filter(Boolean)).toHaveLength(2)
+  })
 })
 
 describe('asset-formats: tilemap (.tilemap)', () => {

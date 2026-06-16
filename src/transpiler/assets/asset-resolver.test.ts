@@ -104,6 +104,26 @@ describe('asset-resolver: resolveCharset (happy path)', () => {
     const r = resolveCharset('main', manifest(['main.petscii']), reader({ 'main.petscii': petscii() }))
     expect(r.rel).toBe('main.petscii')
   })
+
+  it('resolves per-slot solidity from the .petscii (STAHL S11)', () => {
+    const text = JSON.stringify({
+      format: 'breadcraft.petscii',
+      charCount: CHAR_COUNT,
+      chars: Array.from({ length: CHAR_COUNT }, () => new Array(BYTES_PER_CHAR).fill(0)),
+      solid: [3, 200]
+    })
+    const r = resolveCharset('main', manifest(['main.petscii']), reader({ 'main.petscii': text }))
+    expect(r.solid).toHaveLength(CHAR_COUNT)
+    expect(r.solid[3]).toBe(true)
+    expect(r.solid[200]).toBe(true)
+    expect(r.solid[4]).toBe(false)
+  })
+
+  it('an untagged/old .petscii resolves to nothing solid (S11 default, tolerant)', () => {
+    const r = resolveCharset('main', manifest(['main.petscii']), reader({ 'main.petscii': petscii() }))
+    expect(r.solid).toHaveLength(CHAR_COUNT)
+    expect(r.solid.some(Boolean)).toBe(false)
+  })
 })
 
 describe('asset-resolver: resolveCharset (strict, eager errors)', () => {

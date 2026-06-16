@@ -14,9 +14,48 @@ export const CHAR_COUNT = 256
 export const BYTES_PER_CHAR = 8
 
 /** Serialize 256 rows of 8 raw bytes to the `.petscii` JSON. Callers pass already
- *  byte-packed rows (the editor packs its index grid per graphics mode first). */
-export function serializeCharset(chars: number[][]): string {
-  return JSON.stringify({ format: CHARSET_FORMAT, version: 1, charCount: CHAR_COUNT, chars })
+ *  byte-packed rows (the editor packs its index grid per graphics mode first).
+ *
+ *  Optional per-slot SOLIDITY (S11): a tile flagged solid blocks the player
+ *  (collision is a property of the TILE, not its map position). Stored as a sparse
+ *  list of solid slot numbers — and ONLY when at least one slot is solid, so a
+ *  charset without any solid tiles stays byte-identical to the old untagged format
+ *  (forward/backward compatible). */
+export function serializeCharset(chars: number[][], solid?: readonly boolean[]): string {
+  const obj: {
+    format: string
+    version: number
+    charCount: number
+    chars: number[][]
+    solid?: number[]
+  } = { format: CHARSET_FORMAT, version: 1, charCount: CHAR_COUNT, chars }
+  if (solid) {
+    const slots: number[] = []
+    for (let i = 0; i < CHAR_COUNT; i++) if (solid[i]) slots.push(i)
+    if (slots.length) obj.solid = slots
+  }
+  return JSON.stringify(obj)
+}
+
+/**
+ * Read the per-slot solidity flags from a `.petscii` (S11), tolerantly: any slot
+ * number in the `solid` list flips that slot true. Returns a fixed 256-entry boolean
+ * array (all false when the field is absent — old files / no solid tiles). Never
+ * throws: a malformed file just yields all-false (the editor stays usable).
+ */
+export function parseCharsetSolid(text: string): boolean[] {
+  const flags = new Array<boolean>(CHAR_COUNT).fill(false)
+  let raw: { solid?: unknown }
+  try {
+    raw = JSON.parse(text) as { solid?: unknown }
+  } catch {
+    return flags
+  }
+  if (!Array.isArray(raw.solid)) return flags
+  for (const s of raw.solid) {
+    if (typeof s === 'number' && Number.isInteger(s) && s >= 0 && s < CHAR_COUNT) flags[s] = true
+  }
+  return flags
 }
 
 /**

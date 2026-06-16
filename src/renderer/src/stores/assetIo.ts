@@ -97,14 +97,25 @@ export function parsePalette(text: string): PaletteData | null {
  * missing chars write as empty (8 zero bytes). The stored BYTES are mode-
  * independent (§1; only the interpretation differs) — so no mode lives in the file.
  */
-export function serializeCharset(chars: Record<number, Uint8Array>, mode: GraphicsMode): string {
+export function serializeCharset(
+  chars: Record<number, Uint8Array>,
+  mode: GraphicsMode,
+  solid?: readonly boolean[]
+): string {
   const { pack } = charsetCodec(mode)
   const out: number[][] = []
   for (let i = 0; i < CHAR_COUNT; i++) {
     const cells = chars[i]
     out.push(Array.from(cells ? pack(cells) : new Uint8Array(8)))
   }
-  return fmt.serializeCharset(out)
+  return fmt.serializeCharset(out, solid)
+}
+
+/** Read per-slot solidity flags from a `.petscii` (S11). Tolerant: a missing/old
+ *  field or malformed file yields all-false (256 entries). Collision is a property
+ *  of the tile, marked in the editor; see STAHL S11. */
+export function parseCharsetSolid(text: string): boolean[] {
+  return fmt.parseCharsetSolid(text)
 }
 
 /**

@@ -124,6 +124,42 @@ function saveAs(): void {
 
 const usedCount = computed(() => charset.usedCount())
 
+// ---- Solid-Tool (S11): mark tiles solid in the Properties-Bar ----
+// Solidity is a property of the TILE, not its map position (STAHL S11): a solid tile
+// blocks the player wherever it sits, a letter never does — which is why HUD DrawText
+// stops colliding. The CHECKBOX sets the selected tile; the BRUSH button turns the
+// navigator into a paint surface (drag = solid, right-drag = clear), mirroring the
+// pixel editor's left/right idiom (PixelCanvas: button 2 = the "undo" pen).
+const solidBrush = ref(false)
+const painting = ref(false)
+let paintValue = true // what the current drag stroke writes (set vs clear)
+
+/** The selected tile's solid flag, two-way for the checkbox. */
+const selectedSolid = computed<boolean>({
+  get: () => charset.isSolid(selectedChar.value),
+  set: (v) => charset.setSolid(selectedChar.value, v)
+})
+const solidCount = computed(() => charset.solidCount())
+
+/** Navigator pointerdown: in brush mode start a solid stroke; else just select. */
+function onNavDown(c: number, e: PointerEvent): void {
+  if (solidBrush.value) {
+    paintValue = e.button !== 2 // right button clears, anything else sets
+    painting.value = true
+    selectedChar.value = c // keep the checkbox in sync with where you paint
+    charset.setSolid(c, paintValue)
+    return
+  }
+  if (e.button === 0) selectedChar.value = c
+}
+/** Drag across cells while a stroke is active → paint the same value. */
+function onNavEnter(c: number): void {
+  if (painting.value) charset.setSolid(c, paintValue)
+}
+function onNavUp(): void {
+  painting.value = false
+}
+
 // ---- Font-Linse (S9.T3): hold G to peek the letter ghosts ----
 // The ghost shows where each PETSCII letter NATIVELY lives, drawn on top so a tile
 // sitting on a letter slot stays visible. It's a momentary peek (hold G), never a
@@ -167,11 +203,14 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('keyup', onKeyup)
   window.addEventListener('blur', onBlur)
+  // End a solid-paint stroke even if the pointer is released off a navigator cell.
+  window.addEventListener('pointerup', onNavUp)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
   window.removeEventListener('blur', onBlur)
+  window.removeEventListener('pointerup', onNavUp)
 })
 </script>
 
@@ -227,35 +266,64 @@ onBeforeUnmount(() => {
     <!-- ===== MALEN TAB — floating toolbox over the canvas surface ===== -->
     <div v-if="tab === 'paint'" class="pt-surface">
       <!-- Zeichensatz (navigator) -->
-      <FloatPanel :scope="SCOPE" id="charset" :title="t('tileset.panel.charset')" :min-width="160" :min-height="120">
-        <div class="pt-nav">
-          <button
-            v-for="c in chars"
-            :key="c"
-            class="pt-nav-cell"
-            :class="{ 'is-sel': selectedChar === c }"
-            :style="{ background: bg.hex }"
-            @click="selectedChar = c"
-          >
-            <span
-              v-if="charset.isUsed(c)"
-              class="pt-nav-mini"
+      <FloatPanel :scope="SCOPE" id="charset" :title="t('tileset.panel.charset')" :min-width="240" :min-height="160">
+        <div class="pt-charset-body">
+          <div class="pt-nav" @contextmenu.prevent>
+            <button
+              v-for="c in chars"
+              :key="c"
+              class="pt-nav-cell"
+              :class="{ 'is-sel': selectedChar === c, 'is-brush': solidBrush }"
+              :style="{ background: bg.hex }"
+              @pointerdown="onNavDown(c, $event)"
+              @pointerenter="onNavEnter(c)"
             >
-              <i
-                v-for="(hex, pi) in charPreview(c)"
-                :key="pi"
-                :style="{ background: hex }"
-              />
-            </span>
-            <!-- Font-Linse ghost (S9.T3): letter shape on top, visible while G held. -->
-            <span v-if="ghostPeek && ghostFor(c)" class="pt-nav-ghost" aria-hidden="true">
-              <i
-                v-for="(on, gi) in ghostFor(c) || []"
-                :key="gi"
-                :class="{ 'is-on': on }"
-              />
-            </span>
-          </button>
+              <span
+                v-if="charset.isUsed(c)"
+                class="pt-nav-mini"
+              >
+                <i
+                  v-for="(hex, pi) in charPreview(c)"
+                  :key="pi"
+                  :style="{ background: hex }"
+                />
+              </span>
+              <!-- Solid-Tile ring (S11): a steel-grey frame marks a tile that blocks
+                   the player. Below the ghost so the font lens still reads on top. -->
+              <span v-if="charset.isSolid(c)" class="pt-nav-solid" aria-hidden="true" />
+              <!-- Font-Linse ghost (S9.T3): letter shape on top, visible while G held. -->
+              <span v-if="ghostPeek && ghostFor(c)" class="pt-nav-ghost" aria-hidden="true">
+                <i
+                  v-for="(on, gi) in ghostFor(c) || []"
+                  :key="gi"
+                  :class="{ 'is-on': on }"
+                />
+              </span>
+            </button>
+          </div>
+
+          <!-- Properties of the SELECTED tile (S11). First (today only) property:
+               Solid. Built to grow — further per-tile properties slot in here. -->
+          <aside class="pt-props">
+            <span class="pt-props-title">{{ t('tileset.props.title', { n: selectedChar }) }}</span>
+            <div class="pt-prop-row">
+              <label class="pt-prop-label" for="pt-solid-check">{{ t('tileset.props.solid') }}</label>
+              <input id="pt-solid-check" v-model="selectedSolid" class="pt-prop-check" type="checkbox" />
+              <button
+                class="pt-prop-brush"
+                :class="{ 'is-active': solidBrush }"
+                :title="t('tileset.props.solidBrush')"
+                :aria-pressed="solidBrush"
+                @click="solidBrush = !solidBrush"
+              >
+                <svg class="ico" viewBox="0 0 24 24">
+                  <path d="M9.5 14.5 18 6a2.1 2.1 0 0 1 3 3l-8.5 8.5" />
+                  <path d="M9.5 14.5a3 3 0 0 1 0 4.2C8 20.2 4 20.5 4 20.5s.3-4 1.8-5.5a3 3 0 0 1 3.7-.5z" />
+                </svg>
+              </button>
+            </div>
+            <p class="pt-props-hint">{{ t('tileset.props.solidHint', { n: solidCount }) }}</p>
+          </aside>
         </div>
       </FloatPanel>
 
@@ -478,8 +546,17 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* ---- charset panel body: navigator + properties side by side ---- */
+.pt-charset-body {
+  display: flex;
+  gap: var(--bc-space-3);
+  align-items: flex-start;
+  height: 100%;
+}
+
 /* ---- navigator 16×16 ---- */
 .pt-nav {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: repeat(16, 1fr);
   gap: 1px;
@@ -487,6 +564,81 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.4);
   border-radius: var(--bc-radius-sm);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+/* Brush mode (Solid-Tool active): the navigator becomes a paint surface. */
+.pt-nav-cell.is-brush {
+  cursor: crosshair;
+}
+
+/* ---- properties bar (S11) ---- */
+.pt-props {
+  flex: 0 0 116px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bc-space-2);
+  padding: var(--bc-space-2) 0;
+}
+.pt-props-title {
+  font: 600 11px/1.2 var(--bc-font-sans);
+  letter-spacing: 0.02em;
+  color: var(--bc-text-300);
+}
+.pt-prop-row {
+  display: flex;
+  align-items: center;
+  gap: var(--bc-space-2);
+}
+.pt-prop-label {
+  flex: 1 1 auto;
+  font: 500 12px/1 var(--bc-font-sans);
+  color: var(--bc-text-200);
+  cursor: pointer;
+}
+.pt-prop-check {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--bc-arc-400);
+  cursor: pointer;
+}
+.pt-prop-brush {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--bc-text-300);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--bc-border);
+  border-radius: var(--bc-radius-sm);
+  cursor: pointer;
+  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.pt-prop-brush:hover {
+  color: var(--bc-text-100);
+  border-color: var(--bc-border-strong);
+}
+.pt-prop-brush.is-active {
+  color: var(--bc-arc-200);
+  border-color: var(--bc-arc-400);
+  background: rgba(94, 196, 255, 0.08);
+  box-shadow: var(--bc-glow-arc);
+}
+.pt-prop-brush .ico {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pt-props-hint {
+  margin: 0;
+  font: 500 10.5px/1.3 var(--bc-font-mono);
+  color: var(--bc-text-400);
+  letter-spacing: 0.02em;
 }
 .pt-nav-cell {
   position: relative;
@@ -509,6 +661,21 @@ onBeforeUnmount(() => {
 .pt-nav-mini i {
   display: block;
 }
+/* Solid-Tile ring (S11): a steel-grey frame inside the navigator cell marking a tile
+   that blocks the player. Reads instantly, doesn't cover the char art (just a border),
+   and sits BELOW the font ghost (z 2 vs 3) so the lens still wins on top. */
+.pt-nav-solid {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border: 2px solid #8b97a8;
+  border-radius: 1px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 0 4px rgba(139, 151, 168, 0.5);
+}
+
 /* Font-Linse ghost over a navigator cell: the letter shape in white at 30% opacity,
    ON TOP of whatever is painted (z above the mini-preview) so a tile clobbering a
    letter slot is obvious. Only present while G is held. */
