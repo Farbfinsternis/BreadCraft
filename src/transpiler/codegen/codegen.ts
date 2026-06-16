@@ -319,10 +319,17 @@ class Generator {
   private usesTileWorld = false
   /** GetTile(…, 1) used → bake the (currently empty) data layer BC_DATA[]. */
   private usesDataLayer = false
-  /** TileSolid used → bake the default solid table + the pixel→cell→solid helper. */
-  private usesTileSolid = false
-  /** TileAt used → emit the pixel→cell→tile helper. */
+  /** TileAt/TileSolid used → emit the pixel→cell→tile helper (+ row*40 table). */
   private usesTileAt = false
+
+  // ---- text output (DrawText / Color) ----
+  /** DrawText used → emit the bc_drawtext helper (writes C64 screen codes straight to
+   *  Screen-RAM, since conio's cputsxy writes PETSCII and mis-indexes a custom charset)
+   *  and require the BC_SCREEN map. */
+  private usesDrawText = false
+  /** DrawText or Color used → emit the bc_pen pen-colour global (the Color command's
+   *  state, read by every DrawText). */
+  private usesPen = false
 
   // ---- sprites (M3.T2): Sprite / ShowSprite / HideSprite ----
   /** Any sprite command used. Sprites poke VIC registers directly (c64.h, always
@@ -451,16 +458,22 @@ class Generator {
     if (this.activeTileset) {
       header.push(`#define BC_CHARSET ((unsigned char*)0x${map.charsetAddr!.toString(16)}) /* our tileset */`)
     }
+    // BC_SCREEN is needed for the tile grid AND for DrawText (which writes screen codes
+    // straight into it). The geometry defines below are only the tile-collision origin.
+    if (this.activeTileset || this.usesTileWorld || this.usesDrawText) {
+      header.push('#define BC_SCREEN  ((unsigned char*)0x0400) /* 40x25 screen RAM */')
+    }
     if (this.activeTileset || this.usesTileWorld) {
       header.push(
-        '#define BC_SCREEN  ((unsigned char*)0x0400) /* tile-number grid (40x25) */',
         '#define BC_SCR_W   40',
         // VIC sprite coordinate origin of the top-left visible cell (the pixel→cell
         // offset, _preflight/tilecollide.c) — used by TileAt/TileSolid.
         '#define BC_SPR_X0  24',
-        '#define BC_SPR_Y0  50',
-        ''
+        '#define BC_SPR_Y0  50'
       )
+    }
+    if (this.activeTileset || this.usesTileWorld || this.usesDrawText) {
+      header.push('')
     }
     // Sprites poke VIC registers directly (c64.h, already included). The marker
     // documents that the program drives sprites and is where sprite-asset baking
@@ -583,6 +596,43 @@ class Generator {
       )
     }
 
+    // Text output (DrawText / Color). The pen colour is a runtime global so Color sets
+    // it and every DrawText reads it; the default (white, mode-folded) keeps text visible
+    // even when the user never called Color.
+    const textDecls: string[] = []
+    if (this.usesPen) {
+      textDecls.push(
+        `/* pen colour for DrawText (Color sets it); ${this.gfxColor} text mode */`,
+        `static unsigned char bc_pen = ${this.penCellValue('COLOR_WHITE')};`
+      )
+    }
+    if (this.usesDrawText) {
+      // Write a string as C64 SCREEN CODES straight into Screen-RAM + Colour-RAM. conio's
+      // cputsxy is unusable here: it writes PETSCII, which on a custom charset indexes an
+      // empty slot and shows nothing (proven in VICE 2026-06-16). The bytes we receive are
+      // cc65's compile-time charmap output — uppercase letters are PETSCII *shifted* codes
+      // $C1–$DA (verified in VICE: "ABC…" stored as $C1 $C2 …). Conversion to screen code:
+      //   $C1–$DA (PETSCII A–Z) → 1–26;  $41–$5A (ASCII/lower-PETSCII) → 1–26;
+      //   '@' ($40/$C0) → 0;  $20–$3F (space, digits from Str$, punctuation) already equal
+      //   their screen code and pass through (Str$/utoa emits ASCII digits $30–$39).
+      textDecls.push(
+        '/* draw a string as C64 screen codes straight to Screen-RAM (see comment) */',
+        'static void bc_drawtext(unsigned char x, unsigned char y, const char* s, unsigned char pen) {',
+        '  unsigned int o = (unsigned int)y * 40 + x;',
+        '  unsigned char c;',
+        '  while ((c = (unsigned char)*s++) != 0) {',
+        '    if (c >= 0xC1 && c <= 0xDA) c -= 0xC0;',
+        '    else if (c >= 0x41 && c <= 0x5A) c -= 0x40;',
+        '    else if (c == 0x40 || c == 0xC0) c = 0;',
+        '    BC_SCREEN[o] = c;',
+        '    COLOR_RAM[o] = pen;',
+        '    ++o;',
+        '  }',
+        '}'
+      )
+    }
+    if (textDecls.length > 0) textDecls.push('')
+
     // One-time setup that must run at the very top of main, before the user's body
     // (e.g. installing the joystick driver). Kept apart from this.lines so it can't
     // be reordered by the user's code. Mirrors _preflight/game.c's joy_install.
@@ -604,6 +654,7 @@ class Generator {
       ...baked,
       ...tileWorld,
       ...strHelpers,
+      ...textDecls,
       ...globalDecls,
       ...funcs,
       'int main(void) {',
@@ -624,10 +675,10 @@ class Generator {
    *   - BC_DATA[]: the invisible data layer GetTile(…,1) reads. No editor paints it
    *     yet (the META-layer is a later milestone), so it's all-zero = "nothing
    *     beneath" — the latent-object pattern stays writable and compiles today.
-   *   - bc_tile_solid[]: default solidity (tile 0 passable, the rest solid) until a
-   *     per-tile solid attribute exists in the tileset editor.
-   *   - bc_tile_at / bc_tile_solid_at: the pixel→cell→tile(/solid) helpers, so
-   *     TileAt/TileSolid are plain C expressions.
+   *   - bc_row40[]: row → Screen-RAM offset (row*40) as a 25-entry table, so the
+   *     per-pixel hot path skips the 16-bit shift chain (STAHL S10).
+   *   - bc_tile_at: the pixel→cell→tile helper, so TileAt/TileSolid are plain C
+   *     expressions. TileSolid folds its `!= 0` in at the call site (no wrapper).
    */
   private tileWorldDecls(): string[] {
     const out: string[] = []
@@ -638,27 +689,24 @@ class Generator {
         ''
       )
     }
-    if (this.usesTileAt || this.usesTileSolid) {
+    if (this.usesTileAt) {
+      const row40 = Array.from({ length: 25 }, (_, r) => r * 40).join(', ')
       out.push(
+        '/* row → Screen-RAM offset (row*40); a table beats a per-pixel 16-bit shift chain */',
+        `static const unsigned int bc_row40[25] = { ${row40} };`,
         '/* pixel position → tile number at that cell (0 outside the field) */',
         'static unsigned char bc_tile_at(unsigned int px, unsigned char py) {',
-        '  unsigned char col, row;',
+        '  unsigned char col, row, ry;',
         '  if (px < BC_SPR_X0 || py < BC_SPR_Y0) return 0;',
         '  col = (unsigned char)((px - BC_SPR_X0) >> 3);',
-        '  row = (unsigned char)((py - BC_SPR_Y0) >> 3);',
+        // py is a byte and py >= BC_SPR_Y0 is guaranteed above, so keep the row math in
+        // 8 bits (byte local `ry`, compound `-=` cc65 reduces to an 8-bit sbc) instead of
+        // letting C promote it to a 16-bit subtract — the per-pixel hot path (STAHL S10).
+        '  ry = py;',
+        '  ry -= BC_SPR_Y0;',
+        '  row = ry >> 3;',
         '  if (col >= BC_SCR_W || row >= 25) return 0;',
-        // `row` is a local read repeatedly without side effects → strength-reduce the
-        // ×40 to shifts (the per-pixel collision hot path, see screenRowOffset).
-        `  return BC_SCREEN[${this.screenRowOffset('row', true)} + col];`,
-        '}',
-        ''
-      )
-    }
-    if (this.usesTileSolid) {
-      out.push(
-        '/* default solidity: tile 0 = empty/passable, every other tile = solid */',
-        'static unsigned char bc_tile_solid_at(unsigned int px, unsigned char py) {',
-        '  return bc_tile_at(px, py) != 0;',
+        '  return BC_SCREEN[bc_row40[row] + col];',
         '}',
         ''
       )
@@ -1079,12 +1127,30 @@ class Generator {
         this.emit(`bgcolor(${this.colorArg(a[0])});`)
         this.emit('clrscr();')
         break
+      case 'color':
+        // Color <c> → set the pen colour for following DrawText. conio's textcolor is
+        // unusable here (see bc_drawtext), so the pen is our own Color-RAM value: in
+        // MULTICOLOR text the cell needs bit 3 set and only 3 bits of colour (the "11"
+        // pixels); in HIRES the full nibble. Persistent state (bc_pen), set at runtime.
+        if (a.length >= 1) {
+          this.usesPen = true
+          this.emit(`bc_pen = ${this.penCellValue(this.colorArg(a[0]))};`)
+        } else {
+          this.err(this.M.colorArg(), s)
+          this.emit('/* Color: Farbe fehlt */')
+        }
+        break
       case 'drawtext':
-        // DrawText x, y, value → cputsxy(x, y, <text>). A string value (literal, $-var,
-        // Str$/Chr$ …) is drawn as-is; a NUMBER is run through Str$ first (S8.T1) so a
-        // score/lives count actually shows — cputsxy wants a char*, not an int.
+        // DrawText x, y, value → bc_drawtext writes C64 SCREEN CODES straight to Screen-
+        // RAM (conio's cputsxy writes PETSCII, which mis-indexes a custom charset — the
+        // letters land in empty slots and stay invisible; proven in VICE 2026-06-16). A
+        // string value passes through; a NUMBER is run through Str$ first (S8.T1).
         if (a.length >= 3) {
-          this.emit(`cputsxy(${this.expr(a[0])}, ${this.expr(a[1])}, ${this.textArg(a[2])});`)
+          this.usesDrawText = true
+          this.usesPen = true
+          this.emit(
+            `bc_drawtext(${this.expr(a[0])}, ${this.expr(a[1])}, ${this.textArg(a[2])}, bc_pen);`
+          )
         } else {
           this.err(this.M.drawTextArgs(), s)
           this.emit('/* DrawText: zu wenige Argumente */')
@@ -1143,11 +1209,19 @@ class Generator {
   }
 
   /** A value being drawn as text (S8.T1): a string expression passes through; anything
-   *  else is treated as a number and wrapped in Str$ (bc_str) so cputsxy gets a char*. */
+   *  else is treated as a number and wrapped in Str$ (bc_str) so bc_drawtext gets a char*. */
   private textArg(e: Expr): string {
     if (this.exprType(e) === 'string') return this.expr(e)
     this.usesStrConv = true
     return `bc_str(${this.expr(e)})`
+  }
+
+  /** A colour as the Color-RAM byte for the current text mode. In MULTICOLOR text a cell
+   *  is only drawn multicolor when bit 3 is set, and just the low 3 bits choose the "11"
+   *  pixel colour; in HIRES text the full nibble is the foreground. So the pen folds the
+   *  mode in here, once, where gfxColor is known. */
+  private penCellValue(colorExpr: string): string {
+    return this.gfxColor === 'MULTICOLOR' ? `((${colorExpr}) & 7) | 8` : `(${colorExpr})`
   }
 
   /** Report a missing argument for a string function (S8.T3) and yield a safe 0/"". */
@@ -1814,9 +1888,11 @@ class Generator {
           return '/* TileSolid: zu wenige Argumente */ 0'
         }
         this.usesTileWorld = true
-        this.usesTileSolid = true
-        this.usesTileAt = true // bc_tile_solid_at builds on bc_tile_at
-        return `bc_tile_solid_at(${this.expr(a[0])}, ${this.expr(a[1])})`
+        this.usesTileAt = true
+        // Solidity folds into a plain compare at the call site — no wrapper function, so
+        // TileSolid loses a whole cc65 call layer (STAHL S10). Default rule: tile 0 is
+        // passable, every other tile is solid.
+        return `(bc_tile_at(${this.expr(a[0])}, ${this.expr(a[1])}) != 0)`
       case 'abs':
         // Abs(n) → cc65's abs() (stdlib). The argument is cast to signed int so a
         // subtraction like Abs(a - b) reads as |a − b| even though BreadCraft values

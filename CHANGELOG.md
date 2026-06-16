@@ -7,6 +7,47 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Die Font-Linse: halt `G` gedrückt und sieh, wo die Buchstaben wohnen.** Sobald Du einen eigenen
+  Zeichensatz baust, teilen sich Schrift und Kacheln dieselben 256 Plätze — und `DrawText` zeigt einen
+  Buchstaben nur, wenn er an seinem angestammten Platz gemalt ist (das „A" auf Platz 1, das „B" auf 2 …).
+  Bisher musstest Du diese Plätze auswendig kennen. Jetzt blendet ein Druck auf `G` an genau diesen
+  Plätzen den jeweiligen Buchstaben als weißen Schemen ein — im Editor wie in der Zeichen-Übersicht,
+  **über** allem, was schon da ist. So malst Du Deine Schrift sicher an die richtige Stelle, und Du siehst
+  sofort, wenn Du versehentlich eine Kachel auf einen Buchstaben-Platz gesetzt hast: der Schemen schwebt
+  weiterhin darüber. Loslassen blendet ihn wieder aus — ein Blick zum Orientieren, keine Dauer-Einblendung.
+  Nur die echten Schrift-Plätze (Buchstaben, Ziffern, Satzzeichen) bekommen einen Schemen; die übrigen
+  bleiben freies Kachel-Land.
+- **`Color` — eine Stift-Farbe für `DrawText`.** Bisher hatte `DrawText` gar keine Farbe, die Du wählen
+  konntest; sie ergab sich aus dem Zufall darunter. Jetzt setzt `Color WHITE` (oder jede andere Farbe) den
+  Stift für alle folgenden `DrawText`. Im Multicolor-Textmodus kümmert sich BreadCraft selbst um die kleine
+  Hardware-Eigenheit (das „Multicolor-Bit" der Zelle), in HIRES nimmt es die volle Farbe — Du sagst einfach
+  „weiß", der Rest passiert unsichtbar.
+
+### Behoben
+- **`DrawText` zeigte mit eigenem Zeichensatz gar nichts — jetzt steht der Text da, wo er hingehört.** Wer
+  einen eigenen Zeichensatz baute (also jedes echte Spiel), sah von `DrawText "PUNKTE"` nichts: kein Buchstabe,
+  nirgends. Die Figur lief sogar gegen unsichtbare „Buchstaben-Wände". Grund: die alte Ausgabe schrieb die
+  Zeichen in einer Codierung ins Bild, die nicht zu den Plätzen passte, an denen Deine (und die ROM-)Buchstaben
+  wirklich liegen — sie landeten in leeren Kacheln. `DrawText` schreibt die Buchstaben jetzt direkt an die
+  richtigen Zeichensatz-Plätze (genau dort, wohin die Font-Linse zeigt). Auf dem echten C64 in VICE nachgewiesen:
+  der Text erscheint, sauber und an der gewollten Stelle.
+
+### Geändert
+- **`TileSolid`/`TileAt` sind im Laufen deutlich billiger geworden.** Die Frage „ist hier eine Wand?"
+  fällt in jedem Plattformer pro Pixel und mehrfach pro Figur an — sie liegt mitten im heißen Pfad. Bisher
+  kostete ein `TileSolid` rund 15 Unterprogramm-Sprünge: eine überflüssige zweite Funktionsschicht obendrauf,
+  die Zeilen-Rechnung lief versehentlich in 16 Bit, und `Zeile×40` wurde Schritt für Schritt geschoben.
+  Jetzt faltet `TileSolid` seinen „≠ 0"-Vergleich direkt an der Aufrufstelle ein (eine Schicht weniger), die
+  Zeile rechnet in 8 Bit, und `Zeile×40` kommt aus einer kleinen Tabelle (ein Zugriff statt einer Schiebekette).
+  Ergebnis am echten 6502-Assembler nachgemessen: rund **9 statt 15 Sprünge** je `TileSolid` — der natürliche
+  Kollisions-Weg, ohne dass Du zu einem `GetTile`-Trick greifen musst, damit es flüssig bleibt.
+- **Die PERF-Anzeige bewertet Kollisions-Abfragen jetzt ehrlich.** Bisher unterschätzte die Schätzung, was
+  `TileSolid`/`TileAt` wirklich kosten — sie übersah die versteckte zweite Aufrufschicht und die 16-Bit-
+  Pixelrechnung, sodass ein überladener Frame zu harmlos aussah. Jetzt tragen die Pixel-Abfragen ihr echtes
+  Gewicht (annähernd eine Multiplikation), und das billigere, inline arbeitende `GetTile` ist sichtbar
+  günstiger eingepreist — die Bar zeigt den Unterschied zwischen den beiden Wegen, statt ihn zu verwischen.
+
 ## [0.2.3] - 2026-06-14
 
 ### Hinzugefügt

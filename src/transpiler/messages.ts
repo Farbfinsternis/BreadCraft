@@ -74,6 +74,7 @@ export interface CodegenMessages {
   narrowWordReason(): string
   narrowSintReason(): string
   drawTextArgs(): string
+  colorArg(): string
   strArgs(): string
   stringFnArg(name: string): string
   stringFnDeferred(name: string): string
@@ -271,6 +272,7 @@ const DE_CODEGEN: CodegenMessages = {
     `ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl`,
   narrowSintReason: () => `ein .w-Wert über 32767 kippt im signed .i ins Negative`,
   drawTextArgs: () => `DrawText erwartet x, y, Ausdruck`,
+  colorArg: () => `Color erwartet eine Farbe, z. B. Color WHITE`,
   strArgs: () => `Str$ erwartet eine Zahl: Str$(n)`,
   stringFnArg: (name) => `${name} erwartet ein Argument`,
   stringFnDeferred: (name) =>
@@ -348,6 +350,7 @@ const EN_CODEGEN: CodegenMessages = {
     `a signed value (.i) becomes unsigned (.w) — a negative value turns into a large number`,
   narrowSintReason: () => `a .w value above 32767 flips negative in a signed .i`,
   drawTextArgs: () => `DrawText expects x, y, expression`,
+  colorArg: () => `Color expects a colour, e.g. Color WHITE`,
   strArgs: () => `Str$ expects a number: Str$(n)`,
   stringFnArg: (name) => `${name} expects one argument`,
   stringFnDeferred: (name) =>

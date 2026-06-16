@@ -89,7 +89,25 @@ describe('codegen: setup commands → conio', () => {
     expect(code).toContain('bordercolor(COLOR_BLACK);')
     expect(code).toContain('bgcolor(COLOR_BLUE);')
     expect(code).toContain('clrscr();')
-    expect(code).toContain('cputsxy(0, 0, "HI");')
+    // DrawText writes C64 screen codes straight to Screen-RAM (not conio cputsxy, which
+    // writes PETSCII and mis-indexes a custom charset — proven in VICE 2026-06-16).
+    expect(code).toContain('bc_drawtext(0, 0, "HI", bc_pen);')
+    expect(code).toContain('static void bc_drawtext(')
+    expect(code).not.toContain('cputsxy')
+  })
+
+  it('Color sets the pen; HIRES text uses the full nibble, MULTICOLOR sets bit 3', () => {
+    const hires = gen(['Graphics TEXT, HIRES', 'Color WHITE', 'DrawText 0, 0, "HI"'].join('\n'))
+    expect(hires.errors).toEqual([])
+    expect(hires.code).toContain('bc_pen = (COLOR_WHITE);')
+
+    const mc = gen(['Graphics TEXT, MULTICOLOR', 'Color YELLOW', 'DrawText 0, 0, "HI"'].join('\n'))
+    expect(mc.errors).toEqual([])
+    expect(mc.code).toContain('bc_pen = ((COLOR_YELLOW) & 7) | 8;')
+  })
+
+  it('Color without a colour fails honestly', () => {
+    expect(gen('Color').errors.some((e) => /Color erwartet/.test(e))).toBe(true)
   })
 })
 
@@ -484,21 +502,22 @@ describe('codegen: tile world (M3.T1) — SetTile/GetTile/TileAt/TileSolid', () 
     expect(code).toContain('t = bc_tile_at(120, 100);')
   })
 
-  it('TileSolid emits the solid helper (default table) and calls it', () => {
+  it('TileSolid folds its != 0 in at the call site — no wrapper function (STAHL S10)', () => {
     const { code, errors } = gen('blocked.b = TileSolid(120, 100)')
     expect(errors).toEqual([])
-    expect(code).toContain('static unsigned char bc_tile_solid_at(')
-    expect(code).toContain('return bc_tile_at(px, py) != 0;') // default: tile 0 passable
-    expect(code).toContain('blocked = bc_tile_solid_at(120, 100);')
+    expect(code).not.toContain('bc_tile_solid_at') // the extra call layer is gone
+    expect(code).toContain('blocked = (bc_tile_at(120, 100) != 0);') // default: tile 0 passable
   })
 
-  it('strength-reduces the ×40 in bc_tile_at to shifts (per-pixel collision hot path)', () => {
-    // 40 (the screen width) is not a power of two, so a literal row*40 is cc65's slow
-    // software multiply. The tile lookup runs once per pixel during movement, so it uses
-    // the shift/add chain (40 = 32 + 8 → (row<<5)+(row<<3)) like the 2D-array index does.
+  it('bc_tile_at uses the row*40 table, not a per-pixel shift chain (STAHL S10)', () => {
+    // 40 is not a power of two; even the shift/add chain is 16-bit work per pixel. The
+    // collision lookup runs once per pixel during movement, so it indexes a precomputed
+    // row→offset table (one load) instead.
     const { code } = gen('blocked.b = TileSolid(120, 100)')
-    expect(code).toContain('(((row) << 5) + ((row) << 3))')
+    expect(code).toContain('static const unsigned int bc_row40[25] = { 0, 40, 80,')
+    expect(code).toContain('return BC_SCREEN[bc_row40[row] + col];')
     expect(code).not.toContain('row * BC_SCR_W')
+    expect(code).not.toContain('(((row) << 5) + ((row) << 3))')
   })
 
   it('SetTile with a VARIABLE row strength-reduces the ×40 (a literal row stays folded)', () => {
@@ -598,7 +617,7 @@ describe('codegen: HUD strings (STAHL S8.T1) — Str$ + numeric DrawText', () =>
   it('DrawText of a number is run through Str$ so a score actually shows', () => {
     const { code, errors } = gen('Global score.w = 0\nDrawText 1, 1, score')
     expect(errors).toEqual([])
-    expect(code).toContain('cputsxy(1, 1, bc_str(score));')
+    expect(code).toContain('bc_drawtext(1, 1, bc_str(score), bc_pen);')
     // The helper + its header are emitted exactly when conversion is used.
     expect(code).toContain('#include <stdlib.h>')
     expect(code).toContain('static char bc_strbuf[6];')
@@ -607,7 +626,7 @@ describe('codegen: HUD strings (STAHL S8.T1) — Str$ + numeric DrawText', () =>
 
   it('DrawText of a string literal stays a plain string (no conversion)', () => {
     const { code } = gen('DrawText 0, 0, "GAME OVER"')
-    expect(code).toContain('cputsxy(0, 0, "GAME OVER");')
+    expect(code).toContain('bc_drawtext(0, 0, "GAME OVER", bc_pen);')
     expect(code).not.toContain('bc_str')
     expect(code).not.toContain('bc_strbuf')
   })
@@ -616,7 +635,7 @@ describe('codegen: HUD strings (STAHL S8.T1) — Str$ + numeric DrawText', () =>
     const { code, errors } = gen('Global lives.b = 3\nDrawText 5, 0, Str$(lives)')
     expect(errors).toEqual([])
     // Already a string → DrawText does not double-wrap it.
-    expect(code).toContain('cputsxy(5, 0, bc_str(lives));')
+    expect(code).toContain('bc_drawtext(5, 0, bc_str(lives), bc_pen);')
   })
 
   it('no string helper is emitted when nothing converts', () => {
@@ -670,7 +689,7 @@ describe('codegen: string buffers (STAHL S8.T2) — sizing, assignment, concaten
 
   it('DrawText of a string variable passes it straight through (no conversion)', () => {
     const { code } = gen(['name$ = "Bob"', 'DrawText 0, 0, name$'].join('\n'))
-    expect(code).toContain('cputsxy(0, 0, name);')
+    expect(code).toContain('bc_drawtext(0, 0, name, bc_pen);')
   })
 
   it('self-append (s$ = s$ + x) skips the no-op self-copy and just appends', () => {
@@ -717,7 +736,7 @@ describe('codegen: string functions (STAHL S8.T3) — Int/Len/Asc/Chr$ real, res
     const { code, errors } = gen('DrawText 0, 0, Chr$(65)')
     expect(errors).toEqual([])
     expect(code).toContain('static char* bc_chr(unsigned char c)')
-    expect(code).toContain('cputsxy(0, 0, bc_chr(65));')
+    expect(code).toContain('bc_drawtext(0, 0, bc_chr(65), bc_pen);')
   })
 
   it('Left$/Right$/Mid$/Find are recognized but stubbed honestly (not a generic gap)', () => {

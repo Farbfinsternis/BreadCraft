@@ -43,6 +43,18 @@ describe('perf estimate (a guess from the code)', () => {
     expect(withCall.cyclesPerFrame).toBeGreaterThan(bare.cyclesPerFrame)
   })
 
+  it('TileSolid/TileAt (pixel→cell + hidden helper call) cost more than the inline GetTile (STAHL S10/F4)', () => {
+    const solid = perf('Global p.w = 100\nWhile 1\n  VWait\n  b.b = TileSolid(p, 80)\nWend')!
+    const at = perf('Global p.w = 100\nWhile 1\n  VWait\n  t.b = TileAt(p, 80)\nWend')!
+    const get = perf('Global c.b = 5\nWhile 1\n  VWait\n  g.b = GetTile(c, 10)\nWend')!
+    // The pixel helpers carry a 16-bit lookup + a hidden bc_tile_at call; GetTile is a
+    // plain Screen-RAM index. The estimate must reflect that the workaround is cheaper.
+    expect(get.cyclesPerFrame).toBeLessThan(at.cyclesPerFrame)
+    expect(get.cyclesPerFrame).toBeLessThan(solid.cyclesPerFrame)
+    // After F1 the solid wrapper is gone, so the two pixel helpers sit close together.
+    expect(solid.cyclesPerFrame).toBeGreaterThanOrEqual(at.cyclesPerFrame)
+  })
+
   it('flags an over-budget frame (state "over") when the work is huge', () => {
     const p = perf(
       ['Global x.w = 0', 'Global a.w = 7', 'While 1', '  VWait', '  For i = 0 To 200', '    x = a * a * a', '  Next', 'Wend'].join('\n')

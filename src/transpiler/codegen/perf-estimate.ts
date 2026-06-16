@@ -26,9 +26,15 @@ const COST = {
   ctrl: 6 // a branch / loop test
 }
 
-// Rough cost of each built-in's body — the part the user can't see. Kept in step with
-// codegen by hand. TileSolid/TileAt carry the pixel→cell→tile lookup, so they're the
-// pricey reads; setup commands (Graphics/UseTileset…) cost ~nothing per frame.
+// Rough cost of each built-in's body — the part the user can't see (ON TOP of the one
+// COST.call the model already adds per call). Kept in step with codegen by hand.
+// TileSolid/TileAt carry the pixel→cell→tile lookup AND a hidden second cc65 call to
+// bc_tile_at that the model's single COST.call doesn't see — so their body must carry
+// that extra call layer plus the 16-bit pixel math (STAHL S10: re-levelled against the
+// measured .s — ~8–9 jsr each, the priciest per-frame reads, near a software multiply).
+// After S10's F1 the solid wrapper is gone, so tilesolid ≈ tileat (just a `!= 0` more).
+// GetTile is an inline Screen-RAM index (no call, no 16-bit px) — genuinely the cheaper
+// path, which is why it worked as a hand workaround. Setup commands cost ~0 per frame.
 const BUILTIN: Record<string, number> = {
   vwait: 0,
   sprite: 50,
@@ -43,9 +49,9 @@ const BUILTIN: Record<string, number> = {
   drawtext: 60,
   settile: 60,
   joystick: 30,
-  tilesolid: 80,
-  tileat: 75,
-  gettile: 45,
+  tilesolid: 120, // hidden bc_tile_at call + 16-bit pixel→cell + bounds + the `!= 0`
+  tileat: 115, // same minus the `!= 0`
+  gettile: 30, // inline Screen-RAM index — no call, no 16-bit px
   min: 25,
   max: 25,
   abs: 14

@@ -10,6 +10,8 @@ import PixelCanvas from '../components/PixelCanvas.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
 import { charPixelHexes } from '../pixel-engine/charsetRender'
 import type { PixelIndex, ToolId } from '../pixel-engine'
+import { charForSlot } from '@shared/font-slots'
+import { romGlyphBits } from '@shared/c64-rom-font'
 
 const { t } = useI18n()
 
@@ -122,15 +124,55 @@ function saveAs(): void {
 
 const usedCount = computed(() => charset.usedCount())
 
+// ---- Font-Linse (S9.T3): hold G to peek the letter ghosts ----
+// The ghost shows where each PETSCII letter NATIVELY lives, drawn on top so a tile
+// sitting on a letter slot stays visible. It's a momentary peek (hold G), never a
+// persistent mode — so it only ever appears on purpose. Only "named" slots get a
+// ghost (charForSlot != null: @, A–Z, space, digits, punctuation); the anonymous
+// graphics slots stay free tile territory.
+const ghostPeek = ref(false)
+
+/** The 8×8 ghost bits for a slot, or null if it isn't a font (named) slot. */
+function ghostFor(slot: number): boolean[] | null {
+  return charForSlot(slot) === null ? null : romGlyphBits(slot)
+}
+/** The selected character's ghost, only while G is held. */
+const editGhost = computed(() => (ghostPeek.value ? ghostFor(selectedChar.value) : null))
+
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const el = e.target as HTMLElement | null
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+}
+
 // Ctrl/Cmd+S saves the charset (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void charset.save()
+    return
+  }
+  if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey && !e.altKey && !isTypingTarget(e)) {
+    ghostPeek.value = true
   }
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+function onKeyup(e: KeyboardEvent): void {
+  if (e.key.toLowerCase() === 'g') ghostPeek.value = false
+}
+// Stuck-key guard: if focus leaves the window while G is held, the keyup never
+// arrives — drop the ghost so it can't stick on.
+function onBlur(): void {
+  ghostPeek.value = false
+}
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
+  window.addEventListener('blur', onBlur)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keyup', onKeyup)
+  window.removeEventListener('blur', onBlur)
+})
 </script>
 
 <template>
@@ -205,6 +247,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 :style="{ background: hex }"
               />
             </span>
+            <!-- Font-Linse ghost (S9.T3): letter shape on top, visible while G held. -->
+            <span v-if="ghostPeek && ghostFor(c)" class="pt-nav-ghost" aria-hidden="true">
+              <i
+                v-for="(on, gi) in ghostFor(c) || []"
+                :key="gi"
+                :class="{ 'is-on': on }"
+              />
+            </span>
           </button>
         </div>
       </FloatPanel>
@@ -223,6 +273,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             :tool="activeTool"
             :left-index="leftIndex"
             :right-index="rightIndex"
+            :ghost="editGhost"
             @update="onCanvasUpdate"
             @history="onHistory"
           />
@@ -457,6 +508,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 .pt-nav-mini i {
   display: block;
+}
+/* Font-Linse ghost over a navigator cell: the letter shape in white at 30% opacity,
+   ON TOP of whatever is painted (z above the mini-preview) so a tile clobbering a
+   letter slot is obvious. Only present while G is held. */
+.pt-nav-ghost {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  pointer-events: none;
+}
+.pt-nav-ghost i.is-on {
+  background: rgba(255, 255, 255, 0.3);
 }
 .pt-nav-cell:hover {
   box-shadow: 0 0 0 1px var(--bc-arc-300);

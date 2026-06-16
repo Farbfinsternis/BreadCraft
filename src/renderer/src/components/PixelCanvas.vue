@@ -27,6 +27,11 @@ const props = defineProps<{
   leftIndex: PixelIndex
   /** Index painted with the right mouse button (DPaint: usually background). */
   rightIndex: PixelIndex
+  /** Font-Linse ghost (S9.T3): 64 row-major booleans (8×8) drawn as a white wash
+   *  ON TOP of the paint grid, never occluded — so a tile sitting on a letter slot
+   *  is visible. null/undefined = no ghost. Always 8×8 (the glyph's hi-res shape),
+   *  independent of the paint grid's width (4 in MC, 8 in hi-res). */
+  ghost?: ReadonlyArray<boolean> | null
 }>()
 
 const emit = defineEmits<{
@@ -205,11 +210,16 @@ function sameCells(a: Uint8Array, b: Uint8Array): boolean {
           : { background: palette[idx] ?? palette[0] }
       "
     />
+    <!-- Font-Linse ghost overlay (S9.T3): 8×8 white wash on top, never occluded. -->
+    <div v-if="ghost" class="pc-ghost" aria-hidden="true">
+      <i v-for="(on, gi) in ghost" :key="gi" :class="{ 'is-on': on }" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .pixel-canvas {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(var(--cols), 1fr);
   gap: 1px;
@@ -222,6 +232,20 @@ function sameCells(a: Uint8Array, b: Uint8Array): boolean {
   cursor: crosshair;
   touch-action: none;
   user-select: none;
+}
+/* Ghost overlay: an 8×8 grid filling the same inner area as the paint grid (inset by
+   the 4px padding), drawn ON TOP. Filled glyph pixels are white at 30% opacity (the
+   user-chosen style); never blocks pointer events. */
+.pc-ghost {
+  position: absolute;
+  inset: 4px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  pointer-events: none;
+}
+.pc-ghost i.is-on {
+  background: rgba(255, 255, 255, 0.3);
 }
 .pc-px {
   /* The aspect carrier: square in hi-res, double-wide in multicolor. */

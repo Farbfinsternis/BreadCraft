@@ -735,6 +735,25 @@
       ]
     },
     {
+      "id": "cmd-color",
+      "name": "Color",
+      "kind": "command",
+      "category": "graphics-setup",
+      "i18nKey": "cmd.color",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "$note": "Stift-Farbe für folgende DrawText (später Line/Rect). Schreibt in die Color-RAM. Im MULTICOLOR-Textmodus setzt der Codegen Bit 3 (MC-Zelle) und nimmt nur die unteren 3 Bit als 11-Pixel-Farbe; in HIRES die volle Farbe. Persistenter Stift-Zustand (bc_pen), nicht pro DrawText.",
+      "params": [
+        {
+          "name": "farbe",
+          "type": "Color",
+          "i18nKey": "param.color.color"
+        }
+      ]
+    },
+    {
       "id": "cmd-usesprite",
       "name": "UseSprite",
       "kind": "command",
