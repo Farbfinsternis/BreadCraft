@@ -1,4 +1,4 @@
-import type { NewProjectRequest, ModeChoice } from '@renderer/stores/ui'
+import type { NewProjectRequest, ModeChoice, RegionChoice } from '@renderer/stores/ui'
 
 type T = (key: string) => string
 
@@ -30,12 +30,28 @@ export function buildNewProjectRequest(t: T): NewProjectRequest {
       disabled: true
     }
   ]
+  // Target region (STAHL S5c) — both real choices, PAL first (the default). Picks the
+  // PERF budget AND the region VICE boots, so it's a conscious choice, not a silent 50 Hz.
+  const regions: RegionChoice[] = [
+    {
+      value: 'PAL',
+      label: t('newproject.region.pal'),
+      hint: t('newproject.region.pal.hint')
+    },
+    {
+      value: 'NTSC',
+      label: t('newproject.region.ntsc'),
+      hint: t('newproject.region.ntsc.hint')
+    }
+  ]
   return {
     title: t('newproject.title'),
     nameLabel: t('newproject.nameLabel'),
     namePlaceholder: t('newproject.namePlaceholder'),
     modeLabel: t('newproject.modeLabel'),
     modes,
+    regionLabel: t('newproject.regionLabel'),
+    regions,
     boilerplateLabel: t('newproject.boilerplate'),
     confirmLabel: t('newproject.confirm')
   }

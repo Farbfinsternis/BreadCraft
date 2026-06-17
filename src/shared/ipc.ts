@@ -109,6 +109,15 @@ export type GraphicsMode = 'TEXT_HIRES' | 'TEXT_MULTICOLOR' | 'BITMAP_MULTICOLOR
 /** Default mode for projects with no stored `graphicsMode` (old files) + temp projects. */
 export const DEFAULT_GRAPHICS_MODE: GraphicsMode = 'TEXT_MULTICOLOR'
 
+/** The C64 video standard the project targets (STAHL S5c). PAL (Europe, 50 Hz) and NTSC
+ *  (US/Japan, 60 Hz) differ in frame rate AND per-frame cycle budget — NTSC's is smaller,
+ *  so a game that just fits on PAL can overrun on NTSC. Chosen consciously, never silent. */
+export type Region = 'PAL' | 'NTSC'
+
+/** Default region for projects with no stored `region` (old files) + temp projects.
+ *  PAL: the European retro scene's default and the historical BreadCraft assumption. */
+export const DEFAULT_REGION: Region = 'PAL'
+
 /** The `.bread` asset manifest (paths relative to the project dir). */
 export interface BreadAssets {
   palette: string | null
@@ -135,6 +144,8 @@ export interface OpenedProject {
   temporary: boolean
   /** Project-wide graphics mode (root SSOT, IDE.md §2.1); drives editors + transpiler. */
   graphicsMode: GraphicsMode
+  /** Target video standard (STAHL S5c); drives the PERF budget + the VICE launch region. */
+  region: Region
   /** Asset manifest of the project (palette/charsets/tilemaps), for the editors. */
   assets: BreadAssets
 }
@@ -178,6 +189,9 @@ export interface PerfInfo {
   fraction: number
   /** 'ok' (room), 'warn' (getting tight), 'over' (would overrun → 25fps). */
   state: 'ok' | 'warn' | 'over'
+  /** Which video standard the budget is measured against (STAHL S5c) — so the bar can
+   *  say "of PAL" / "of NTSC" and the number is never silently one region. */
+  region: Region
 }
 
 /** Result of a Build & Run: which stage reached, logs, and what to show. */

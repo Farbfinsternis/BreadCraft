@@ -17,6 +17,11 @@
   "newproject.comingLater": "(coming later)",
   "newproject.boilerplate": "Add a starter scaffold to main.crumb (setup + frame loop)",
   "newproject.confirm": "Create project",
+  "newproject.regionLabel": "Region (sets the pace and the frame budget):",
+  "newproject.region.pal": "PAL — Europe, 50 Hz",
+  "newproject.region.pal.hint": "A touch more room per frame. The European default, and where most of the retro scene lives.",
+  "newproject.region.ntsc": "NTSC — US / Japan, 60 Hz",
+  "newproject.region.ntsc.hint": "Faster, but a tighter frame budget — a game that just fits on PAL can overrun here.",
 
   "toolbar.newProject": "New project",
   "toolbar.newFile": "New file",
@@ -219,7 +224,10 @@
 
   "health.ram.meta": "no build yet · cc65 map provides the value",
   "health.perf.meta": "no build yet · rough estimate from the code",
-  "health.perf.estimate": "~{cycles} cycles/frame of {budget} · estimated",
+  "health.perf.estimate": "~{cycles} cycles/frame of {budget} ({region}) · estimated",
   "health.perf.full": "FRAME FULL",
-  "health.perf.fullHint": "your logic doesn't fit in one frame → VWait silently halves it to 25 fps"
+  "health.perf.fullHint": "your logic doesn't fit in one frame → VWait silently halves it to 25 fps",
+
+  "intellisense.planned": "⏳ planned",
+  "intellisense.plannedDoc": "This word already belongs to the language, but its C64 code isn't wired up yet. Reach for it today and the build hands you an honest \"comes later\" — not a mystery."
 }

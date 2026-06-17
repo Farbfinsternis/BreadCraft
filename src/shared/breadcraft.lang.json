@@ -609,7 +609,7 @@
       "kind": "command",
       "category": "flow",
       "i18nKey": "cmd.restore",
-      "since": "phase1",
+      "since": "later",
       "proven": true,
       "frameSafe": true,
       "$note": "Data-Lesezeiger zurücksetzen.",
@@ -663,7 +663,7 @@
       "kind": "keyword",
       "category": "declaration",
       "i18nKey": "kw.include",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "cost": "free",
       "$note": "Preprocessor-Text-Include (nur .crumb-Quellcode, kein Asset). 0 Runtime-Kosten."
@@ -804,7 +804,7 @@
       "i18nKey": "cmd.useimage",
       "frameSafe": false,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "params": [
         {
@@ -843,7 +843,7 @@
       "i18nKey": "cmd.drawimage",
       "frameSafe": false,
       "cost": "expensive",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "requiresMode": "BITMAP,MULTICOLOR",
       "params": [
@@ -930,7 +930,7 @@
       "i18nKey": "cmd.setmetatile",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": true,
       "requiresMode": "TEXT",
       "transpile": "Compile-Zeit aus .bread aufgelöst: rollt für ein N×M-MetaTile N·M Poke-Paare aus (Screen-RAM + Color-RAM je Zelle). KEINE Laufzeit-Größenerkennung — die MetaTile-Geometrie ist beim Transpilieren bekannt. 1×1-MetaTile = 1 Zelle (identisch zu SetTile). Referenz: _preflight/sokoban_meta.c (set_metatile schreibt alle 4 Zellen; in VICE statisch verifiziert, mon_check_meta.py).",
@@ -998,7 +998,7 @@
       "i18nKey": "fn.getmetatile",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": true,
       "returns": {
         "type": "$",
@@ -1135,7 +1135,7 @@
       "i18nKey": "fn.spritehit",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": true,
       "returns": {
         "type": ".b",
@@ -1246,8 +1246,8 @@
       "i18nKey": "fn.keydown",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
-      "proven": true,
+      "since": "later",
+      "proven": false,
       "returns": {
         "type": ".b",
         "i18nKey": "fn.keydown.returns"
@@ -1269,8 +1269,8 @@
       "i18nKey": "fn.keyhit",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
-      "proven": true,
+      "since": "later",
+      "proven": false,
       "returns": {
         "type": ".b",
         "i18nKey": "fn.keyhit.returns"
@@ -1387,7 +1387,7 @@
       "i18nKey": "fn.random",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "returns": {
         "type": ".w",
@@ -1436,7 +1436,7 @@
       "i18nKey": "fn.left",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "returns": {
         "type": "$",
@@ -1463,7 +1463,7 @@
       "i18nKey": "fn.right",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "returns": {
         "type": "$",
@@ -1490,7 +1490,7 @@
       "i18nKey": "fn.mid",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "returns": {
         "type": "$",
@@ -1522,7 +1522,7 @@
       "i18nKey": "fn.find",
       "frameSafe": true,
       "cost": "medium",
-      "since": "phase1",
+      "since": "later",
       "proven": false,
       "returns": {
         "type": ".b",
@@ -1678,7 +1678,7 @@
       "i18nKey": "cmd.end",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "phase1",
+      "since": "later",
       "proven": true,
       "transpile": "game_cleanup: IRQ/Modus zurück → BASIC"
     }

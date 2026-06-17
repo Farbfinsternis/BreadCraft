@@ -18,7 +18,10 @@ export function buildVocabulary(data: Ssot): VocabItem[] {
       kind: entry.kind,
       category: entry.category,
       params: entry.params ?? undefined,
-      lookupKeys: [entry.name, ...aliases].map((k) => k.toLowerCase())
+      lookupKeys: [entry.name, ...aliases].map((k) => k.toLowerCase()),
+      // since: 'later' = recognized but not yet buildable (codegen throws). The editor
+      // still knows the word (lexing/casing) but flags it "planned" (STAHL S5a).
+      ...(entry.since === 'later' ? { planned: true } : {})
     })
   }
 

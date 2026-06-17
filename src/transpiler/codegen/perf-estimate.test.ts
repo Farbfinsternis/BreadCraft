@@ -63,3 +63,27 @@ describe('perf estimate (a guess from the code)', () => {
     expect(p.state).toBe('over')
   })
 })
+
+describe('region picks the frame budget (STAHL S5c)', () => {
+  const frame = 'While 1\n  VWait\nWend'
+
+  it('defaults to PAL when no region is given', () => {
+    expect(compile(frame, vocab).perf!.region).toBe('PAL')
+  })
+
+  it('reports the chosen region and gives NTSC a tighter budget than PAL', () => {
+    const pal = compile(frame, vocab, undefined, undefined, 'PAL').perf!
+    const ntsc = compile(frame, vocab, undefined, undefined, 'NTSC').perf!
+    expect(pal.region).toBe('PAL')
+    expect(ntsc.region).toBe('NTSC')
+    // NTSC's frame is shorter → less budget → the SAME work is a bigger fraction of it.
+    expect(ntsc.budgetCycles).toBeLessThan(pal.budgetCycles)
+  })
+
+  it('the same frame fills more of NTSC than of PAL (the honest reach signal)', () => {
+    const work = ['Global x.w = 0', 'Global a.w = 7', 'While 1', '  VWait', '  For i = 0 To 40', '    x = a * a', '  Next', 'Wend'].join('\n')
+    const pal = compile(work, vocab, undefined, undefined, 'PAL').perf!
+    const ntsc = compile(work, vocab, undefined, undefined, 'NTSC').perf!
+    expect(ntsc.fraction).toBeGreaterThan(pal.fraction)
+  })
+})

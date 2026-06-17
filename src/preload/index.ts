@@ -5,6 +5,7 @@ import type {
   BreadAssets,
   BuildResult,
   GraphicsMode,
+  Region,
   Locale,
   OpenedProject,
   ProjectFile,
@@ -21,6 +22,7 @@ export type {
   BreadAssets,
   BuildResult,
   GraphicsMode,
+  Region,
   Locale,
   OpenedProject,
   ProjectFile,
@@ -49,9 +51,10 @@ const api = {
     create: (
       name: string,
       graphicsMode: GraphicsMode,
-      withBoilerplate: boolean
+      withBoilerplate: boolean,
+      region: Region
     ): Promise<OpenedProject> =>
-      ipcRenderer.invoke('project:create', name, graphicsMode, withBoilerplate),
+      ipcRenderer.invoke('project:create', name, graphicsMode, withBoilerplate, region),
     open: (breadPath: string): Promise<OpenedProject> =>
       ipcRenderer.invoke('project:open', breadPath),
     openDialog: (): Promise<OpenedProject | null> =>

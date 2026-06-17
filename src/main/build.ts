@@ -10,7 +10,7 @@ import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
 import { resolveLanguage } from './config'
 import { buildMessages } from './build-messages'
-import { listAssets, readAsset } from './project'
+import { listAssets, readAsset, projectRegion } from './project'
 import type { BuildLogLine, BuildResult } from '../shared/ipc'
 
 // Build & Run: the last mile. Compiles the given .crumb source to C, invokes the
@@ -59,7 +59,16 @@ export async function buildAndRun(
     manifest: listAssets(projectDir),
     readFile: (rel: string) => readAsset(projectDir, rel)
   }
-  const { code, errors, linkerConfig, mainCeiling, perf } = compile(source, vocabulary, assets, locale)
+  // The project's target region (STAHL S5c) picks the PERF budget the estimate measures
+  // against AND the region VICE boots — read from the .bread, never silently PAL.
+  const region = projectRegion(projectDir)
+  const { code, errors, linkerConfig, mainCeiling, perf } = compile(
+    source,
+    vocabulary,
+    assets,
+    locale,
+    region
+  )
   // The per-frame cost estimate is valid as soon as the code parsed — feed it to the
   // PERF health-bar on every outcome where we actually compiled something.
   const perfInfo = perf ?? undefined
@@ -130,9 +139,12 @@ export async function buildAndRun(
     return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram, perf: perfInfo }
   }
 
+  // Boot VICE in the project's region (STAHL S5c) — `-pal`/`-ntsc` so what the user sees
+  // running matches the standard the PERF budget was measured against, not VICE's own default.
+  const regionFlag = region === 'NTSC' ? '-ntsc' : '-pal'
   add('cmd', M.startingVice(vicePath, prgPath))
   try {
-    const child = spawn(vicePath, [prgPath], { detached: true, stdio: 'ignore' })
+    const child = spawn(vicePath, [regionFlag, prgPath], { detached: true, stdio: 'ignore' })
     child.unref()
     add('ok', M.viceStarted)
     return { ok: true, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }

@@ -1,5 +1,6 @@
 import type { VocabItem } from '@shared/ssot-types'
-import type { PerfInfo, Locale } from '@shared/ipc'
+import type { PerfInfo, Locale, Region } from '@shared/ipc'
+import { DEFAULT_REGION } from '@shared/ipc'
 import { tokenize } from './lexer'
 import { parse } from './parser'
 import { generate } from './codegen'
@@ -47,7 +48,8 @@ export function compile(
   source: string,
   vocabulary: VocabItem[],
   assets?: AssetContext,
-  locale: Locale = DEFAULT_LOCALE
+  locale: Locale = DEFAULT_LOCALE,
+  region: Region = DEFAULT_REGION
 ): CompileResult {
   const tokens = tokenize(source, vocabulary, locale)
   const { program, errors: parseErrors } = parse(tokens, vocabulary, locale)
@@ -57,7 +59,7 @@ export function compile(
     ...parseErrors.map((e) => ({ stage: 'parse' as const, severity: 'error' as const, ...e })),
     ...codegenErrors.map((e) => ({ stage: 'codegen' as const, ...e }))
   ]
-  return { code, errors, linkerConfig, mainCeiling, perf: estimateFramePerf(program) }
+  return { code, errors, linkerConfig, mainCeiling, perf: estimateFramePerf(program, region) }
 }
 
 export { tokenize } from './lexer'

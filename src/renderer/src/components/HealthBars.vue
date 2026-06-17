@@ -73,7 +73,7 @@ const perfFillClass = computed(() => {
           <template v-if="perfOver">
             <strong>{{ t('health.perf.full') }}</strong> — {{ t('health.perf.fullHint') }}
           </template>
-          <template v-else-if="perf">{{ t('health.perf.estimate', { cycles: perf.cyclesPerFrame, budget: perf.budgetCycles }) }}</template>
+          <template v-else-if="perf">{{ t('health.perf.estimate', { cycles: perf.cyclesPerFrame, budget: perf.budgetCycles, region: perf.region }) }}</template>
           <template v-else>{{ t('health.perf.meta') }}</template>
         </div>
       </div>

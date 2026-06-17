@@ -34,7 +34,8 @@ async function newProject(): Promise<void> {
   const opened = await window.breadcraft.project.create(
     choice.name,
     choice.graphicsMode,
-    choice.withBoilerplate
+    choice.withBoilerplate,
+    choice.region
   )
   project.load(opened)
   router.push({ name: 'code' })

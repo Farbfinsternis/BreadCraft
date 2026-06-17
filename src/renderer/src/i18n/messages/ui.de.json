@@ -17,6 +17,11 @@
   "newproject.comingLater": "(kommt später)",
   "newproject.boilerplate": "Startgerüst in main.crumb anlegen (Setup + Frame-Schleife)",
   "newproject.confirm": "Projekt anlegen",
+  "newproject.regionLabel": "Region (legt Tempo und Frame-Budget fest):",
+  "newproject.region.pal": "PAL — Europa, 50 Hz",
+  "newproject.region.pal.hint": "Eine Spur mehr Luft pro Frame. Der europäische Standard — und wo die meiste Retro-Szene zu Hause ist.",
+  "newproject.region.ntsc": "NTSC — USA / Japan, 60 Hz",
+  "newproject.region.ntsc.hint": "Schneller, aber knapperes Frame-Budget — was auf PAL gerade passt, kann hier überlaufen.",
 
   "toolbar.newProject": "Neues Projekt",
   "toolbar.newFile": "Neue Datei",
@@ -219,7 +224,10 @@
 
   "health.ram.meta": "noch kein Build · cc65-Map liefert den Wert",
   "health.perf.meta": "noch kein Build · grobe Schätzung aus dem Code",
-  "health.perf.estimate": "~{cycles} Takte/Frame von {budget} · geschätzt",
+  "health.perf.estimate": "~{cycles} Takte/Frame von {budget} ({region}) · geschätzt",
   "health.perf.full": "FRAME VOLL",
-  "health.perf.fullHint": "deine Logik passt nicht in ein Frame → VWait halbiert still auf 25 fps"
+  "health.perf.fullHint": "deine Logik passt nicht in ein Frame → VWait halbiert still auf 25 fps",
+
+  "intellisense.planned": "⏳ geplant",
+  "intellisense.plannedDoc": "Dieses Wort gehört schon zur Sprache, aber sein C64-Code ist noch nicht verdrahtet. Greifst du heute danach, gibt dir der Build ein ehrliches „kommt später\" — kein Rätsel."
 }

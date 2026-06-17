@@ -64,12 +64,21 @@ you paint here is what runs on the C64.*
   per-cell multicolor colour — and bring it on screen from `.crumb`
   (`UseTileset`, `DrawMap`, `SetTile`), then read it back at runtime
   (`GetTile`, `TileAt`, `TileSolid`). What you paint in the editor is what runs
-  on the C64.
+  on the C64. Solidity is a property you mark on the tile itself in the editor
+  (it travels with the charset), so collision is about *what a tile is*, not
+  about whatever happens to be on the screen.
 - **Sprites:** define a sprite, place it, show/hide it (`UseSprite`, `Sprite`,
   `ShowSprite` / `HideSprite`). The fiddly hardware bits (the 9th X bit, the
   shared colour registers) are handled for you.
+- **On-screen text and a HUD:** draw text (`DrawText`) in a chosen pen colour
+  (`Color`), turn a number into text (`Str$`) and build small strings — enough
+  for a score, lives, or a "GAME OVER". (Richer string surgery — `Mid$`,
+  `Left$`, … — is honestly deferred, not silently broken.)
 - **Joystick input** (`Joystick`).
-- **Graphics-mode setup** (`Graphics TEXT, MULTICOLOR`) and frame sync (`VWait`).
+- **Graphics-mode setup** (`Graphics TEXT, MULTICOLOR`), frame sync (`VWait`),
+  and a **PAL / NTSC choice** per project — it sets both the per-frame budget the
+  health bar measures against and the region the emulator boots in, instead of
+  silently assuming 50 Hz.
 - **Editors**, sharing one drawing engine: a project palette, a PETSCII/charset
   editor, a tilemap editor, and a sprite editor. Assets live on disk as
   `.petscii` / `.tilemap` / `.palette` / `.sprite`, referenced from the `.bread`
@@ -118,10 +127,10 @@ state; *Platin* is the far end, where only polish is left to do.
 The stage BreadCraft stands on today:
 
 <p align="center">
-  <img src="EISEN.png" alt="Eisen — current stage" width="200">
+  <img src="STAHL.png" alt="Stahl — current stage" width="200">
 </p>
 
-<p align="center"><i>Eisen — raw, but load-bearing.</i></p>
+<p align="center"><i>Stahl — tempered: the hardware reality underneath now bears a growing game.</i></p>
 
 ## Building it
 

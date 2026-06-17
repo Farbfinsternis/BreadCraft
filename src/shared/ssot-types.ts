@@ -72,4 +72,9 @@ export interface VocabItem {
   /** Lowercased name + aliases, for case-insensitive lookup. */
   lookupKeys: string[]
   params?: SsotParam[]
+  /** SSOT `since: 'later'` → the word is a recognized part of the language but its
+   *  codegen still throws an honest "no C-mapping / comes later" error (STAHL S5a).
+   *  IntelliSense offers these visibly tagged as "planned", not as ready. Kept honest
+   *  by an audit test against the codegen (vocabulary.planned.test.ts). */
+  planned?: boolean
 }

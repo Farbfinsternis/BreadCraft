@@ -1,6 +1,7 @@
 import * as monaco from 'monaco-editor'
 import { CRUMB_LANGUAGE_ID } from './crumb'
 import { shouldCanonicalize } from './autoCase'
+import { t } from '@renderer/i18n'
 import type { EntryKind, VocabItem } from '@renderer/language/ssot'
 
 function completionKind(kind: EntryKind): monaco.languages.CompletionItemKind {
@@ -64,12 +65,22 @@ export function registerIntellisense(
             insertText = `${item.name} `
           }
 
+          // Planned words (SSOT since:'later', STAHL S5a) are recognized but their
+          // codegen still throws an honest "comes later" error. Offer them visibly
+          // tagged "planned" and sorted below the ready words, so the user sees the
+          // word exists and is coming — never silently as ready.
+          const baseDetail = item.category ? `${item.kind} · ${item.category}` : item.kind
+          const detail = item.planned ? `${baseDetail} · ${t('intellisense.planned')}` : baseDetail
+
           return {
             label: item.name,
             kind: completionKind(item.kind),
             insertText,
             insertTextRules: insertRules,
-            detail: item.category ? `${item.kind} · ${item.category}` : item.kind,
+            detail,
+            documentation: item.planned ? t('intellisense.plannedDoc') : undefined,
+            // sortText prefix keeps ready words first (alphabetical within each group).
+            sortText: `${item.planned ? '1' : '0'}${item.name}`,
             range
           }
         })

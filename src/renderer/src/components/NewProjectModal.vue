@@ -2,7 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUiStore } from '@renderer/stores/ui'
-import type { GraphicsMode } from '@shared/ipc'
+import type { GraphicsMode, Region } from '@shared/ipc'
 
 /**
  * The New-Project dialog (M1.T6): name + graphics-mode choice + boilerplate toggle.
@@ -18,10 +18,12 @@ const ui = useUiStore()
 
 const name = ref('')
 const mode = ref<GraphicsMode>('TEXT_MULTICOLOR')
+const region = ref<Region>('PAL')
 const boilerplate = ref(true)
 const inputRef = ref<HTMLInputElement | null>(null)
 
-// On open: seed fields, default the mode to the first enabled choice, focus name.
+// On open: seed fields, default the mode to the first enabled choice + region to the
+// first listed (PAL), focus name.
 watch(
   () => ui.newProject,
   async (req) => {
@@ -30,6 +32,7 @@ watch(
     boilerplate.value = true
     const firstEnabled = req.modes.find((m) => !m.disabled)
     if (firstEnabled) mode.value = firstEnabled.value
+    if (req.regions[0]) region.value = req.regions[0].value
     await nextTick()
     inputRef.value?.focus()
   }
@@ -46,6 +49,7 @@ function confirm(): void {
   ui.resolveNewProject({
     name: trimmed,
     graphicsMode: mode.value,
+    region: region.value,
     withBoilerplate: boilerplate.value
   })
 }
@@ -92,6 +96,25 @@ function cancel(): void {
             <span class="np-mode-text">
               <span class="np-mode-name">{{ m.label }}</span>
               <span v-if="m.hint" class="np-mode-hint">{{ m.hint }}</span>
+            </span>
+          </label>
+        </li>
+      </ul>
+
+      <span class="bc-label np-field-label">{{ ui.newProject.regionLabel }}</span>
+      <ul class="np-modes">
+        <li v-for="r in ui.newProject.regions" :key="r.value">
+          <label class="np-mode">
+            <input
+              type="radio"
+              name="np-region"
+              :value="r.value"
+              :checked="region === r.value"
+              @change="region = r.value"
+            />
+            <span class="np-mode-text">
+              <span class="np-mode-name">{{ r.label }}</span>
+              <span v-if="r.hint" class="np-mode-hint">{{ r.hint }}</span>
             </span>
           </label>
         </li>

@@ -7,6 +7,31 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-06-17
+
+### Hinzugefügt
+- **PAL oder NTSC: BreadCraft fragt jetzt, statt still 50 Hz anzunehmen.** Ein C64 ist nicht überall
+  gleich schnell — in Europa läuft er mit 50 Bildern die Sekunde (PAL), in den USA und Japan mit 60
+  (NTSC), und das schnellere NTSC hat *weniger* Rechenzeit pro Bild. Bisher rechnete BreadCraft heimlich
+  immer mit PAL; ein Spiel, das gerade so passte, konnte auf einem NTSC-Gerät ruckeln, ohne dass Du je
+  gewarnt wurdest. Jetzt wählst Du die Region beim Anlegen eines Projekts bewusst mit (PAL ist
+  voreingestellt). Deine Wahl wirkt an zwei Stellen sichtbar: Die **PERF-Leiste** misst Deine Frame-Last
+  gegen das *richtige* Budget — und sagt jetzt auch dazu, gegen welches („… von 19656 (PAL)"). Und beim
+  **Build & Run** startet VICE direkt in Deiner Region, sodass Du das Spiel genau so siehst, wie es ein
+  Spieler dort sähe. Die Region reist in der `.bread` mit; ältere Projekte ohne Eintrag bleiben friedlich
+  PAL.
+
+### Geändert
+- **Die Wort-Vervollständigung sagt jetzt ehrlich, was schon baut — und was erst noch kommt.** Während Du
+  tippst, schlägt Dir BreadCraft die Wörter der Sprache vor. Bisher mischten sich da welche darunter, die
+  zwar zum Wortschatz gehören, deren C64-Code aber noch gar nicht verdrahtet ist — Du nahmst sie ahnungslos,
+  und erst der Build schickte sie zurück. `KeyDown` und `KeyHit` gaben sich sogar als fertig erprobt aus und
+  warfen beim Bauen trotzdem ein „kommt später". Jetzt trägt jedes noch-nicht-baubare Wort in der Liste ein
+  sichtbares **⏳ geplant** und sortiert sich ans Ende: `KeyDown`, `KeyHit`, `Random`, `Left$`/`Right$`/`Mid$`/`Find`,
+  `UseImage`/`DrawImage`, `SetMetaTile`/`GetMetaTile`, `SpriteHit`, `Restore`, `End`, `Include`. So siehst Du, dass es
+  das Wort gibt und dass es unterwegs ist — greifst aber nicht mehr versehentlich ins Leere. Das Schild folgt
+  Deiner IDE-Sprache, und ein Test wacht darüber, dass „geplant" und „baut wirklich" nie wieder auseinanderdriften.
+
 ## [0.2.4] - 2026-06-16
 
 ### Hinzugefügt

@@ -25,7 +25,7 @@ import { checkVicePath, chooseVicePath, readSettings, writeSettings } from './se
 import { resolveLanguage } from './config'
 import { buildAndRun } from './build'
 import { savedWindowOptions, shouldStartMaximized, trackWindowState } from './window-state'
-import type { AssetKind, GraphicsMode, SettingsPatch } from '../shared/ipc'
+import type { AssetKind, GraphicsMode, Region, SettingsPatch } from '../shared/ipc'
 
 function registerIpc(): void {
   // First-run / workspace handshake. The renderer asks for status on boot and,
@@ -45,8 +45,8 @@ function registerIpc(): void {
   ipcMain.handle('project:createTemp', () => createTempProject())
   ipcMain.handle(
     'project:create',
-    (_event, name: string, graphicsMode: GraphicsMode, withBoilerplate: boolean) =>
-      createProject(name, graphicsMode, withBoilerplate)
+    (_event, name: string, graphicsMode: GraphicsMode, withBoilerplate: boolean, region: Region) =>
+      createProject(name, graphicsMode, withBoilerplate, region)
   )
   ipcMain.handle('project:open', (_event, breadPath: string) => openProject(breadPath))
   ipcMain.handle('project:openDialog', async (event) => {

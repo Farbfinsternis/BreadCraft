@@ -1,6 +1,6 @@
 import { reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { GraphicsMode } from '@shared/ipc'
+import type { GraphicsMode, Region } from '@shared/ipc'
 
 export type CollapsiblePanel = 'explorer' | 'outliner' | 'console'
 
@@ -13,6 +13,13 @@ export interface ModeChoice {
   disabled?: boolean
 }
 
+/** One selectable target region in the New-Project dialog (STAHL S5c: PAL | NTSC). */
+export interface RegionChoice {
+  value: Region
+  label: string
+  hint?: string
+}
+
 /** A New-Project dialog request (name + mode + boilerplate toggle). */
 export interface NewProjectRequest {
   title: string
@@ -20,6 +27,8 @@ export interface NewProjectRequest {
   namePlaceholder?: string
   modeLabel: string
   modes: ModeChoice[]
+  regionLabel: string
+  regions: RegionChoice[]
   boilerplateLabel: string
   confirmLabel: string
 }
@@ -28,6 +37,7 @@ export interface NewProjectRequest {
 export interface NewProjectResult {
   name: string
   graphicsMode: GraphicsMode
+  region: Region
   withBoilerplate: boolean
 }
 

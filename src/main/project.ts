@@ -11,13 +11,14 @@ import {
 import { readConfig, writeConfig } from './config'
 import { TEMP_DIRNAME, PROJECTS_DIRNAME } from './workspace'
 import rawSsot from '../shared/breadcraft.lang.json'
-import { DEFAULT_SETTINGS, DEFAULT_GRAPHICS_MODE } from '../shared/ipc'
+import { DEFAULT_SETTINGS, DEFAULT_GRAPHICS_MODE, DEFAULT_REGION } from '../shared/ipc'
 import { graphicsCommandFor } from '../shared/graphics-mode'
 import type { Ssot } from '../shared/ssot-types'
 import type {
   AssetKind,
   BreadAssets,
   GraphicsMode,
+  Region,
   OpenedProject,
   ProjectFile,
   RecentProject,
@@ -48,6 +49,11 @@ export interface BreadProjectFile {
    * DEFAULT_GRAPHICS_MODE (see normalizeGraphicsMode).
    */
   graphicsMode?: GraphicsMode
+  /**
+   * Target video standard (STAHL S5c). Optional for backward compatibility: old
+   * `.bread` files predate it and read as DEFAULT_REGION (PAL) — see normalizeRegion.
+   */
+  region?: Region
   /** All crumb source files, relative to the project dir. */
   crumbs: string[]
   /** Asset manifest. See BreadAssets; older files may have a flat/empty map. */
@@ -61,6 +67,20 @@ const GRAPHICS_MODES: readonly GraphicsMode[] = ['TEXT_HIRES', 'TEXT_MULTICOLOR'
 /** Coerce any persisted `graphicsMode` to a valid mode; old/invalid files → default. */
 function normalizeGraphicsMode(raw: unknown): GraphicsMode {
   return GRAPHICS_MODES.includes(raw as GraphicsMode) ? (raw as GraphicsMode) : DEFAULT_GRAPHICS_MODE
+}
+
+const REGIONS: readonly Region[] = ['PAL', 'NTSC']
+
+/** Coerce any persisted `region` to a valid one; old/invalid files → default (PAL). */
+function normalizeRegion(raw: unknown): Region {
+  return REGIONS.includes(raw as Region) ? (raw as Region) : DEFAULT_REGION
+}
+
+/** The persisted target region for a project dir (STAHL S5c), read from its `.bread`
+ *  and normalized (old/missing → PAL). The build path uses it to pick the PERF budget
+ *  and the VICE launch flag, reading straight from disk so it can't drift from what's saved. */
+export function projectRegion(dir: string): Region {
+  return normalizeRegion(readBread(dir).region)
 }
 
 /** Coerce any persisted `assets` value (old `{}`/flat map, or the new shape) to
@@ -111,11 +131,12 @@ function writeBread(dir: string, data: BreadProjectFile): void {
   writeFileSync(breadPathFor(dir), JSON.stringify(data, null, 2), 'utf-8')
 }
 
-/** Read + parse a `.bread`, normalising the asset manifest + graphics mode. */
+/** Read + parse a `.bread`, normalising the asset manifest + graphics mode + region. */
 function readBread(dir: string): BreadProjectFile {
   const bread = JSON.parse(readFileSync(breadPathFor(dir), 'utf-8')) as BreadProjectFile
   bread.assets = normalizeAssets(bread.assets)
   bread.graphicsMode = normalizeGraphicsMode(bread.graphicsMode)
+  bread.region = normalizeRegion(bread.region)
   return bread
 }
 
@@ -145,6 +166,7 @@ function readProject(dir: string, temporary: boolean): OpenedProject {
     files,
     temporary,
     graphicsMode: normalizeGraphicsMode(bread.graphicsMode),
+    region: normalizeRegion(bread.region),
     assets: bread.assets
   }
 }
@@ -172,7 +194,8 @@ function scaffold(
   name: string,
   temporary: boolean,
   graphicsMode: GraphicsMode = DEFAULT_GRAPHICS_MODE,
-  withBoilerplate = true
+  withBoilerplate = true,
+  region: Region = DEFAULT_REGION
 ): OpenedProject {
   mkdirSync(dir, { recursive: true })
   const entry = 'main.crumb'
@@ -184,6 +207,7 @@ function scaffold(
     name,
     entry,
     graphicsMode,
+    region,
     crumbs: [entry],
     assets: { ...EMPTY_ASSETS }
   })
@@ -248,7 +272,8 @@ export async function openProjectViaDialog(
 export function createProject(
   name: string,
   graphicsMode: GraphicsMode = DEFAULT_GRAPHICS_MODE,
-  withBoilerplate = true
+  withBoilerplate = true,
+  region: Region = DEFAULT_REGION
 ): OpenedProject {
   const projectsRoot = join(workspaceRootOrThrow(), PROJECTS_DIRNAME)
   mkdirSync(projectsRoot, { recursive: true })
@@ -261,7 +286,14 @@ export function createProject(
   let dir = join(projectsRoot, slug)
   let n = 2
   while (existsSync(dir)) dir = join(projectsRoot, `${slug}-${n++}`)
-  return scaffold(dir, display, false, normalizeGraphicsMode(graphicsMode), withBoilerplate)
+  return scaffold(
+    dir,
+    display,
+    false,
+    normalizeGraphicsMode(graphicsMode),
+    withBoilerplate,
+    normalizeRegion(region)
+  )
 }
 
 /** A filesystem-safe project slug: lowercase, spaces/underscores → hyphens, drop any

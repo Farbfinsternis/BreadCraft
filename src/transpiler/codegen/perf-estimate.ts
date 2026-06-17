@@ -1,14 +1,22 @@
 import type { Program, Statement, Expr, FunctionDecl, ForStmt, WhileStmt } from '../parser/ast'
-import type { PerfInfo } from '@shared/ipc'
+import type { PerfInfo, Region } from '@shared/ipc'
+import { DEFAULT_REGION } from '@shared/ipc'
 
 // Per-frame CPU-cost ESTIMATE, extrapolated from the .crumb AST — a guess, never a
 // runtime measurement (the BASSM approach the user chose). The point is the RELATIVE
 // signal: write a multiply or a deep loop and the number climbs; nothing here pretends
 // to count exact cycles. (memory: c64-math-cost-model)
 
-// One PAL frame ≈ 312 rasterlines × 63 cycles. Cross it and `VWait` lands on the NEXT
-// frame → the game halves to 25 fps. That wall is what the estimate measures against.
-const PAL_FRAME_CYCLES = 19656
+// The per-frame cycle wall the estimate measures against (STAHL S5c). Cross it and
+// `VWait` lands on the NEXT frame → the game halves its rate. NTSC's frame is shorter
+// AND its dot-clock faster, so its budget is the TIGHTER one: a game that just fits on
+// PAL can overrun on NTSC. The project's region picks which wall the PERF bar holds you to.
+//   PAL  ≈ 312 rasterlines × 63 cycles = 19656  (50 Hz)
+//   NTSC ≈ 263 rasterlines × 65 cycles = 17095  (60 Hz)
+const FRAME_CYCLES: Record<Region, number> = {
+  PAL: 19656,
+  NTSC: 17095
+}
 
 // Coarse cc65-on-6502 cost guesses. Only the orders of magnitude matter (mul ≫ add,
 // a call has overhead, a loop multiplies its body).
@@ -64,8 +72,12 @@ const LOOP_GUESS = 4 // unknown While/Repeat iteration count → a flat guess
  * Estimate the CPU cost of ONE iteration of the main frame loop (the `While` that
  * contains `VWait`), including the functions it calls. Returns null when there is no
  * frame loop to talk about. A guess, surfaced honestly as the PERF health-bar.
+ * `region` picks the cycle budget (STAHL S5c); defaults to PAL for callers/old projects.
  */
-export function estimateFramePerf(program: Program): PerfInfo | null {
+export function estimateFramePerf(
+  program: Program,
+  region: Region = DEFAULT_REGION
+): PerfInfo | null {
   const consts = new Map<string, Expr>()
   const funcs = new Map<string, FunctionDecl>()
   for (const s of program.body) {
@@ -204,10 +216,11 @@ export function estimateFramePerf(program: Program): PerfInfo | null {
 
   const frame = findFrameLoop(program.body)
   if (!frame) return null
+  const budgetCycles = FRAME_CYCLES[region]
   const cyclesPerFrame = costStmts(frame.body)
-  const fraction = cyclesPerFrame / PAL_FRAME_CYCLES
+  const fraction = cyclesPerFrame / budgetCycles
   const state = fraction >= 1 ? 'over' : fraction >= 0.75 ? 'warn' : 'ok'
-  return { cyclesPerFrame, budgetCycles: PAL_FRAME_CYCLES, fraction, state }
+  return { cyclesPerFrame, budgetCycles, fraction, state, region }
 }
 
 /** The main loop = the first top-level `While` whose body runs `VWait` (the frame sync). */
