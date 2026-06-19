@@ -29,6 +29,14 @@ export interface SsotEntry {
   aliases?: string[]
   params?: SsotParam[]
   returns?: { type: string } | null
+  // Hardware-honesty fields (consumed by the docs reference, D5): the same markers
+  // the Health-Bars stand for. Optional — not every entry carries every field.
+  cost?: 'free' | 'cheap' | 'medium' | 'expensive'
+  frameSafe?: boolean
+  proven?: boolean
+  requiresMode?: string
+  exampleId?: string
+  transpile?: string
   // entries[] also contains marker objects like { "$group": "…" } with no id/name.
   $group?: string
 }
@@ -51,6 +59,11 @@ export interface SsotType {
   id: string
   name: string
   kind: 'type'
+  i18nKey?: string
+  category?: string
+  cMapping?: string
+  range?: [number, number]
+  since?: string
 }
 
 export interface Ssot {
@@ -61,6 +74,8 @@ export interface Ssot {
   entries: Array<Partial<SsotEntry>>
   /** Operators live in their own block (e.g. +, -, And, Or, Mod, Shl …). */
   operators?: Array<Partial<SsotEntry>>
+  /** Language-neutral code snippets for docs, referenced by entry.exampleId. */
+  examples?: Record<string, string>
 }
 
 /** A flattened, app-facing vocabulary item (built from the SSOT). */

@@ -685,12 +685,12 @@
       "$note": "Phase 1: TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR. Der Textmodus IST die Tilemap-Engine (Font=Tileset).",
       "params": [
         {
-          "name": "flaeche",
+          "name": "area",
           "type": "GfxArea",
           "i18nKey": "param.graphics.area"
         },
         {
-          "name": "farbe",
+          "name": "color",
           "type": "GfxColor",
           "i18nKey": "param.graphics.colormode"
         }
@@ -709,7 +709,7 @@
       "$note": "Löscht UND füllt mit FARBE (untrennbar — die Hintergrundfarbe ist Parameter von Cls). In Bitmap-Modus ~1 Frame teuer.",
       "params": [
         {
-          "name": "farbe",
+          "name": "color",
           "type": "Color",
           "i18nKey": "param.cls.color"
         }
@@ -728,7 +728,7 @@
       "transpile": "$D020 live-Register",
       "params": [
         {
-          "name": "farbe",
+          "name": "color",
           "type": "Color",
           "i18nKey": "param.bordercolor.color"
         }
@@ -747,7 +747,7 @@
       "$note": "Stift-Farbe für folgende DrawText (später Line/Rect). Schreibt in die Color-RAM. Im MULTICOLOR-Textmodus setzt der Codegen Bit 3 (MC-Zelle) und nimmt nur die unteren 3 Bit als 11-Pixel-Farbe; in HIRES die volle Farbe. Persistenter Stift-Zustand (bc_pen), nicht pro DrawText.",
       "params": [
         {
-          "name": "farbe",
+          "name": "color",
           "type": "Color",
           "i18nKey": "param.color.color"
         }
@@ -826,6 +826,7 @@
       "proven": true,
       "requiresMode": "TEXT",
       "transpile": "Data-Block von Tile-Nummern → Screen-RAM (1000 Zellen). Referenz _preflight/tilemap.c",
+      "exampleId": "graphics.tiles",
       "$note": "Zeichnet alle 1000 Zellen → im Frame teuer (Warnung). Statische Welt: einmal aufbauen.",
       "params": [
         {
@@ -877,7 +878,7 @@
           "i18nKey": "param.text.y"
         },
         {
-          "name": "ausdruck",
+          "name": "expression",
           "type": "any",
           "i18nKey": "param.text.value"
         }
@@ -901,12 +902,12 @@
       "$note": "LOW-LEVEL: setzt EINE 8×8-Zelle per Tile-NUMMER + Farbe. Das Gegenstück zu Sprite n,x,y für die Tile-Welt. Für bewegte Gegner/wachsende Pflanzen. Bleibt das bewiesene Modell für das Latent-Object-Muster `SetTile c,r, GetTile(c,r,1), farbe` (s. _preflight/sokoban_push.c). Für aus mehreren Zeichen zusammengesetzte Kacheln → SetMetaTile.",
       "params": [
         {
-          "name": "spalte",
+          "name": "column",
           "type": ".b",
           "i18nKey": "param.settile.col"
         },
         {
-          "name": "zeile",
+          "name": "row",
           "type": ".b",
           "i18nKey": "param.settile.row"
         },
@@ -916,7 +917,7 @@
           "i18nKey": "param.settile.tile"
         },
         {
-          "name": "farbe",
+          "name": "color",
           "type": "Color",
           "i18nKey": "param.settile.color"
         }
@@ -937,12 +938,12 @@
       "$note": "BENANNT/high-level: setzt ein im Tileset-Editor definiertes MetaTile (Komposition aus N×M Zeichen, Default 2×2 = 16×16) als EINE Einheit. spalte,zeile = Zell-Koordinate der oberen-linken Ecke (KEIN zweites Koordinatensystem — die ganze Sprache bleibt 40×25-zellbasiert). Die Farben kommen aus dem MetaTile (4 Color-RAM-Werte im 2×2-Fall) — daher KEIN farbe-Argument (Abgrenzung zu SetTile). Löst das Sokoban-Problem: eine 4-Zeichen-Kiste wird komplett ersetzt, nie halb. Name = bewusst identisch zum Tileset-/Tilemap-Editor-Begriff (Sprache↔IDE konsistent). Kosten sichtbar in der IDE: ~N·M× so viele Pokes wie SetTile (immer noch billig, vorhersehbar).",
       "params": [
         {
-          "name": "spalte",
+          "name": "column",
           "type": ".b",
           "i18nKey": "param.setmetatile.col"
         },
         {
-          "name": "zeile",
+          "name": "row",
           "type": ".b",
           "i18nKey": "param.setmetatile.row"
         },
@@ -971,12 +972,12 @@
       "$note": "ZELL-basiert (Gitter-Koordinaten). Abgrenzung zu TileAt/TileSolid (pixel-basiert). 2-LAYER-MAP: layer 0 = Anzeige (Screen-RAM, was der VIC zeigt), layer 1 = unsichtbarer DATEN-Layer darunter (vom Tilemap-Editor gemalt, hält Tile-Nummern für den 'Untergrund'/'was-kommt-danach'-Wert). Beide Layer halten NUR Tile-Nummern. Der C64 zeigt physikalisch nur 1 Ebene — layer 1 wird NIE gezeichnet, nur abgefragt (1 Array-Offset, billig). Muster 'latentes Objekt': ein als Tile platzierter Gegner/Kiste erwacht zum Sprite, dann `SetTile c,r, GetTile(c,r,1), farbe` deckt den vom Designer gemalten Untergrund auf — ersetzt das selbstgebaute ground[]-Array (s. _preflight/sokoban_push.c).",
       "params": [
         {
-          "name": "spalte",
+          "name": "column",
           "type": ".b",
           "i18nKey": "param.gettile.col"
         },
         {
-          "name": "zeile",
+          "name": "row",
           "type": ".b",
           "i18nKey": "param.gettile.row"
         },
@@ -1008,12 +1009,12 @@
       "$note": "BENANNTes Gegenstück zu GetTile: liefert die MetaTile-IDENTITÄT einer Zelle — auch wenn man eine innere Zelle (z. B. unten-rechts eines 2×2) abfragt, kommt der Name des ganzen MetaTiles zurück. Das ist, was der Designer erwartet, wenn er fragt 'was liegt da?'. Optionaler layer wie bei GetTile (0 = Anzeige, 1 = Daten-Layer). Macht das Latent-Object-Muster MetaTile-tauglich: `SetMetaTile c,r, GetMetaTile(c,r,1)` deckt einen ganzen vom Designer gemalten N×M-Untergrund auf (das Pendant zu `SetTile c,r, GetTile(c,r,1), farbe` für Einzelzeichen).",
       "params": [
         {
-          "name": "spalte",
+          "name": "column",
           "type": ".b",
           "i18nKey": "param.getmetatile.col"
         },
         {
-          "name": "zeile",
+          "name": "row",
           "type": ".b",
           "i18nKey": "param.getmetatile.row"
         },
@@ -1230,9 +1231,10 @@
         "i18nKey": "fn.joystick.returns"
       },
       "transpile": "joy_read(JOY_2) — bereits in _preflight",
+      "exampleId": "joystick.basic",
       "params": [
         {
-          "name": "richtung",
+          "name": "direction",
           "type": "JoyDir",
           "i18nKey": "param.joystick.dir"
         }
@@ -1298,6 +1300,7 @@
       "since": "phase1",
       "proven": true,
       "transpile": "waitvsync()",
+      "exampleId": "frameloop",
       "$note": "Frame-Sync (PAL 50Hz). Pflicht in der Frame-Schleife — Transpiler WARNT, wenn While 1 ohne VWait."
     },
     {
@@ -1648,6 +1651,7 @@
       "since": "later",
       "proven": false,
       "blockEnd": "EndAsm",
+      "exampleId": "asm.escape",
       "transpile": "Block-Inhalt 1:1 in cc65 __asm__(...) durchreichen — der Transpiler interpretiert NICHTS davon.",
       "$note": "BASSM-DNA (BASIC+ASSM): das Ventil für alles, was die sichere Sprache bewusst weglässt — Sprite-Multiplexing (>8 Sprites via Raster-IRQ), eigene Raster-Effekte, FLI. PHILOSOPHIE: versteckt keine Kosten, es legt sie MAXIMAL offen — wer Asm schreibt, weiß, dass er auf Hardware-Ebene ist (kein Cls-Trugschluss). Der Artist-Nutzer sieht das nie. WARNUNGEN für die Doku: (1) 6502, NICHT 68k — Asm-Blöcke sind NICHT von BASSM-Amiga portierbar. (2) Muss cc65-Konventionen respektieren (A/X/Y + freie ZP-Adressen) sonst korrumpiert es den umgebenden C-Code. (3) Frame-Safety/Health-Bars können nicht hineinschauen — innerhalb des Blocks gilt kein Schutz. Block-Konstrukt: Asm … EndAsm (wie If/EndIf).",
       "aliases": []

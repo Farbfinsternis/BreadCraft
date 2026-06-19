@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { EDITOR_ROUTE_NAMES } from '@renderer/router'
+import { ZEN_ROUTE_NAMES } from '@renderer/router'
 import { useProjectStore } from '@renderer/stores/project'
 import { useSettingsStore } from '@renderer/stores/settings'
 import { useOutputStore } from '@renderer/stores/output'
@@ -95,11 +95,15 @@ const editors = computed(() => [
   { label: t('toolbar.editor.sound'), route: 'sound' }
 ])
 
-// Zen mode (full-width editor) only makes sense in the graphics editors — not in
-// the code view, which needs the outliner/console. Show the toggle only there.
-const isEditorRoute = computed(() =>
-  (EDITOR_ROUTE_NAMES as readonly string[]).includes(String(route.name))
+// Zen mode (full-width) is offered in the graphics editors and the docs reader —
+// not in the code view, which needs the outliner/console. Show the toggle there,
+// so the user opts into (and out of) the distraction-free view themselves.
+const isZenRoute = computed(() =>
+  (ZEN_ROUTE_NAMES as readonly string[]).includes(String(route.name))
 )
+
+// The Help button highlights while the docs reader is open (DOKU sprint, D1).
+const isDocsRoute = computed(() => route.name === 'docs')
 
 function openEditor(name: string): void {
   if (!project.dir) return // editors require an open project (ASSET_DOCUMENTS.md §1)
@@ -243,7 +247,7 @@ async function openProject(): Promise<void> {
           </div>
         </div>
         <button
-          v-if="isEditorRoute"
+          v-if="isZenRoute"
           class="tbtn tbtn-icon tbtn-toggle"
           :class="{ 'is-on': ui.zen }"
           :title="ui.zen ? t('toolbar.restoreView') : t('toolbar.maximizeView')"
@@ -254,7 +258,14 @@ async function openProject(): Promise<void> {
           <svg v-if="!ui.zen" class="ico" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3" /></svg>
           <svg v-else class="ico" viewBox="0 0 24 24"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" /></svg>
         </button>
-        <button class="tbtn tbtn-icon" :title="t('toolbar.help')" :aria-label="t('toolbar.help')">
+        <button
+          class="tbtn tbtn-icon tbtn-toggle"
+          :class="{ 'is-on': isDocsRoute }"
+          :title="t('toolbar.help')"
+          :aria-label="t('toolbar.help')"
+          :aria-pressed="isDocsRoute"
+          @click="router.push({ name: 'docs' })"
+        >
           <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.3 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.7 2.4-2.7 4" /><path d="M12 17h.01" /></svg>
         </button>
       </div>

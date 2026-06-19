@@ -33,6 +33,15 @@ const routes: RouteRecordRaw[] = [
     path: '/editor/sound',
     name: 'sound',
     component: () => import('@renderer/views/SoundView.vue')
+  },
+  {
+    // Documentation reader — a reference work (DOKU sprint). Project-independent:
+    // unlike the editor routes it needs no open project, so no beforeEach guard.
+    // The optional :page param selects which doc page is shown (deeplinkable);
+    // absent → the default page.
+    path: '/docs/:page?',
+    name: 'docs',
+    component: () => import('@renderer/views/DocsView.vue')
   }
 ]
 
@@ -40,6 +49,13 @@ const routes: RouteRecordRaw[] = [
  *  panels hidden) is offered and takes effect. Shared so the toolbar toggle and
  *  App.vue agree on "is this an editor route?" (one list, no drift). */
 export const EDITOR_ROUTE_NAMES = ['palette', 'tileset', 'tilemap', 'sprite', 'sound'] as const
+
+/** Routes that OFFER the user-toggled Zen mode (full-width, side panels hidden):
+ *  the graphics editors plus the docs reader. Zen here is opt-in and reversible —
+ *  the toolbar toggle stays visible so the user always finds the way back. Docs is
+ *  deliberately NOT in EDITOR_ROUTE_NAMES above: it needs no open project, so the
+ *  project guard must not apply to it. */
+export const ZEN_ROUTE_NAMES = [...EDITOR_ROUTE_NAMES, 'docs'] as const
 
 const router = createRouter({
   history: createWebHashHistory(),

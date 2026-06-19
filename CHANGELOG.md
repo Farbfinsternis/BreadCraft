@@ -7,6 +7,56 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-06-19
+
+### Hinzugefügt
+- **Eine Dokumentation wohnt jetzt in der IDE — der Fragezeichen-Knopf führt endlich irgendwohin.**
+  Oben in der Werkzeugleiste sitzt schon lange ein Hilfe-Knopf, der bisher höflich ins Leere zeigte.
+  Ein Klick öffnet nun ein eigenes Nachschlagewerk direkt in der IDE: das Einsteiger-Heft „CRUMB, deine
+  erste eigene Sprache", gesetzt im BreadCraft-Look (ruhige Lesespalte, die vertrauten Navy/Kupfer-Töne,
+  Code in der Schreibmaschinenschrift). Wer ungestört lesen mag, schaltet wie in den Grafik-Editoren den
+  Zen-Modus ein, der die Seitenpanels beiseiteschiebt — und genauso wieder aus, zurück ins Projekt.
+  Zum Zurechtfinden gibt's links eine Seitenliste und rechts ein „Auf dieser Seite", das beim Scrollen
+  mitläuft und zeigt, wo Du gerade bist; ein Klick darauf gleitet sanft zum Abschnitt. Und ein Suchfeld
+  liegt obendrauf: tipp einen Begriff, und BreadCraft durchsucht den gesamten Text — Überschriften,
+  Fließtext und sogar die Code-Beispiele — und zeigt Dir sofort die passenden Abschnitte, je mit einem
+  kurzen Auszug, in dem Dein Suchwort hervorgehoben ist (mit Pfeiltasten und Enter erreichbar, ganz ohne
+  Maus). Alles offline, ohne dass irgendwer im Netz mithört. Und die Code-Beispiele in der Doku sind
+  jetzt genauso eingefärbt wie im Editor — dieselben Farben für Befehle, Konstanten und Kommentare, weil
+  beide aus ein und demselben Tokenizer schöpfen; was in der Doku steht, sieht aus wie das, was Du tippst.
+  Neben dem Handbuch gibt es jetzt eine **Referenz**: jeder Befehl, jede Funktion, jeder Operator, Typ und
+  jede Konstante — nach Thema gruppiert, mit Signatur und Beschreibung, und alles aus derselben Quelle
+  erzeugt, aus der die Sprache selbst lebt (ein Wort steht in der Doku genau dann, wenn es die Sprache
+  wirklich kennt). Die Volltextsuche findet die Befehle gleich mit; geplante, noch nicht gebaute Wörter
+  sind ehrlich als „geplant" markiert. Und ganz oben in der Referenz wartet ein **Cheat-Sheet**: die
+  ganze Sprache auf einen Blick als Karten-Raster — Name, Signatur und ein knapper Satz pro Eintrag, nach
+  Thema gruppiert, mit Suche und Filter-Chips nach Art (Befehle, Funktionen, Schlüsselwörter, Operatoren,
+  mit Zählern). Ein Klick auf eine Karte springt zur ausführlichen Referenzseite.
+  Und die Referenzseiten sagen jetzt die *ganze* Wahrheit: unter jeder Signatur sitzt eine Reihe
+  ehrlicher Plaketten — was der Befehl kostet (von „gratis" über „günstig" und „spürbar" bis „teuer",
+  grün bis rot eingefärbt, damit das Auge die Rechnung schon sieht, bevor der Kopf sie macht), ob er
+  gefahrlos in die Bild-Schleife darf („frame-sicher") oder besser einmalig beim Aufbau steht, welchen
+  Grafikmodus er voraussetzt, und — typisch BreadCraft — ob er „noch nicht erprobt" ist, damit kein
+  Versprechen gemacht wird, das die Hardware nicht hält. Darunter steht eine kleine Tabelle für die
+  Parameter: Name, Typ, ob optional, welcher Standardwert gilt und wozu er da ist. Es ist dieselbe
+  Ehrlichkeit, die die Health-Bars im Editor zeigen — nur an der Stelle, an der man nachschlägt.
+  Und wo es etwas zu zeigen gibt, zeigt die Referenz es auch: ausgewählte Befehle bringen jetzt ein
+  echtes, lauffähiges Code-Beispiel mit — eingefärbt mit demselben Tokenizer wie der Editor, damit das
+  Beispiel aussieht wie das, was Du gleich selbst tippst (Joystick abfragen, die Tile-Welt aufbauen, die
+  Bild-Schleife, das Hardware-Ventil). Fehlt ein Beispiel, bleibt es still — kein Platzhalter-Lärm.
+  Die Doku spricht jetzt auch beide Sprachen wie der Rest der IDE: stellst Du in den Einstellungen
+  auf Englisch, wechseln Referenz, Cheat-Sheet und alle Beschriftungen mit — die Handbuch-Texte sind
+  deutsch verfasst und bleiben es als Rückfallebene, bis es eine englische Fassung gibt. Dabei haben
+  wir eine kleine Unehrlichkeit ausgeräumt: die Parameternamen in den Signaturen waren bisher fest
+  deutsch (`DrawText spalte, zeile, text`), obwohl man sie beim Tippen nie ausspricht — CRUMB ruft nach
+  Position auf. Sie sind jetzt neutrale, stabile Namen (`column, row, text`), gleich in beiden Sprachen;
+  was sie *bedeuten*, sagt Dir die lokalisierte Beschreibung in der Parameter-Tabelle darunter. Und die
+  Doku merkt sich, wo Du warst: schließt Du die IDE und kommst zurück, landest Du wieder auf der zuletzt
+  gelesenen Seite, an genau der Stelle, an der Du aufgehört hast zu scrollen.
+  Noch ist es ein reines Nachschlagewerk — keine Hilfe, die Dir im Code über die Schulter schaut
+  (das kommt später). Erster Baustein eines größeren Doku-Sprints; dieselbe Quelle soll eines Tages auch
+  die BreadCraft-Website speisen.
+
 ## [0.2.5] - 2026-06-17
 
 ### Hinzugefügt

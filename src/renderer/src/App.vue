@@ -13,7 +13,7 @@ import NewProjectModal from '@renderer/components/NewProjectModal.vue'
 import SaveAsModal from '@renderer/components/SaveAsModal.vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { EDITOR_ROUTE_NAMES } from '@renderer/router'
+import { ZEN_ROUTE_NAMES } from '@renderer/router'
 import { useUiStore } from '@renderer/stores/ui'
 import { useWorkspaceStore } from '@renderer/stores/workspace'
 import { useProjectStore } from '@renderer/stores/project'
@@ -28,8 +28,12 @@ const project = useProjectStore()
 // Zen mode only takes effect in the graphics editors (it's only offered there;
 // the code view always keeps its panels). Persisted zen stays remembered but is
 // inert outside the editors, so the user can never get stuck panel-less.
+// Zen mode (full-width, panels hidden) is offered in the graphics editors AND the
+// docs reader — but always user-toggled, never forced: the toolbar toggle stays
+// visible so the user can return to their project. Persisted zen stays inert on
+// other routes (e.g. the code view), so one can never get stuck panel-less.
 const zenActive = computed(
-  () => ui.zen && (EDITOR_ROUTE_NAMES as readonly string[]).includes(String(route.name))
+  () => ui.zen && (ZEN_ROUTE_NAMES as readonly string[]).includes(String(route.name))
 )
 
 // Honor the startupMode setting: 'last' returns a project to restore, 'welcome'

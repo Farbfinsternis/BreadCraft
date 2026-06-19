@@ -82,26 +82,37 @@ const languageConfiguration: monaco.languages.LanguageConfiguration = {
   ]
 }
 
+/**
+ * The single source of truth for CRUMB token colours. The Monaco editor theme
+ * (below) AND the documentation code-block highlighter (docs/highlight.ts) both read
+ * from this list, so a code block in the docs looks exactly like the editor. Colours
+ * mirror the design-system mockup (ide.css .code .* classes). Foreground is a hex
+ * string WITHOUT '#' (Monaco theme convention).
+ */
+export const CRUMB_TOKEN_COLORS: { token: string; foreground: string; fontStyle?: string }[] = [
+  { token: 'comment', foreground: '555E70', fontStyle: 'italic' },
+  { token: 'keyword', foreground: '5EC4FF' },
+  { token: 'command', foreground: '2AA7FF' },
+  { token: 'constant', foreground: 'F5C291' },
+  { token: 'function', foreground: '4ED39A' },
+  { token: 'string', foreground: 'FFB57A' },
+  { token: 'string.quote', foreground: 'FFB57A' },
+  { token: 'number', foreground: 'A6E1FF' },
+  { token: 'number.hex', foreground: 'A6E1FF' },
+  { token: 'number.binary', foreground: 'A6E1FF' },
+  { token: 'operator', foreground: '7C8597' },
+  { token: 'identifier', foreground: 'D7DBE3' }
+]
+
 export function registerTheme(): void {
-  // Token colors mirror the static highlighting used in the design-system mockup
-  // (ide.css .code .* classes) so the editor matches the rest of the IDE.
   monaco.editor.defineTheme(BREADCRAFT_THEME_ID, {
     base: 'vs-dark',
     inherit: true,
-    rules: [
-      { token: 'comment', foreground: '555E70', fontStyle: 'italic' },
-      { token: 'keyword', foreground: '5EC4FF' },
-      { token: 'command', foreground: '2AA7FF' },
-      { token: 'constant', foreground: 'F5C291' },
-      { token: 'function', foreground: '4ED39A' },
-      { token: 'string', foreground: 'FFB57A' },
-      { token: 'string.quote', foreground: 'FFB57A' },
-      { token: 'number', foreground: 'A6E1FF' },
-      { token: 'number.hex', foreground: 'A6E1FF' },
-      { token: 'number.binary', foreground: 'A6E1FF' },
-      { token: 'operator', foreground: '7C8597' },
-      { token: 'identifier', foreground: 'D7DBE3' }
-    ],
+    rules: CRUMB_TOKEN_COLORS.map((c) => ({
+      token: c.token,
+      foreground: c.foreground,
+      ...(c.fontStyle ? { fontStyle: c.fontStyle } : {})
+    })),
     colors: {
       'editor.background': '#0A101D',
       'editor.foreground': '#D7DBE3',
