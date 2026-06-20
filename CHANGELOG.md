@@ -7,6 +7,27 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Geändert
+- **Dein Zeichensatz wohnt jetzt nur noch einmal im Speicher — das schafft Platz fürs Spiel (BRONZE B1.T2).**
+  Bisher lag ein selbstgemaltes Tileset doppelt im Programm: einmal als Vorlage unten im knappen
+  Arbeitsspeicher und einmal als laufende Kopie dort, wo der Grafikchip sie liest — beim Start wurde
+  die eine in die andere kopiert. Diese Dopplung kostete rund 2 KB des engen unteren Speichers, genau
+  dort, wo der Platz am knappsten ist. Jetzt legt BreadCraft den Zeichensatz beim Bauen direkt an seinen
+  endgültigen Platz; die Kopie und ihre Vorlage entfallen. Für „Into The Deep" fällt die Speicheranzeige
+  damit von ~91 % auf ~70 % — über 2 KB Luft für mehr Spielcode, ohne dass sich am Bild etwas ändert.
+  (Die fertige `.prg`-Datei wird dabei etwas größer, weil der freigewordene Bereich vorerst mit Nullen
+  aufgefüllt wird — das ist nur Dateigröße, kein Speicher, und es schrumpft wieder, sobald das Spiel in
+  den gewonnenen Platz hineinwächst.)
+- **Die RAM-Anzeige sagt jetzt die Wahrheit, auch wenn die Grafik auszieht (BRONZE B1.T1).**
+  Bisher maß der Speicher-Balken schlicht die Größe der fertigen `.prg`-Datei — das ging gut,
+  solange alles dicht an dicht ab `$0801` lag. Sobald die Grafik aber an eine feste hohe Adresse
+  umzieht (der nächste Schritt, der Platz schafft), entsteht eine Lücke davor, und die Dateigröße
+  hätte diese Lücke fälschlich als „belegt" mitgezählt. Jetzt liest BreadCraft die Segment-Karte
+  des Linkers (`-m`) und zählt nur die Bytes, die wirklich um den knappen unteren Speicher
+  konkurrieren — Lücken bleiben außen vor, und tief liegender Arbeitsspeicher, der gar nicht in
+  der Datei steht, wird ehrlich mitgerechnet. An den heutigen Spielen ändert sich die Zahl nicht
+  (ITD bleibt bei seinen ~91 %); die Messung steht nur ab jetzt auf festem Grund.
+
 ## [0.2.6] - 2026-06-19
 
 ### Hinzugefügt

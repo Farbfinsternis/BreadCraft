@@ -1020,14 +1020,20 @@ describe('codegen: input (M3.T3) — Joystick / KeyDown / KeyHit', () => {
 })
 
 describe('codegen: UseTileset + DrawMap (tile world)', () => {
-  it('bakes the charset bytes, points VIC at $3000, sets MC colours', () => {
+  it('bakes the charset straight into the BC_CHARSET segment (S1b: no copy, no dup)', () => {
     const { code, errors } = gen('UseTileset "main"', fakeAssets())
     expect(errors).toEqual([])
-    expect(code).toContain('static const unsigned char tileset_main[2048]')
+    // Linked at the reserved address via the segment (external linkage `const`, not static),
+    // so the loader places it where the VIC reads it.
+    expect(code).toContain('#pragma rodata-name (push, "BC_CHARSET")')
+    expect(code).toContain('const unsigned char tileset_main[2048]')
+    expect(code).toContain('#pragma rodata-name (pop)')
     expect(code).toMatch(/1, 2, 3, 4, 5, 6, 7, 8/) // char 1 bytes baked
-    expect(code).toContain('BC_CHARSET[_i] = tileset_main[_i]')
     expect(code).toContain('VIC.addr = 0x1C;')
-    expect(code).toContain('#define BC_CHARSET')
+    // The double storage is gone: no second copy in RODATA, no runtime copy loop, no pointer.
+    expect(code).not.toContain('static const unsigned char tileset_main')
+    expect(code).not.toContain('BC_CHARSET[_i] = tileset_main[_i]')
+    expect(code).not.toContain('#define BC_CHARSET')
   })
 
   it('bakes the map tiles and copies them into screen RAM', () => {

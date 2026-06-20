@@ -1,17 +1,17 @@
 import { spawn, execFile } from 'child_process'
 import { join } from 'path'
-import { existsSync, mkdirSync, writeFileSync, statSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync } from 'fs'
 import rawSsot from '@shared/breadcraft.lang.json'
 import { buildVocabulary } from '../shared/vocabulary'
 import type { Ssot } from '../shared/ssot-types'
-import { compile, ramInfo } from '../transpiler'
+import { compile, ramInfo, ramInfoFromMap } from '../transpiler'
 import type { AssetContext } from '../transpiler'
 import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
 import { resolveLanguage } from './config'
 import { buildMessages } from './build-messages'
 import { listAssets, readAsset, projectRegion } from './project'
-import type { BuildLogLine, BuildResult } from '../shared/ipc'
+import type { BuildLogLine, BuildResult, RamInfo } from '../shared/ipc'
 
 // Build & Run: the last mile. Compiles the given .crumb source to C, invokes the
 // bundled cc65 (cl65) to produce a C64 .prg, then launches it in VICE if a path
@@ -90,6 +90,7 @@ export async function buildAndRun(
   mkdirSync(buildDir, { recursive: true })
   const cPath = join(buildDir, 'main.c')
   const prgPath = join(buildDir, 'main.prg')
+  const mapPath = join(buildDir, 'main.map')
   writeFileSync(cPath, code, 'utf8')
   add('info', M.cWritten(cPath))
 
@@ -99,8 +100,11 @@ export async function buildAndRun(
   const cfgPath = join(buildDir, 'breadcraft.cfg')
   writeFileSync(cfgPath, linkerConfig, 'utf8')
 
-  add('cmd', 'cl65 -t c64 -C breadcraft.cfg -O main.c -o main.prg')
-  const cc = await run(cc65Tool('cl65'), ['-t', 'c64', '-C', 'breadcraft.cfg', '-O', 'main.c', '-o', 'main.prg'], buildDir)
+  // `-m main.map` emits the ld65 segment map so the RAM bar can measure the bytes that
+  // actually consume the MAIN budget (B1.T1) — not the .prg size, which over-counts once
+  // assets load at a fixed high address with a gap below them (B1.T2+).
+  add('cmd', 'cl65 -t c64 -C breadcraft.cfg -O -m main.map main.c -o main.prg')
+  const cc = await run(cc65Tool('cl65'), ['-t', 'c64', '-C', 'breadcraft.cfg', '-O', '-m', 'main.map', 'main.c', '-o', 'main.prg'], buildDir)
   if (cc.out) add(cc.code === 0 ? 'info' : 'error', cc.out)
   if (cc.code !== 0 || !existsSync(prgPath)) {
     // A memory-area overflow is the honest STAHL-S1 wall: the program (with its baked
@@ -118,9 +122,15 @@ export async function buildAndRun(
   }
   add('ok', M.buildOk(prgPath))
 
-  // RAM health (STAHL S1c): in the S1a layout the .prg is one contiguous image from
-  // $0801, so its size IS the bytes used — measured against the planned ceiling.
-  const ram = ramInfo(statSync(prgPath).size, mainCeiling)
+  // RAM health (STAHL S1c, honest measure B1.T1): read the ld65 segment map and count
+  // the bytes that consume the MAIN budget. Fall back to the .prg size if the map is
+  // missing/unreadable (older toolchain, IO hiccup) — correct while the image is gapless.
+  let ram: RamInfo
+  try {
+    ram = ramInfoFromMap(readFileSync(mapPath, 'utf8'), mainCeiling)
+  } catch {
+    ram = ramInfo(statSync(prgPath).size, mainCeiling)
+  }
   add(
     ram.state === 'ok' ? 'info' : 'warn',
     M.ramLine(ram.usedBytes, ram.budgetBytes, mainCeiling.toString(16).toUpperCase())

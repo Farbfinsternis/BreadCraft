@@ -32,7 +32,7 @@ import {
   type AssetReader,
   type ResolvedPalette
 } from '../assets'
-import { planMemory } from './memory-map'
+import { planMemory, vicD018 } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
 import type { Locale } from '@shared/ipc'
 
@@ -459,17 +459,14 @@ class Generator {
       '#include <cbm.h> /* waitvsync() */',
       ''
     ]
-    // Tile-world memory map. Same layout proven in _preflight/tilemap.c: screen
-    // $0400, our charset $3000 (free RAM above $0801). The charset pointer is only
-    // needed once a tileset is baked; the screen + geometry whenever the tile-world
-    // primitives (SetTile/GetTile/TileAt/TileSolid) or DrawMap touch the grid.
-    if (this.activeTileset) {
-      header.push(`#define BC_CHARSET ((unsigned char*)0x${map.charsetAddr!.toString(16)}) /* our tileset */`)
-    }
+    // Tile-world memory map. Same layout proven in _preflight/tilemap.c: screen $0400,
+    // our charset $3000. The charset bytes are linked straight into the BC_CHARSET segment
+    // at that address (S1b, B1.T2 — see genUseTileset), so no BC_CHARSET pointer/copy is
+    // needed here; the VIC reads $3000 directly.
     // BC_SCREEN is needed for the tile grid AND for DrawText (which writes screen codes
     // straight into it). The geometry defines below are only the tile-collision origin.
     if (this.activeTileset || this.usesTileWorld || this.usesDrawText) {
-      header.push('#define BC_SCREEN  ((unsigned char*)0x0400) /* 40x25 screen RAM */')
+      header.push(`#define BC_SCREEN  ((unsigned char*)${hx(map.screenAddr)}) /* 40x25 screen RAM */`)
     }
     if (this.activeTileset || this.usesTileWorld) {
       header.push(
@@ -494,10 +491,10 @@ class Generator {
     // BC_SPR_DATA(n) = $3800 + n*64; its pointer is BC_SPR_PTR[n] ($07F8+n) = block/64
     // = 224 + n. Proven layout: _preflight/tilecollide.c/platformer.c ($3400 area).
     if (this.usesSpriteData) {
-      const spr = `0x${map.spritesAddr!.toString(16)}`
+      const spr = hx(map.spritesAddr!)
       header.push(
         `#define BC_SPR_DATA(n) ((unsigned char*)(${spr} + (unsigned int)(n) * 64))`,
-        '#define BC_SPR_PTR  ((unsigned char*)0x07F8) /* sprite-pointer slots 0..7 */',
+        `#define BC_SPR_PTR  ((unsigned char*)${hx(map.spritePtrAddr)}) /* sprite-pointer slots 0..7 */`,
         `#define BC_SPR_BLOCK0 (${spr} / 64)          /* slot n adds n */`,
         ''
       )
@@ -1287,18 +1284,26 @@ class Generator {
       return
     }
 
+    // S1b (B1.T2): bake the charset DIRECTLY into the BC_CHARSET segment, which the linker
+    // loads at the reserved address ($3000) — so the KERNAL's program load places the bytes
+    // where the VIC reads them. No second copy in RODATA, no runtime copy loop: that double
+    // storage cost ~2KB of the scarce MAIN budget. `const` (external linkage, no `static`)
+    // forces cc65 to emit it even though only the hardware "reads" it. Phase 1 has one
+    // charset (single activeTileset), so one 2KB region is enough.
     const dataName = `tileset_${safeAssetName(id)}`
     this.bakedData.push(
-      `static const unsigned char ${dataName}[${bytes.length}] = {`,
+      '#pragma rodata-name (push, "BC_CHARSET")',
+      `const unsigned char ${dataName}[${bytes.length}] = {`,
       byteRows(bytes),
-      '};'
+      '};',
+      '#pragma rodata-name (pop)'
     )
     this.activeTileset = id
 
-    this.emit(`/* UseTileset "${id}" */`)
-    this.emit(`{ unsigned int _i; for (_i = 0; _i < ${bytes.length}; ++_i) BC_CHARSET[_i] = ${dataName}[_i]; }`)
-    // Point VIC at screen $0400 + charset $3000 (VIC.addr = 0x1C), proven in tilemap.c.
-    this.emit('VIC.addr = 0x1C;')
+    this.emit(`/* UseTileset "${id}" — charset loaded at the reserved address by the linker */`)
+    // Point the VIC at the screen + charset positions within the bank. The value comes from
+    // the same layout the memory plan uses (vicD018), so $D018 and the linked charset agree.
+    this.emit(`VIC.addr = ${hx(vicD018(), 2)};`)
     // MC-text shared colours from the project palette (the "00/01/10" pairs; the
     // "11" pair is per-cell Color-RAM). Same registers the sprites share — one
     // project-wide truth (memory breadcraft-project-palette).
@@ -2082,6 +2087,11 @@ function isConstOne(e: Expr): boolean {
 function cName(name: string): string {
   // Suffix punctuation ($, .) is part of the written variable, not the C name.
   return name.replace(/[$]/g, '_str').replace(/[.]/g, '_')
+}
+
+/** A C hex literal, uppercase, zero-padded to `digits` (default 4) — e.g. hx(0x7f8) → "0x07F8". */
+function hx(n: number, digits = 4): string {
+  return '0x' + n.toString(16).toUpperCase().padStart(digits, '0')
 }
 
 /** A C-identifier-safe slug for an asset id (used in baked data names). */
