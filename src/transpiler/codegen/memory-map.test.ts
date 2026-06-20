@@ -16,56 +16,57 @@ describe('memory-map planner (STAHL S1a)', () => {
     expect(m.cfg).not.toContain('HIGH:')
   })
 
-  it('a tileset reserves $3000 and caps MAIN below it; BSS moves above the bank', () => {
+  it('a tileset takes the bank-1 layout: charset $7000, MAIN to $7000, BSS at $8000 (B1.T4)', () => {
     const m = planMemory({ usesCharset: true, usesSprites: false })
-    expect(m.charsetAddr).toBe(0x3000)
+    expect(m.bank).toBe(1)
+    expect(m.charsetAddr).toBe(0x7000)
     expect(m.spritesAddr).toBeNull()
-    // MAIN capped at the island AND filled so the charset lands at $3000 (B1.T2).
-    expect(m.cfg).toContain('size = $3000 - __HEADER_LAST__, fill = yes;')
-    expect(m.cfg).toContain('CHARSET:  file = %O, define = yes, start = $3000,           size = $0800;')
-    expect(m.cfg).toContain('BC_CHARSET: load = CHARSET')
-    expect(m.cfg).toContain('HIGH:     file = "", define = yes, start = $4000,')
+    // MAIN runs in one contiguous block up to the charset; no fill (charset is copy-based).
+    expect(m.cfg).toContain('MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = $7000 - __HEADER_LAST__;')
+    expect(m.cfg).not.toContain('fill = yes') // copy-based → compact .prg, no padding
+    expect(m.cfg).toContain('HIGH:     file = "", define = yes, start = $8000,') // BSS above the bank
     expect(m.cfg).toContain('BSS:      load = HIGH,')
-    expect(m.cfg).not.toContain('SPRITES:') // sprites unused → not reserved
+    expect(m.cfg).not.toContain('CHARSET:') // no linked charset segment (copied at runtime)
+    expect(m.cfg).not.toContain('SPRITES:')
   })
 
-  it('sprites-only reserves $3800 and caps MAIN there (charset stays free)', () => {
+  it('sprites-only stays in bank 0: reserves $3800 and caps MAIN there (no charset)', () => {
     const m = planMemory({ usesCharset: false, usesSprites: true })
+    expect(m.bank).toBe(0)
     expect(m.charsetAddr).toBeNull()
     expect(m.spritesAddr).toBe(0x3800)
-    // No charset → no fill (sprites are copy-based, BC_SPRITES is empty; padding would waste .prg).
     expect(m.cfg).toContain('size = $3800 - __HEADER_LAST__;') // island starts at sprites, no fill
     expect(m.cfg).not.toContain('fill = yes')
     expect(m.cfg).toContain('SPRITES:  file = %O, define = yes, start = $3800,')
     expect(m.cfg).not.toContain('CHARSET:')
   })
 
-  it('charset + sprites reserve both; MAIN caps at the lower one ($3000)', () => {
+  it('charset + sprites: bank 1, charset $7000 caps MAIN, sprites $7C00 above it', () => {
     const m = planMemory({ usesCharset: true, usesSprites: true })
-    expect(m.charsetAddr).toBe(0x3000)
-    expect(m.spritesAddr).toBe(0x3800)
-    expect(m.cfg).toContain('size = $3000 - __HEADER_LAST__, fill = yes;') // lower of the two, filled
-    expect(m.cfg).toContain('CHARSET:  file = %O, define = yes, start = $3000,')
-    expect(m.cfg).toContain('SPRITES:  file = %O, define = yes, start = $3800,')
-    expect(m.cfg).toContain('BC_CHARSET: load = CHARSET')
-    expect(m.cfg).toContain('BC_SPRITES: load = SPRITES')
+    expect(m.bank).toBe(1)
+    expect(m.charsetAddr).toBe(0x7000)
+    expect(m.spritesAddr).toBe(0x7c00)
+    expect(m.spriteBlock0).toBe((0x7c00 - 0x4000) / 64) // bank-relative block = 240
+    expect(m.mainCeiling).toBe(0x7000) // the charset (lowest graphics) caps MAIN
+    expect(m.cfg).toContain('size = $7000 - __HEADER_LAST__;')
   })
 
-  it('exposes the bank-0 layout (bank/screen/sprite-ptr/$D018) from one plan (B1.T3)', () => {
+  it('exposes the layout (bank/screen/sprite-ptr/$D018) from one plan (B1.T3/T4)', () => {
     const m = planMemory({ usesCharset: true, usesSprites: true })
-    expect(m.bank).toBe(0)
-    expect(m.screenAddr).toBe(0x0400)
-    expect(m.spritePtrAddr).toBe(0x07f8) // screen page + $3F8
-    expect(m.d018).toBe(0x1c) // screen $0400 (bits 4-7) + charset $3000 (bits 1-3)
-    // A graphics-less program still reports the bank-0 screen (defaults), no island.
+    expect(m.bank).toBe(1)
+    expect(m.ciaBankBits).toBe(0b10) // CIA2 bank bits, inverted: bank 1 → %10
+    expect(m.screenAddr).toBe(0x7800)
+    expect(m.spritePtrAddr).toBe(0x7bf8) // screen page + $3F8
+    expect(m.d018).toBe(0xec) // screen $7800 (bits 4-7) + charset $7000 (bits 1-3) within bank 1
+    // A graphics-less program stays in bank 0 with the KERNAL screen, no bank switch.
     const none = planMemory({ usesCharset: false, usesSprites: false })
     expect(none.bank).toBe(0)
     expect(none.screenAddr).toBe(0x0400)
     expect(none.charsetAddr).toBeNull()
   })
 
-  it('mainCeiling is the reserved island when graphics are used, else top of RAM', () => {
-    expect(planMemory({ usesCharset: true, usesSprites: true }).mainCeiling).toBe(0x3000)
+  it('mainCeiling: charset → $7000 (bank 1), sprites-only → $3800, graphics-less → $D000', () => {
+    expect(planMemory({ usesCharset: true, usesSprites: true }).mainCeiling).toBe(0x7000)
     expect(planMemory({ usesCharset: false, usesSprites: true }).mainCeiling).toBe(0x3800)
     expect(planMemory({ usesCharset: false, usesSprites: false }).mainCeiling).toBe(0xd000)
   })

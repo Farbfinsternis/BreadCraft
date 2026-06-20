@@ -8,16 +8,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Geändert
-- **Dein Zeichensatz wohnt jetzt nur noch einmal im Speicher — das schafft Platz fürs Spiel (BRONZE B1.T2).**
-  Bisher lag ein selbstgemaltes Tileset doppelt im Programm: einmal als Vorlage unten im knappen
-  Arbeitsspeicher und einmal als laufende Kopie dort, wo der Grafikchip sie liest — beim Start wurde
-  die eine in die andere kopiert. Diese Dopplung kostete rund 2 KB des engen unteren Speichers, genau
-  dort, wo der Platz am knappsten ist. Jetzt legt BreadCraft den Zeichensatz beim Bauen direkt an seinen
-  endgültigen Platz; die Kopie und ihre Vorlage entfallen. Für „Into The Deep" fällt die Speicheranzeige
-  damit von ~91 % auf ~70 % — über 2 KB Luft für mehr Spielcode, ohne dass sich am Bild etwas ändert.
-  (Die fertige `.prg`-Datei wird dabei etwas größer, weil der freigewordene Bereich vorerst mit Nullen
-  aufgefüllt wird — das ist nur Dateigröße, kein Speicher, und es schrumpft wieder, sobald das Spiel in
-  den gewonnenen Platz hineinwächst.)
+- **Deine Grafik zieht in eine eigene Speicher-Etage — und macht damit das Drei- bis Vierfache an Platz fürs Spiel frei (BRONZE B1).**
+  Bisher teilten sich dein Spielcode und die selbstgemalte Grafik dasselbe enge Erdgeschoss des C64,
+  und ab etwa 10 KB war Schluss — „Into The Deep" drückte schon bei 91 % gegen die Decke. Der C64 kann
+  aber durch vier verschiedene 16-KB-Fenster auf seinen Speicher schauen; BreadCraft schiebt deine Grafik
+  (Zeichensatz, Bildschirm, Sprites) jetzt nach oben in ein eigenes solches Fenster. Dadurch bekommt dein
+  Programm den ganzen unteren Speicher **plus** die Etage über der Grafik — aus ~10 KB werden rund 26 KB
+  für Code und feste Daten und nochmal ~18 KB für große Felder (Spielwelten, Gegnerlisten). „Into The
+  Deep" fällt damit von ~91 % auf ~35 %. Am Bild und am Spiel ändert sich nichts — nur der Platz, in den
+  alles hineinwachsen kann, ist jetzt viel größer. (Ehrlich bleibt ehrlich: es ist ein gemeinsamer
+  Vorrat — auch animierte Grafik und Sound ziehen mit ein; die Speicheranzeige bleibt dein Wegweiser.)
 - **Die RAM-Anzeige sagt jetzt die Wahrheit, auch wenn die Grafik auszieht (BRONZE B1.T1).**
   Bisher maß der Speicher-Balken schlicht die Größe der fertigen `.prg`-Datei — das ging gut,
   solange alles dicht an dicht ab `$0801` lag. Sobald die Grafik aber an eine feste hohe Adresse

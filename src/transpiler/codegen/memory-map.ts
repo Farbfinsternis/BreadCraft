@@ -12,79 +12,121 @@ import type { RamInfo } from '@shared/ipc'
 // can't silently grow into it. If the program would cross the island, ld65 errors
 // HONESTLY at build time instead of the game overwriting its own bytes at runtime.
 
-// The VIC graphics bank and the offsets of screen / charset / sprite data WITHIN it.
-// The VIC-II sees one 16KB bank at a time; today that's bank 0, where the code also runs
-// (B1.T4 will raise the bank to clear the low RAM for code). EVERY derived address and
-// register value below — screen, sprite pointers, $D018 — comes from these constants, so
-// the cfg, the C #defines and the VIC registers can't drift apart (the two-truths class,
-// Befund 23). Bank 0 reproduces the proven _preflight layout byte-for-byte.
-const VIC_BANK = 0 // VIC bank 0..3 (0 = $0000–$3FFF, where code lives today)
+// The VIC-II sees one 16KB bank at a time. EVERY derived address and register value below
+// — screen, charset, sprite data/pointers, $D018, the $DD00 bank bits — comes from these
+// constants, so the cfg, the C #defines and the VIC registers can't drift apart (the
+// two-truths class, Befund 23).
+//
+// Two layouts (B1.T4): a project with a CUSTOM CHARSET moves its graphics to the TOP of
+// VIC bank 1, which frees the whole low RAM + the high RAM ($8000+) for the program
+// (~10KB → ~44KB). A project WITHOUT a charset (graphics-less, or sprites-only) stays in
+// bank 0 with the KERNAL screen + ROM font — no bank switch, no regression. Bank 1 has no
+// CHARGEN ROM shadow (unlike banks 0/2), so the charset can sit anywhere in it.
 const VIC_BANK_SIZE = 0x4000 // each VIC bank is 16KB
-const SCREEN_OFFSET = 0x0400 // screen RAM, $0400-aligned within the bank
-const CHARSET_OFFSET = 0x3000 // charset, $0800-aligned (clears the $1000 CHARGEN shadow in bank 0)
-const SPRITES_OFFSET = 0x3800 // 64-byte-aligned sprite-shape block above the charset
 const SPRITE_PTR_OFFSET = 0x03f8 // the 8 sprite pointers sit in the last bytes of the screen page
-const REGION_SIZE = 0x0800 // 2KB each (the charset needs the full slot; sprites get headroom)
-const HIGH_START = 0x4000 // above the bank-0 graphics area; BSS lives here once the island
-//                           is reserved, so it can't grow down into the charset/sprites.
+const SPRITE_BLOCK = 64 // a sprite shape is 64 bytes; its pointer byte = (addr − bank) / 64
+const REGION_SIZE = 0x0800 // 2KB sprite island (bank-0 sprites-only reservation)
 const LOAD_ADDR = 0x0801 // C64 BASIC start — every .prg loads here
-const HIMEM = 0xd000 // top of usable RAM below the I/O area (no graphics reserved → this caps)
+const HIMEM = 0xd000 // top of usable RAM below the I/O area
 
-const BANK_BASE = VIC_BANK * VIC_BANK_SIZE
+// Bank-1 layout (custom charset). Graphics packed at the top so the initialized program
+// image stays contiguous from $0801 up to the charset, and BSS lives above the bank.
+const B1_BANK = 1
+const B1_BASE = B1_BANK * VIC_BANK_SIZE // $4000
+const B1_CHARSET = B1_BASE + 0x3000 // $7000 — lowest graphics, so it caps MAIN
+const B1_SCREEN = B1_BASE + 0x3800 // $7800
+const B1_SPRITES = B1_BASE + 0x3c00 // $7C00
+const B1_BSS = 0x8000 // BSS (big arrays) above the $4000–$7FFF graphics bank
 
-/** The $D018 (VIC.addr) value for the graphics layout: the screen position (bits 4–7, in
- *  $0400 steps) and the charset position (bits 1–3, in $0800 steps) WITHIN the VIC bank.
- *  Bank 0 + screen $0400 + charset $3000 → $1C, the value proven in _preflight/tilemap.c. */
+// Bank-0 layout (no custom charset). KERNAL screen + ROM font; a sprites-only program
+// reserves a copy-target island just under $4000.
+const B0_SCREEN = 0x0400
+const B0_SPRITES = 0x3800
+const B0_HIGH = 0x4000 // BSS above the bank-0 sprite island
+
+/** The $D018 (VIC.addr) value: screen position (bits 4–7, $0400 steps) + charset position
+ *  (bits 1–3, $0800 steps) WITHIN the bank. */
+function d018For(screenAddr: number, charsetAddr: number, bankBase: number): number {
+  return (((screenAddr - bankBase) / 0x0400) << 4) | (((charsetAddr - bankBase) / 0x0800) << 1)
+}
+
+/** The VIC.addr value for a charset program. A custom charset always uses the bank-1
+ *  layout (B1.T4), so this single value is what genUseTileset emits; it equals the plan's
+ *  `d018` field. Bank 1, screen $7800, charset $7000 → $EC. */
 export function vicD018(): number {
-  return ((SCREEN_OFFSET / 0x0400) << 4) | ((CHARSET_OFFSET / 0x0800) << 1)
+  return d018For(B1_SCREEN, B1_CHARSET, B1_BASE)
 }
 
 export interface MemoryUse {
-  /** A tileset is baked → charset bytes need a reserved VIC slot. */
+  /** A tileset is baked → graphics move to bank 1, charset copied in at runtime. */
   usesCharset: boolean
-  /** Sprite shapes are baked → they need a reserved 64-byte-aligned block. */
+  /** Sprite shapes are baked → they need a 64-byte-aligned copy-target block. */
   usesSprites: boolean
 }
 
 export interface MemoryMap {
-  /** The VIC bank the graphics live in (0..3). */
+  /** The VIC bank the graphics live in (0 or 1). 0 = no bank switch (KERNAL defaults). */
   bank: number
+  /** The CIA2 $DD00 bank-select bits (inverted: bank 1 → %10). Only poked when bank ≠ 0. */
+  ciaBankBits: number
   /** Screen-RAM address (where DrawText/the tile grid write; the VIC reads it). */
   screenAddr: number
   /** The 8 sprite-pointer slots (last bytes of the screen page). */
   spritePtrAddr: number
+  /** The bank-relative base block for sprite data: pointer[n] = spriteBlock0 + n. */
+  spriteBlock0: number | null
   /** The $D018 / VIC.addr value placing screen + charset within the bank. */
   d018: number
-  /** Where the baked charset is linked, or null if the project uses none. */
+  /** The charset's runtime copy-target address, or null if the project uses none. */
   charsetAddr: number | null
-  /** Where baked sprite shapes are linked, or null if the project uses none. */
+  /** The sprite-data block base address, or null if the project uses none. */
   spritesAddr: number | null
-  /** The address the loaded program image must stay below: the reserved VIC island
-   *  ($3000/$3800) when graphics are used, else the top of RAM ($D000). The RAM
-   *  health-bar measures fullness against this (STAHL S1c). */
+  /** The address the loaded program image must stay below (the RAM health-bar measures
+   *  fullness against this, STAHL S1c): the charset ($7000, bank 1), the sprite island
+   *  ($3800, bank 0 sprites-only), or the top of RAM ($D000, graphics-less). */
   mainCeiling: number
   /** The complete ld65 config tailored to this project (pass to cl65 via -C). */
   cfg: string
 }
 
-/** Plan the C64 memory map for a project from what it actually uses. */
+/** Plan the C64 memory map for a project from what it actually uses. A custom charset
+ *  takes the bank-1 layout (the big-RAM move, B1.T4); otherwise bank 0. */
 export function planMemory(use: MemoryUse): MemoryMap {
-  const screenAddr = BANK_BASE + SCREEN_OFFSET
-  const spritePtrAddr = screenAddr + SPRITE_PTR_OFFSET
-  const charsetAddr = use.usesCharset ? BANK_BASE + CHARSET_OFFSET : null
-  const spritesAddr = use.usesSprites ? BANK_BASE + SPRITES_OFFSET : null
-  const reserved = [charsetAddr, spritesAddr].filter((a): a is number => a !== null)
-  // The reserved VIC island starts at the lowest reserved region; MAIN must stop below it.
-  const islandStart = reserved.length ? Math.min(...reserved) : null
+  return use.usesCharset ? planBank1(use) : planBank0(use)
+}
+
+/** Bank-1: graphics at the top of $4000–$7FFF, program gets the low RAM + $8000+. */
+function planBank1(use: MemoryUse): MemoryMap {
+  const charsetAddr = B1_CHARSET
+  const spritesAddr = use.usesSprites ? B1_SPRITES : null
   return {
-    bank: VIC_BANK,
-    screenAddr,
-    spritePtrAddr,
-    d018: vicD018(),
+    bank: B1_BANK,
+    ciaBankBits: B1_BANK ^ 0b11, // $DD00 bank bits are inverted: bank 1 → %10
+    screenAddr: B1_SCREEN,
+    spritePtrAddr: B1_SCREEN + SPRITE_PTR_OFFSET,
+    spriteBlock0: spritesAddr !== null ? (spritesAddr - B1_BASE) / SPRITE_BLOCK : null,
+    d018: d018For(B1_SCREEN, charsetAddr, B1_BASE),
     charsetAddr,
     spritesAddr,
-    mainCeiling: islandStart ?? HIMEM,
-    cfg: buildCfg(charsetAddr, spritesAddr, islandStart)
+    mainCeiling: charsetAddr, // the charset is the lowest graphics → MAIN stops here
+    cfg: buildCfgBank1(charsetAddr)
+  }
+}
+
+/** Bank-0: KERNAL screen + ROM font (no charset). Full RAM, or a sprite island. */
+function planBank0(use: MemoryUse): MemoryMap {
+  const spritesAddr = use.usesSprites ? B0_SPRITES : null
+  return {
+    bank: 0,
+    ciaBankBits: 0 ^ 0b11, // bank 0 (no switch is emitted; kept for consistency)
+    screenAddr: B0_SCREEN,
+    spritePtrAddr: B0_SCREEN + SPRITE_PTR_OFFSET,
+    spriteBlock0: spritesAddr !== null ? spritesAddr / SPRITE_BLOCK : null,
+    d018: d018For(B0_SCREEN, B0_SPRITES, 0), // unused (no charset → no VIC.addr write)
+    charsetAddr: null,
+    spritesAddr,
+    mainCeiling: spritesAddr ?? HIMEM,
+    cfg: buildCfgBank0(spritesAddr)
   }
 }
 
@@ -165,77 +207,78 @@ function hex(n: number): string {
   return '$' + n.toString(16).toUpperCase().padStart(4, '0')
 }
 
-/** Render the ld65 config. The cc65 mechanics (ZP, header, CONDES tables, stack symbols)
- *  are constant boilerplate; only the MEMORY regions + a couple of SEGMENTS vary. */
-function buildCfg(charsetAddr: number | null, spritesAddr: number | null, islandStart: number | null): string {
-  const memory: string[] = [
-    'MEMORY {',
-    '    ZP:       file = "", define = yes, start = $0002,           size = $001A;',
-    '    LOADADDR: file = %O,               start = %S - 2,          size = $0002;',
-    '    HEADER:   file = %O, define = yes, start = %S,              size = $000D;'
+// The cc65 mechanics that don't vary between layouts: ZP/LOADADDR/HEADER memory, the
+// segment-to-region map's fixed rows, the SYMBOLS/FEATURES boilerplate and CONDES tables.
+const CFG_HEAD = [
+  'MEMORY {',
+  '    ZP:       file = "", define = yes, start = $0002,           size = $001A;',
+  '    LOADADDR: file = %O,               start = %S - 2,          size = $0002;',
+  '    HEADER:   file = %O, define = yes, start = %S,              size = $000D;'
+]
+const CFG_SEGMENTS_MAIN = [
+  '    ZEROPAGE: load = ZP,       type = zp;',
+  '    LOADADDR: load = LOADADDR, type = ro;',
+  '    EXEHDR:   load = HEADER,   type = ro;',
+  '    STARTUP:  load = MAIN,     type = ro;',
+  '    LOWCODE:  load = MAIN,     type = ro,  optional = yes;',
+  '    CODE:     load = MAIN,     type = ro;',
+  '    RODATA:   load = MAIN,     type = ro;',
+  '    DATA:     load = MAIN,     type = rw;',
+  '    INIT:     load = MAIN,     type = rw;',
+  '    ONCE:     load = MAIN,     type = ro,  define = yes;'
+]
+const CFG_TAIL = [
+  'FEATURES {',
+  '    STARTADDRESS: default = $0801;',
+  '}',
+  'SYMBOLS {',
+  '    __LOADADDR__:  type = import;',
+  '    __EXEHDR__:    type = import;',
+  '    __STACKSIZE__: type = weak, value = $0800;',
+  '    __HIMEM__:     type = weak, value = $D000;',
+  '}',
+  'FEATURES {',
+  '    CONDES: type = constructor, label = __CONSTRUCTOR_TABLE__, count = __CONSTRUCTOR_COUNT__, segment = ONCE;',
+  '    CONDES: type = destructor,  label = __DESTRUCTOR_TABLE__,  count = __DESTRUCTOR_COUNT__,  segment = RODATA;',
+  '    CONDES: type = interruptor, label = __INTERRUPTOR_TABLE__, count = __INTERRUPTOR_COUNT__, segment = RODATA, import = __CALLIRQ__;',
+  '}'
+]
+
+/** Bank-1 cfg (custom charset): all initialized segments below the graphics ($7000) in
+ *  one contiguous block — no fill, so the .prg stays compact — and BSS above the bank
+ *  ($8000). The charset/screen/sprites at $7000–$7FFF are runtime RAM (copied/written),
+ *  not linker segments, so nothing else is placed there. */
+function buildCfgBank1(charsetAddr: number): string {
+  const memory = [
+    ...CFG_HEAD,
+    `    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = ${hex(charsetAddr)} - __HEADER_LAST__;`,
+    `    HIGH:     file = "", define = yes, start = ${hex(B1_BSS)},           size = __HIMEM__ - __STACKSIZE__ - ${hex(B1_BSS)};`,
+    '}'
   ]
-  if (islandStart === null) {
-    // No graphics in bank 0 → full RAM, stock-equivalent layout.
+  const segments = ['SEGMENTS {', ...CFG_SEGMENTS_MAIN, '    BSS:      load = HIGH,     type = bss, define = yes;', '}']
+  return [...CFG_TAIL.slice(0, 9), ...memory, ...segments, ...CFG_TAIL.slice(9), ''].join('\n')
+}
+
+/** Bank-0 cfg (no charset): the stock-equivalent full-RAM layout, or — for a sprites-only
+ *  program — MAIN capped below a reserved sprite island ($3800) with BSS above it. */
+function buildCfgBank0(spritesAddr: number | null): string {
+  const memory = [...CFG_HEAD]
+  const segments = ['SEGMENTS {', ...CFG_SEGMENTS_MAIN]
+  if (spritesAddr === null) {
     memory.push(
       '    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = __HIMEM__ - __HEADER_LAST__;',
       '    BSS:      file = "",               start = __ONCE_RUN__,    size = __HIMEM__ - __STACKSIZE__ - __ONCE_RUN__;'
     )
+    segments.push('    BSS:      load = BSS,      type = bss, define = yes;')
   } else {
-    // Cap MAIN below the reserved VIC island; BSS goes above the bank-0 graphics area.
-    // When the charset is linked straight into its region (S1b/B1.T2), MAIN must be
-    // `fill`ed to its full size: ld65 writes regions to the .prg back-to-back with NO
-    // address-gap padding, so without the fill the charset bytes would land right after
-    // MAIN (~$2400) instead of at $3000 — garbage tiles. The fill pads the gap (the freed
-    // RAM) with zeros so the load image is correct; it costs .prg size, not RAM, and that
-    // padding shrinks as the program grows into the reclaimed space. Sprites stay copy-
-    // based (BC_SPRITES empty) → a sprites-only program needs no fill.
-    const mainFill = charsetAddr !== null ? ', fill = yes' : ''
     memory.push(
-      `    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = ${hex(islandStart)} - __HEADER_LAST__${mainFill};`
+      `    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = ${hex(spritesAddr)} - __HEADER_LAST__;`,
+      `    SPRITES:  file = %O, define = yes, start = ${hex(spritesAddr)},           size = ${hex(REGION_SIZE)};`,
+      `    HIGH:     file = "", define = yes, start = ${hex(B0_HIGH)},           size = __HIMEM__ - __STACKSIZE__ - ${hex(B0_HIGH)};`
     )
-    if (charsetAddr !== null) memory.push(`    CHARSET:  file = %O, define = yes, start = ${hex(charsetAddr)},           size = ${hex(REGION_SIZE)};`)
-    if (spritesAddr !== null) memory.push(`    SPRITES:  file = %O, define = yes, start = ${hex(spritesAddr)},           size = ${hex(REGION_SIZE)};`)
-    memory.push(`    HIGH:     file = "", define = yes, start = ${hex(HIGH_START)},           size = __HIMEM__ - __STACKSIZE__ - ${hex(HIGH_START)};`)
+    segments.push('    BC_SPRITES: load = SPRITES, type = ro,  optional = yes;', '    BSS:      load = HIGH,     type = bss, define = yes;')
   }
   memory.push('}')
-
-  const segments: string[] = [
-    'SEGMENTS {',
-    '    ZEROPAGE: load = ZP,       type = zp;',
-    '    LOADADDR: load = LOADADDR, type = ro;',
-    '    EXEHDR:   load = HEADER,   type = ro;',
-    '    STARTUP:  load = MAIN,     type = ro;',
-    '    LOWCODE:  load = MAIN,     type = ro,  optional = yes;',
-    '    CODE:     load = MAIN,     type = ro;',
-    '    RODATA:   load = MAIN,     type = ro;',
-    '    DATA:     load = MAIN,     type = rw;',
-    '    INIT:     load = MAIN,     type = rw;',
-    '    ONCE:     load = MAIN,     type = ro,  define = yes;'
-  ]
-  // The asset segments are `optional` so an empty one (before S1b bakes data into it)
-  // doesn't error. They load into the reserved regions, i.e. exactly at their address.
-  if (charsetAddr !== null) segments.push('    BC_CHARSET: load = CHARSET, type = ro,  optional = yes;')
-  if (spritesAddr !== null) segments.push('    BC_SPRITES: load = SPRITES, type = ro,  optional = yes;')
-  segments.push(`    BSS:      load = ${islandStart === null ? 'BSS' : 'HIGH'},      type = bss, define = yes;`)
   segments.push('}')
-
-  const boilerplate = [
-    'FEATURES {',
-    '    STARTADDRESS: default = $0801;',
-    '}',
-    'SYMBOLS {',
-    '    __LOADADDR__:  type = import;',
-    '    __EXEHDR__:    type = import;',
-    '    __STACKSIZE__: type = weak, value = $0800;',
-    '    __HIMEM__:     type = weak, value = $D000;',
-    '}'
-  ]
-  const tables = [
-    'FEATURES {',
-    '    CONDES: type = constructor, label = __CONSTRUCTOR_TABLE__, count = __CONSTRUCTOR_COUNT__, segment = ONCE;',
-    '    CONDES: type = destructor,  label = __DESTRUCTOR_TABLE__,  count = __DESTRUCTOR_COUNT__,  segment = RODATA;',
-    '    CONDES: type = interruptor, label = __INTERRUPTOR_TABLE__, count = __INTERRUPTOR_COUNT__, segment = RODATA, import = __CALLIRQ__;',
-    '}'
-  ]
-  return [...boilerplate, ...memory, ...segments, ...tables, ''].join('\n')
+  return [...CFG_TAIL.slice(0, 9), ...memory, ...segments, ...CFG_TAIL.slice(9), ''].join('\n')
 }
