@@ -32,7 +32,7 @@ import {
   type AssetReader,
   type ResolvedPalette
 } from '../assets'
-import { planMemory } from './memory-map'
+import { planMemory, vicD018 } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
 import type { Locale } from '@shared/ipc'
 
@@ -94,6 +94,11 @@ export interface CodeGenResult {
   /** The address the program image must stay below (VIC island $3000/$3800 or $D000) —
    *  the ceiling the RAM health-bar measures against (STAHL S1c). */
   mainCeiling: number
+  /** Base of the high BSS pool (big arrays above the graphics bank), or null for a
+   *  single-pool layout — the second RAM bar measures against this (B1.T5). */
+  highBase: number | null
+  /** Top of the high BSS pool ($C800). */
+  highCeiling: number
 }
 
 /**
@@ -338,6 +343,10 @@ class Generator {
   /** DrawText or Color used → emit the bc_pen pen-colour global (the Color command's
    *  state, read by every DrawText). */
   private usesPen = false
+  /** Cls used → emit the bc_cls helper. It clears the visible screen, which is the KERNAL's
+   *  $0400 in bank 0 (clrscr) but the relocated BC_SCREEN in bank 1 (B1.T4) — and the bank
+   *  isn't known until the memory plan, so Cls goes through a helper resolved at the end. */
+  private usesCls = false
 
   // ---- sprites (M3.T2): Sprite / ShowSprite / HideSprite ----
   /** Any sprite command used. Sprites poke VIC registers directly (c64.h, always
@@ -459,17 +468,17 @@ class Generator {
       '#include <cbm.h> /* waitvsync() */',
       ''
     ]
-    // Tile-world memory map. Same layout proven in _preflight/tilemap.c: screen
-    // $0400, our charset $3000 (free RAM above $0801). The charset pointer is only
-    // needed once a tileset is baked; the screen + geometry whenever the tile-world
-    // primitives (SetTile/GetTile/TileAt/TileSolid) or DrawMap touch the grid.
+    // Tile-world memory map (B1.T4). A custom charset moves graphics to the top of VIC
+    // bank 1: charset $7000 (copy target), screen $7800, sprites $7C00 — addresses all from
+    // the memory plan. The charset is copied there at runtime (genUseTileset); direct-
+    // linking it would force the .prg to pad up to $7000, so copy keeps the .prg compact.
     if (this.activeTileset) {
-      header.push(`#define BC_CHARSET ((unsigned char*)0x${map.charsetAddr!.toString(16)}) /* our tileset */`)
+      header.push(`#define BC_CHARSET ((unsigned char*)${hx(map.charsetAddr!)}) /* charset copy target */`)
     }
     // BC_SCREEN is needed for the tile grid AND for DrawText (which writes screen codes
     // straight into it). The geometry defines below are only the tile-collision origin.
     if (this.activeTileset || this.usesTileWorld || this.usesDrawText) {
-      header.push('#define BC_SCREEN  ((unsigned char*)0x0400) /* 40x25 screen RAM */')
+      header.push(`#define BC_SCREEN  ((unsigned char*)${hx(map.screenAddr)}) /* 40x25 screen RAM */`)
     }
     if (this.activeTileset || this.usesTileWorld) {
       header.push(
@@ -489,16 +498,16 @@ class Generator {
     if (this.usesSprites) {
       header.push('/* sprites: positions/enable via VIC registers (c64.h) */', '')
     }
-    // UseSprite (P2.T3) bakes shapes into a 64-byte-aligned block above the charset
-    // ($3800, clear of charset $3000–$37FF + screen $0400). Slot n's shape lives at
-    // BC_SPR_DATA(n) = $3800 + n*64; its pointer is BC_SPR_PTR[n] ($07F8+n) = block/64
-    // = 224 + n. Proven layout: _preflight/tilecollide.c/platformer.c ($3400 area).
+    // UseSprite (P2.T3) bakes shapes into a 64-byte-aligned block (bank 1: $7C00). Slot n's
+    // shape lives at BC_SPR_DATA(n) = base + n*64; its pointer BC_SPR_PTR[n] (screen page +
+    // $3F8) holds the BANK-RELATIVE block number BC_SPR_BLOCK0 + n. All addresses + the
+    // block base come from the memory plan, so they follow the bank.
     if (this.usesSpriteData) {
-      const spr = `0x${map.spritesAddr!.toString(16)}`
+      const spr = hx(map.spritesAddr!)
       header.push(
         `#define BC_SPR_DATA(n) ((unsigned char*)(${spr} + (unsigned int)(n) * 64))`,
-        '#define BC_SPR_PTR  ((unsigned char*)0x07F8) /* sprite-pointer slots 0..7 */',
-        `#define BC_SPR_BLOCK0 (${spr} / 64)          /* slot n adds n */`,
+        `#define BC_SPR_PTR  ((unsigned char*)${hx(map.spritePtrAddr)}) /* sprite-pointer slots 0..7 */`,
+        `#define BC_SPR_BLOCK0 (${map.spriteBlock0})          /* slot n adds n */`,
         ''
       )
     }
@@ -639,12 +648,42 @@ class Generator {
         '}'
       )
     }
+    // Cls / startup-clear helper (B1.T4/B1.T5). In bank 1 the visible screen is the
+    // relocated BC_SCREEN, which conio's clrscr (hard-wired to $0400) wouldn't touch — so
+    // clear it ourselves: 1000 cells to the space screen code AND a default colour. The
+    // colour matters because a CUSTOM charset's slot $20 isn't guaranteed blank, so a
+    // cleared cell could otherwise show that glyph in stale Colour-RAM (clrscr clears
+    // $D800 too; we match it). Emitted whenever bank != 0 — the startup blank below needs
+    // it, since the KERNAL only pre-clears $0400, not our relocated screen — OR Cls is
+    // used. In bank 0 the screen IS $0400, so the stock clrscr is exactly right.
+    if (this.usesCls || map.bank !== 0) {
+      if (map.bank !== 0) {
+        textDecls.push(
+          '/* clear the (relocated) bank screen + colour RAM (clrscr would only clear $0400) */',
+          `static void bc_cls(void) { unsigned int _i; for (_i = 0; _i < 1000; ++_i) { BC_SCREEN[_i] = 0x20; COLOR_RAM[_i] = ${this.penCellValue('COLOR_WHITE')}; } }`
+        )
+      } else {
+        textDecls.push('static void bc_cls(void) { clrscr(); }')
+      }
+    }
     if (textDecls.length > 0) textDecls.push('')
 
     // One-time setup that must run at the very top of main, before the user's body
     // (e.g. installing the joystick driver). Kept apart from this.lines so it can't
     // be reordered by the user's code. Mirrors _preflight/game.c's joy_install.
     const setup: string[] = []
+    // Switch the VIC to bank 1 BEFORE anything draws (B1.T4), so the charset/screen/sprites
+    // it reads are the high-bank ones the program writes. CIA2 port A bits 0-1 select the
+    // bank (inverted: bank 1 = %10); the DDR bits must be outputs first. Only a charset
+    // program moves the bank (bank != 0); graphics-less/sprites-only stay on the KERNAL's
+    // bank 0, byte-identical to before.
+    if (map.bank !== 0) {
+      setup.push(
+        `  CIA2.ddra |= 0x03;                       /* CIA2 port A bits 0-1 = outputs */`,
+        `  CIA2.pra = (CIA2.pra & 0xFC) | ${hx(map.ciaBankBits, 2)}; /* VIC bank ${map.bank} ($${(map.bank * 0x4000).toString(16).toUpperCase()}) */`,
+        '  bc_cls();                                /* blank the relocated screen — the KERNAL only cleared $0400 */'
+      )
+    }
     if (this.usesJoystick) {
       setup.push('  joy_install(joy_static_stddrv); /* CIA joystick driver, port 2 */')
     }
@@ -674,7 +713,14 @@ class Generator {
       '}',
       ''
     ].join('\n')
-    return { code, errors: this.errors, linkerConfig: map.cfg, mainCeiling: map.mainCeiling }
+    return {
+      code,
+      errors: this.errors,
+      linkerConfig: map.cfg,
+      mainCeiling: map.mainCeiling,
+      highBase: map.highBase,
+      highCeiling: map.highCeiling
+    }
   }
 
   /**
@@ -1152,7 +1198,8 @@ class Generator {
         break
       case 'cls':
         this.emit(`bgcolor(${this.colorArg(a[0])});`)
-        this.emit('clrscr();')
+        this.usesCls = true
+        this.emit('bc_cls();')
         break
       case 'color':
         // Color <c> → set the pen colour for following DrawText. conio's textcolor is
@@ -1287,6 +1334,11 @@ class Generator {
       return
     }
 
+    // B1.T4: the charset lives in bank 1 ($7000). It's copied there at runtime from a const
+    // in RODATA — direct-linking into the bank would force the .prg to pad up from $0801 to
+    // $7000 (huge); copying keeps the const contiguous with the code, so the .prg stays
+    // compact. The low RAM that holds the const is now plentiful (bank 1 freed it), so the
+    // copy's ~2KB source costs little. Phase 1 has one charset (single activeTileset).
     const dataName = `tileset_${safeAssetName(id)}`
     this.bakedData.push(
       `static const unsigned char ${dataName}[${bytes.length}] = {`,
@@ -1297,8 +1349,10 @@ class Generator {
 
     this.emit(`/* UseTileset "${id}" */`)
     this.emit(`{ unsigned int _i; for (_i = 0; _i < ${bytes.length}; ++_i) BC_CHARSET[_i] = ${dataName}[_i]; }`)
-    // Point VIC at screen $0400 + charset $3000 (VIC.addr = 0x1C), proven in tilemap.c.
-    this.emit('VIC.addr = 0x1C;')
+    // Point the VIC at the screen + charset positions within the bank (the CIA2 bank switch
+    // itself runs once in the setup block). The value comes from the same layout the memory
+    // plan uses (vicD018), so $D018 and the copy target agree.
+    this.emit(`VIC.addr = ${hx(vicD018(), 2)};`)
     // MC-text shared colours from the project palette (the "00/01/10" pairs; the
     // "11" pair is per-cell Color-RAM). Same registers the sprites share — one
     // project-wide truth (memory breadcraft-project-palette).
@@ -2082,6 +2136,11 @@ function isConstOne(e: Expr): boolean {
 function cName(name: string): string {
   // Suffix punctuation ($, .) is part of the written variable, not the C name.
   return name.replace(/[$]/g, '_str').replace(/[.]/g, '_')
+}
+
+/** A C hex literal, uppercase, zero-padded to `digits` (default 4) — e.g. hx(0x7f8) → "0x07F8". */
+function hx(n: number, digits = 4): string {
+  return '0x' + n.toString(16).toUpperCase().padStart(digits, '0')
 }
 
 /** A C-identifier-safe slug for an asset id (used in baked data names). */

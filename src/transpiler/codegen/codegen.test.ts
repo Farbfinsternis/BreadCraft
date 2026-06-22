@@ -1020,14 +1020,35 @@ describe('codegen: input (M3.T3) — Joystick / KeyDown / KeyHit', () => {
 })
 
 describe('codegen: UseTileset + DrawMap (tile world)', () => {
-  it('bakes the charset bytes, points VIC at $3000, sets MC colours', () => {
+  it('copies the charset into bank 1 ($7000) and switches the VIC bank (B1.T4)', () => {
     const { code, errors } = gen('UseTileset "main"', fakeAssets())
     expect(errors).toEqual([])
+    // A charset moves graphics to bank 1: charset at $7000, copied there at runtime from a
+    // RODATA const (compact .prg), VIC pointed at the bank-1 screen+charset ($EC).
+    expect(code).toContain('#define BC_CHARSET ((unsigned char*)0x7000)')
     expect(code).toContain('static const unsigned char tileset_main[2048]')
     expect(code).toMatch(/1, 2, 3, 4, 5, 6, 7, 8/) // char 1 bytes baked
     expect(code).toContain('BC_CHARSET[_i] = tileset_main[_i]')
-    expect(code).toContain('VIC.addr = 0x1C;')
-    expect(code).toContain('#define BC_CHARSET')
+    expect(code).toContain('VIC.addr = 0xEC;')
+    expect(code).toContain('#define BC_SCREEN  ((unsigned char*)0x7800)')
+    // The CIA2 bank switch runs once in setup, before anything draws.
+    expect(code).toContain('CIA2.ddra |= 0x03;')
+    expect(code).toContain('CIA2.pra = (CIA2.pra & 0xFC) | 0x02;')
+  })
+
+  it('blanks the relocated screen at startup — the KERNAL only clears $0400 (B1.T5)', () => {
+    // Bank 1 (custom charset) sets the visible screen to $7800, which the KERNAL never
+    // cleared. Without an explicit clear, a program that draws sparse text shows garbage
+    // tiles in the unwritten cells. So bank-1 setup calls bc_cls() once, and bc_cls clears
+    // screen codes AND colour RAM (a custom charset's slot $20 isn't guaranteed blank).
+    const { code, errors } = gen('UseTileset "main"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('static void bc_cls(void)')
+    expect(code).toContain('BC_SCREEN[_i] = 0x20')
+    expect(code).toContain('COLOR_RAM[_i] =') // colour cleared too, matching clrscr
+    expect(code).toContain('bc_cls();') // called in setup even though no Cls in the source
+    // The clear runs after the bank switch.
+    expect(code.indexOf('CIA2.pra')).toBeLessThan(code.indexOf('bc_cls();'))
   })
 
   it('bakes the map tiles and copies them into screen RAM', () => {

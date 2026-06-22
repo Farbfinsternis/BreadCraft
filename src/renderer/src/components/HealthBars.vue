@@ -8,20 +8,36 @@
 // hit — so the user sees "getting full" instead of only meeting a hard error.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { RamPool } from '@shared/ipc'
 import { useOutputStore } from '@renderer/stores/output'
+import { useProjectStore } from '@renderer/stores/project'
 
 const { t } = useI18n()
 const output = useOutputStore()
+const project = useProjectStore()
 
+// RAM is one or two POOLS (B1.T5). The low pool (code + data) is the RamInfo itself; a
+// bank-1 / sprites-only layout adds a `high` pool (big arrays above the graphics bank)
+// that walls independently, so it gets its own bar. With one pool the bar is just "RAM".
 const ram = computed(() => output.ram)
-const pct = computed(() => (ram.value ? Math.min(100, Math.round(ram.value.fraction * 100)) : 0))
-const ceilingHex = computed(() => (ram.value ? '$' + ram.value.ceilingAddr.toString(16).toUpperCase() : ''))
-const fillClass = computed(() => {
-  if (!ram.value) return 'hb-fill-arc'
-  if (ram.value.state === 'over') return 'hb-fill-over'
-  if (ram.value.state === 'warn') return 'hb-fill-warn'
-  return 'hb-fill-arc'
-})
+const high = computed(() => ram.value?.high ?? null)
+
+// Whether to show the SECOND RAM bar — driven by the PROJECT, not only the last build, so
+// the strip shows its real structure from the start (not just after a build, which was
+// confusing). After a build the map is authoritative (`ram.high` present ⇔ two pools);
+// before one we predict from the manifest. RAM splits into two pools whenever graphics
+// take their own region: a custom charset (→ bank 1) OR sprites (→ a reserved island with
+// BSS above it) — so predict from EITHER. A truly graphics-less project honestly stays one
+// pool/one bar. If the prediction and the build ever disagree, the build wins (replaces `ram`).
+const expectsHighPool = computed(() =>
+  ram.value ? !!ram.value.high : project.assets.charsets.length > 0 || project.assets.sprites.length > 0
+)
+const lowLabel = computed(() => (expectsHighPool.value ? t('health.ram.code') : 'RAM'))
+
+const pctOf = (p: RamPool): number => Math.min(100, Math.round(p.fraction * 100))
+const hex = (addr: number): string => '$' + addr.toString(16).toUpperCase()
+const fillClassOf = (p: RamPool): string =>
+  p.state === 'over' ? 'hb-fill-over' : p.state === 'warn' ? 'hb-fill-warn' : 'hb-fill-arc'
 
 // PERF bar: an ESTIMATE of the frame-loop cost extrapolated from the code (a guess,
 // never a runtime measurement — the `~` says so). It climbs as the .crumb does more
@@ -47,15 +63,35 @@ const perfFillClass = computed(() => {
     <div class="health-inner">
       <div class="hb">
         <div class="hb-top">
-          <span class="bc-label">RAM</span>
-          <span class="hb-val" :class="{ 'hb-nodata': !ram }">{{ ram ? pct + ' %' : '—' }}</span>
+          <span class="bc-label">{{ lowLabel }}</span>
+          <span class="hb-val" :class="{ 'hb-nodata': !ram }">{{ ram ? pctOf(ram) + ' %' : '—' }}</span>
         </div>
         <div class="hb-track">
-          <div class="hb-fill" :class="fillClass" :style="{ width: pct + '%' }" />
+          <div class="hb-fill" :class="fillClassOf(ram)" :style="{ width: pctOf(ram) + '%' }" v-if="ram" />
         </div>
         <div class="hb-meta">
           <template v-if="ram">
-            {{ ram.usedBytes }} / {{ ram.budgetBytes }} B · {{ ram.freeBytes }} B frei bis {{ ceilingHex }}
+            {{ t('health.ram.line', { used: ram.usedBytes, budget: ram.budgetBytes, free: ram.freeBytes, ceiling: hex(ram.ceilingAddr) }) }}
+          </template>
+          <template v-else>{{ t('health.ram.meta') }}</template>
+        </div>
+      </div>
+
+      <!-- Second RAM pool (B1.T5): the big arrays high in RAM, present in the bank-1 /
+           sprites-only layout. It can't trade bytes with code/data, so it walls on its own
+           and gets its own bar. Shown whenever the project expects two pools (predicted
+           before the first build, exact after) — empty "—" until a build fills it. -->
+      <div class="hb" v-if="expectsHighPool">
+        <div class="hb-top">
+          <span class="bc-label">{{ t('health.ram.arrays') }}</span>
+          <span class="hb-val" :class="{ 'hb-nodata': !high }">{{ high ? pctOf(high) + ' %' : '—' }}</span>
+        </div>
+        <div class="hb-track">
+          <div class="hb-fill" :class="fillClassOf(high)" :style="{ width: pctOf(high) + '%' }" v-if="high" />
+        </div>
+        <div class="hb-meta">
+          <template v-if="high">
+            {{ t('health.ram.line', { used: high.usedBytes, budget: high.budgetBytes, free: high.freeBytes, ceiling: hex(high.ceilingAddr) }) }}
           </template>
           <template v-else>{{ t('health.ram.meta') }}</template>
         </div>

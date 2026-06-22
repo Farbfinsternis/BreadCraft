@@ -156,14 +156,13 @@ export interface BuildLogLine {
   text: string
 }
 
-/** How full RAM is after a build, measured against the project's PLANNED ceiling
- *  (STAHL S1c). For a tiled game the ceiling is the reserved VIC island ($3000);
- *  otherwise it's the top of usable RAM ($D000). The bar fills toward the ceiling and
- *  turns red as the program approaches the wall the linker would otherwise hit. */
-export interface RamInfo {
-  /** Bytes the loaded program image occupies (from the $0801 load address). */
+/** One fillable RAM pool, measured from a base address up to a ceiling (STAHL S1c).
+ *  The bar fills toward the ceiling and turns red as the pool approaches the wall the
+ *  linker would otherwise hit. */
+export interface RamPool {
+  /** Bytes occupied in this pool, from its base address. */
   usedBytes: number
-  /** Budget from the load address up to the ceiling. */
+  /** Budget from the base address up to the ceiling. */
   budgetBytes: number
   /** budgetBytes − usedBytes (negative if it would overflow). */
   freeBytes: number
@@ -171,8 +170,22 @@ export interface RamInfo {
   fraction: number
   /** 'ok' (room), 'warn' (close), 'over' (would cross the reserved space). */
   state: 'ok' | 'warn' | 'over'
-  /** The C64 address the budget is measured up to ($3000 tiled, else $D000). */
+  /** The C64 address this pool starts at ($0801 low pool, $8000 high pool). */
+  baseAddr: number
+  /** The C64 address the budget is measured up to. */
   ceilingAddr: number
+}
+
+/** How full RAM is after a build (STAHL S1c). The headline fields describe the LOW pool —
+ *  code + data from the $0801 load address up to the graphics ceiling ($7000 bank 1,
+ *  $3800 sprites-only, $D000 graphics-less). When the bank-1 (or bank-0 sprites-only)
+ *  layout splits RAM into two non-fungible pools, `high` carries the second pool — the
+ *  big BSS arrays that live above the graphics bank ($8000–$C800). The two pools can't
+ *  trade bytes, so they get their own bars (B1.T5). */
+export interface RamInfo extends RamPool {
+  /** The high BSS pool (big arrays above the graphics bank), or absent for a single-pool
+   *  layout (graphics-less, where BSS is contiguous with code below $D000). */
+  high?: RamPool
 }
 
 /** A per-frame CPU-cost ESTIMATE, extrapolated from the code — a guess, not a runtime

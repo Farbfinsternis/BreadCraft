@@ -7,6 +7,54 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+- **Ein frisch in die hohe Bank umgezogener Bildschirm startet jetzt sauber leer (BRONZE B1, Review #2).**
+  Der C64-KERNAL putzt beim Start nur den alten Bildschirm bei `$0400` — nicht den, der in Bank 1
+  nach oben gewandert ist. Ein Spiel, das nur Text malt (und nicht die ganze Karte), zeigte dort
+  vorher zufällige Kachel-Reste in den unberührten Zellen. Jetzt wischt das Programm den verschobenen
+  Bildschirm beim Start selbst blank (Zeichen *und* Farbe) — und `Cls` tut in Bank 1 dasselbe, statt
+  nur die Zeichen anzufassen.
+- **Läuft der Array-Speicher über, leuchtet jetzt der richtige Balken rot (BRONZE B1, Review #2).**
+  Bisher bekam bei *jedem* Speicher-Überlauf der Code/Daten-Balken die rote Markierung — auch wenn in
+  Wahrheit die Spiel-Arrays oben übergelaufen waren. Das schickte dich zur falschen Baustelle. Jetzt
+  liest BreadCraft aus der Linker-Meldung, *welche* Etage geplatzt ist, und färbt genau deren Balken.
+- **Auch ein reines Sprite-Projekt zeigt seine zwei Speicher-Balken sofort (BRONZE B1, Review #2).**
+  Die Vorhersage „zwei Etagen" hing nur am Zeichensatz; ein Projekt mit Sprites aber ohne Zeichensatz
+  teilt den Speicher aber genauso. Es sprang darum doch wieder von zwei auf drei Balken nach dem ersten
+  Build — jetzt steht die Struktur auch hier von Anfang an.
+
+### Geändert
+- **Deine Grafik zieht in eine eigene Speicher-Etage — und macht damit das Drei- bis Vierfache an Platz fürs Spiel frei (BRONZE B1).**
+  Bisher teilten sich dein Spielcode und die selbstgemalte Grafik dasselbe enge Erdgeschoss des C64,
+  und ab etwa 10 KB war Schluss — „Into The Deep" drückte schon bei 91 % gegen die Decke. Der C64 kann
+  aber durch vier verschiedene 16-KB-Fenster auf seinen Speicher schauen; BreadCraft schiebt deine Grafik
+  (Zeichensatz, Bildschirm, Sprites) jetzt nach oben in ein eigenes solches Fenster. Dadurch bekommt dein
+  Programm den ganzen unteren Speicher **plus** die Etage über der Grafik — aus ~10 KB werden rund 26 KB
+  für Code und feste Daten und nochmal ~18 KB für große Felder (Spielwelten, Gegnerlisten). „Into The
+  Deep" fällt damit von ~91 % auf ~35 %. Am Bild und am Spiel ändert sich nichts — nur der Platz, in den
+  alles hineinwachsen kann, ist jetzt viel größer. (Ehrlich bleibt ehrlich: es ist ein gemeinsamer
+  Vorrat — auch animierte Grafik und Sound ziehen mit ein; die Speicheranzeige bleibt dein Wegweiser.)
+- **Die RAM-Anzeige sagt jetzt die Wahrheit, auch wenn die Grafik auszieht (BRONZE B1.T1).**
+  Bisher maß der Speicher-Balken schlicht die Größe der fertigen `.prg`-Datei — das ging gut,
+  solange alles dicht an dicht ab `$0801` lag. Sobald die Grafik aber an eine feste hohe Adresse
+  umzieht (der nächste Schritt, der Platz schafft), entsteht eine Lücke davor, und die Dateigröße
+  hätte diese Lücke fälschlich als „belegt" mitgezählt. Jetzt liest BreadCraft die Segment-Karte
+  des Linkers (`-m`) und zählt nur die Bytes, die wirklich um den knappen unteren Speicher
+  konkurrieren — Lücken bleiben außen vor, und tief liegender Arbeitsspeicher, der gar nicht in
+  der Datei steht, wird ehrlich mitgerechnet. An den heutigen Spielen ändert sich die Zahl nicht
+  (ITD bleibt bei seinen ~91 %); die Messung steht nur ab jetzt auf festem Grund.
+- **Zwei Speicher-Balken statt einem — du siehst jetzt beide Etagen (BRONZE B1.T5).**
+  Seit die Grafik nach oben ausgezogen ist, hat dein Spiel zwei getrennte Speicher-Etagen, zwischen
+  denen man nicht umräumen kann: **Code/Daten** unten (~26 KB) und **Spiel-Arrays** oben (~18 KB für
+  große Felder wie Spielwelten oder Gegnerlisten). Bisher zeigte der RAM-Balken nur die untere — wer
+  die obere vollschrieb, sah nichts, bis der Linker hart „zu groß" meldete. Jetzt steht im Health-
+  Streifen ein eigener Balken pro Etage; jeder färbt sich für sich amber/rot, sobald *seine* Wand
+  naht. Die richtige Struktur steht schon **beim Öffnen** des Projekts — nicht erst nach einem Build:
+  hat dein Projekt einen eigenen Zeichensatz, siehst du sofort beide Etagen-Balken (noch leer, „—"),
+  die sich beim nächsten Build füllen. Spiele ohne eigene Grafik behalten wie bisher einen einzigen
+  „RAM"-Balken — der schlichte Erstkontakt bleibt schlicht. (Into The Deep: Code/Daten ~35 %,
+  Spiel-Arrays ~0 % — der ganze gewonnene Array-Platz steht sichtbar offen.)
+
 ## [0.2.6] - 2026-06-19
 
 ### Hinzugefügt
