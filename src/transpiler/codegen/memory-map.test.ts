@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planMemory, ramInfo, parseMapSegments, ramInfoFromMap } from './memory-map'
+import { planMemory, ramInfo, parseMapSegments, ramInfoFromMap, ramInfoOverflow } from './memory-map'
 
 // STAHL S1a: the planner reserves only what the project uses, and emits a cfg whose
 // addresses match the codegen's (one source of truth).
@@ -261,6 +261,36 @@ BSS                   008000  00D000  005001  00001
     const r = ramInfoFromMap(tooBig, 0x7000, 0x8000, 0xc800)
     expect(r.high!.state).toBe('over') // BSS end ($D000) past the $C800 ceiling
     expect(r.high!.freeBytes).toBeLessThan(0)
+  })
+})
+
+// B1.T5: when the link fails with an area overflow there's no map, so the bar is synthetic.
+// It must pin the pool that ACTUALLY overflowed — blaming the low pool for a HIGH overflow
+// pointed the user at the wrong fix.
+describe('ramInfoOverflow (B1.T5)', () => {
+  it('a HIGH (big-arrays) overflow pins the high pool over, leaving code/data calm', () => {
+    const r = ramInfoOverflow('HIGH', 500, 0x7000, 0x8000, 0xc800)
+    expect(r.state).toBe('ok') // low pool: no figures (link failed) → shown empty, not red
+    expect(r.usedBytes).toBe(0)
+    expect(r.high).toBeDefined()
+    expect(r.high!.state).toBe('over')
+    expect(r.high!.freeBytes).toBeLessThan(0)
+    expect(r.high!.usedBytes).toBe(0xc800 - 0x8000 + 500) // budget + overshoot
+  })
+
+  it('a MAIN (code/data) overflow pins the low pool over, high pool shown empty', () => {
+    const r = ramInfoOverflow('MAIN', 500, 0x7000, 0x8000, 0xc800)
+    expect(r.state).toBe('over')
+    expect(r.usedBytes).toBe(0x7000 - 0x0801 + 500)
+    expect(r.high).toBeDefined()
+    expect(r.high!.state).toBe('ok')
+    expect(r.high!.usedBytes).toBe(0)
+  })
+
+  it('a single-pool (graphics-less) overflow has no high pool', () => {
+    const r = ramInfoOverflow('MAIN', 100, 0xd000, null, 0xc800)
+    expect(r.state).toBe('over')
+    expect(r.high).toBeUndefined()
   })
 })
 

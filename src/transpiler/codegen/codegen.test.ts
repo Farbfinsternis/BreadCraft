@@ -1036,6 +1036,21 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
     expect(code).toContain('CIA2.pra = (CIA2.pra & 0xFC) | 0x02;')
   })
 
+  it('blanks the relocated screen at startup — the KERNAL only clears $0400 (B1.T5)', () => {
+    // Bank 1 (custom charset) sets the visible screen to $7800, which the KERNAL never
+    // cleared. Without an explicit clear, a program that draws sparse text shows garbage
+    // tiles in the unwritten cells. So bank-1 setup calls bc_cls() once, and bc_cls clears
+    // screen codes AND colour RAM (a custom charset's slot $20 isn't guaranteed blank).
+    const { code, errors } = gen('UseTileset "main"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('static void bc_cls(void)')
+    expect(code).toContain('BC_SCREEN[_i] = 0x20')
+    expect(code).toContain('COLOR_RAM[_i] =') // colour cleared too, matching clrscr
+    expect(code).toContain('bc_cls();') // called in setup even though no Cls in the source
+    // The clear runs after the bank switch.
+    expect(code.indexOf('CIA2.pra')).toBeLessThan(code.indexOf('bc_cls();'))
+  })
+
   it('bakes the map tiles and copies them into screen RAM', () => {
     const { code, errors } = gen('UseTileset "main"\nDrawMap "level1"', fakeAssets())
     expect(errors).toEqual([])

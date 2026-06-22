@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync } from 'fs
 import rawSsot from '@shared/breadcraft.lang.json'
 import { buildVocabulary } from '../shared/vocabulary'
 import type { Ssot } from '../shared/ssot-types'
-import { compile, ramInfo, ramInfoFromMap } from '../transpiler'
+import { compile, ramInfo, ramInfoFromMap, ramInfoOverflow } from '../transpiler'
 import type { AssetContext } from '../transpiler'
 import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
@@ -110,12 +110,16 @@ export async function buildAndRun(
     // A memory-area overflow is the honest STAHL-S1 wall: the program (with its baked
     // assets) outgrew the space below the reserved VIC island. Translate the raw ld65
     // line into a clear message and show the bar pinned over the ceiling.
-    const overflow = /overflows memory area \S+ by (\d+) bytes/i.exec(cc.out)
+    const overflow = /overflows memory area (\S+) by (\d+) bytes/i.exec(cc.out)
     if (overflow) {
-      const over = Number(overflow[1])
+      const area = overflow[1]
+      const over = Number(overflow[2])
       add('error', M.tooLarge(over))
-      // Feed a synthetic .prg size so usedBytes = budget + overflow → state 'over'.
-      return { ok: false, stage: 'cc65', log, cCode: code, ram: ramInfo(mainCeiling - 0x0801 + over + 2, mainCeiling), perf: perfInfo }
+      // Pin the bar for the pool that ACTUALLY overflowed (B1.T5): "HIGH" = the big-arrays
+      // pool, anything else = the low code/data pool. Blaming the low pool for a HIGH
+      // overflow pointed the user at the wrong fix.
+      const ram = ramInfoOverflow(area, over, mainCeiling, highBase, highCeiling)
+      return { ok: false, stage: 'cc65', log, cCode: code, ram, perf: perfInfo }
     }
     add('error', M.cc65Failed)
     return { ok: false, stage: 'cc65', log, cCode: code, perf: perfInfo }

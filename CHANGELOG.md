@@ -7,6 +7,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+- **Ein frisch in die hohe Bank umgezogener Bildschirm startet jetzt sauber leer (BRONZE B1, Review #2).**
+  Der C64-KERNAL putzt beim Start nur den alten Bildschirm bei `$0400` — nicht den, der in Bank 1
+  nach oben gewandert ist. Ein Spiel, das nur Text malt (und nicht die ganze Karte), zeigte dort
+  vorher zufällige Kachel-Reste in den unberührten Zellen. Jetzt wischt das Programm den verschobenen
+  Bildschirm beim Start selbst blank (Zeichen *und* Farbe) — und `Cls` tut in Bank 1 dasselbe, statt
+  nur die Zeichen anzufassen.
+- **Läuft der Array-Speicher über, leuchtet jetzt der richtige Balken rot (BRONZE B1, Review #2).**
+  Bisher bekam bei *jedem* Speicher-Überlauf der Code/Daten-Balken die rote Markierung — auch wenn in
+  Wahrheit die Spiel-Arrays oben übergelaufen waren. Das schickte dich zur falschen Baustelle. Jetzt
+  liest BreadCraft aus der Linker-Meldung, *welche* Etage geplatzt ist, und färbt genau deren Balken.
+- **Auch ein reines Sprite-Projekt zeigt seine zwei Speicher-Balken sofort (BRONZE B1, Review #2).**
+  Die Vorhersage „zwei Etagen" hing nur am Zeichensatz; ein Projekt mit Sprites aber ohne Zeichensatz
+  teilt den Speicher aber genauso. Es sprang darum doch wieder von zwei auf drei Balken nach dem ersten
+  Build — jetzt steht die Struktur auch hier von Anfang an.
+
 ### Geändert
 - **Deine Grafik zieht in eine eigene Speicher-Etage — und macht damit das Drei- bis Vierfache an Platz fürs Spiel frei (BRONZE B1).**
   Bisher teilten sich dein Spielcode und die selbstgemalte Grafik dasselbe enge Erdgeschoss des C64,

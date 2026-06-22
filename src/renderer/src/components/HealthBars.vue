@@ -25,11 +25,12 @@ const high = computed(() => ram.value?.high ?? null)
 // Whether to show the SECOND RAM bar — driven by the PROJECT, not only the last build, so
 // the strip shows its real structure from the start (not just after a build, which was
 // confusing). After a build the map is authoritative (`ram.high` present ⇔ two pools);
-// before one we predict from the manifest: a project with a custom charset will move its
-// graphics to bank 1 and split RAM. A graphics-less project honestly stays one pool/one bar.
-// If the prediction and the build ever disagree, the build wins (it replaces `ram`).
+// before one we predict from the manifest. RAM splits into two pools whenever graphics
+// take their own region: a custom charset (→ bank 1) OR sprites (→ a reserved island with
+// BSS above it) — so predict from EITHER. A truly graphics-less project honestly stays one
+// pool/one bar. If the prediction and the build ever disagree, the build wins (replaces `ram`).
 const expectsHighPool = computed(() =>
-  ram.value ? !!ram.value.high : project.assets.charsets.length > 0
+  ram.value ? !!ram.value.high : project.assets.charsets.length > 0 || project.assets.sprites.length > 0
 )
 const lowLabel = computed(() => (expectsHighPool.value ? t('health.ram.code') : 'RAM'))
 

@@ -648,15 +648,19 @@ class Generator {
         '}'
       )
     }
-    // Cls helper (B1.T4). In bank 1 the visible screen is the relocated BC_SCREEN, which
-    // conio's clrscr (hard-wired to $0400) wouldn't touch — so clear it ourselves (1000
-    // cells to the space screen code, matching what clrscr writes). In bank 0 the screen
-    // IS $0400, so the stock clrscr is exactly right.
-    if (this.usesCls) {
+    // Cls / startup-clear helper (B1.T4/B1.T5). In bank 1 the visible screen is the
+    // relocated BC_SCREEN, which conio's clrscr (hard-wired to $0400) wouldn't touch — so
+    // clear it ourselves: 1000 cells to the space screen code AND a default colour. The
+    // colour matters because a CUSTOM charset's slot $20 isn't guaranteed blank, so a
+    // cleared cell could otherwise show that glyph in stale Colour-RAM (clrscr clears
+    // $D800 too; we match it). Emitted whenever bank != 0 — the startup blank below needs
+    // it, since the KERNAL only pre-clears $0400, not our relocated screen — OR Cls is
+    // used. In bank 0 the screen IS $0400, so the stock clrscr is exactly right.
+    if (this.usesCls || map.bank !== 0) {
       if (map.bank !== 0) {
         textDecls.push(
-          '/* clear the (relocated) screen — clrscr would clear $0400, not our bank-1 screen */',
-          'static void bc_cls(void) { unsigned int _i; for (_i = 0; _i < 1000; ++_i) BC_SCREEN[_i] = 0x20; }'
+          '/* clear the (relocated) bank screen + colour RAM (clrscr would only clear $0400) */',
+          `static void bc_cls(void) { unsigned int _i; for (_i = 0; _i < 1000; ++_i) { BC_SCREEN[_i] = 0x20; COLOR_RAM[_i] = ${this.penCellValue('COLOR_WHITE')}; } }`
         )
       } else {
         textDecls.push('static void bc_cls(void) { clrscr(); }')
@@ -676,7 +680,8 @@ class Generator {
     if (map.bank !== 0) {
       setup.push(
         `  CIA2.ddra |= 0x03;                       /* CIA2 port A bits 0-1 = outputs */`,
-        `  CIA2.pra = (CIA2.pra & 0xFC) | ${hx(map.ciaBankBits, 2)}; /* VIC bank ${map.bank} ($${(map.bank * 0x4000).toString(16).toUpperCase()}) */`
+        `  CIA2.pra = (CIA2.pra & 0xFC) | ${hx(map.ciaBankBits, 2)}; /* VIC bank ${map.bank} ($${(map.bank * 0x4000).toString(16).toUpperCase()}) */`,
+        '  bc_cls();                                /* blank the relocated screen — the KERNAL only cleared $0400 */'
       )
     }
     if (this.usesJoystick) {

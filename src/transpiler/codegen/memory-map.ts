@@ -161,6 +161,27 @@ export function ramInfo(prgSizeBytes: number, ceilingAddr: number): RamInfo {
   return finishPool(Math.max(0, prgSizeBytes - 2), LOAD_ADDR, ceilingAddr)
 }
 
+/** Build an "over" RamInfo when the link FAILED with a memory-area overflow (no map exists).
+ *  `area` is the ld65 area name from the error ("MAIN" = the low code/data pool, "HIGH" =
+ *  the high BSS arrays pool); `over` is the byte overshoot. The bar for the pool that
+ *  actually overflowed is pinned over its ceiling; the other pool is shown empty (we have
+ *  no figures — the link didn't finish). Without this the overflow was always blamed on the
+ *  low pool, so a HIGH overflow lit the wrong bar (B1.T5). */
+export function ramInfoOverflow(
+  area: string,
+  over: number,
+  mainCeiling: number,
+  highBase: number | null,
+  highCeiling: number
+): RamInfo {
+  if (area === 'HIGH' && highBase !== null) {
+    const low = finishPool(0, LOAD_ADDR, mainCeiling)
+    return { ...low, high: finishPool(highCeiling - highBase + over, highBase, highCeiling) }
+  }
+  const low = finishPool(mainCeiling - LOAD_ADDR + over, LOAD_ADDR, mainCeiling)
+  return highBase !== null ? { ...low, high: finishPool(0, highBase, highCeiling) } : low
+}
+
 /** One row of the ld65 `-m` map file's "Segment list" (absolute addresses). */
 export interface MapSegment {
   name: string
