@@ -62,7 +62,7 @@ export async function buildAndRun(
   // The project's target region (STAHL S5c) picks the PERF budget the estimate measures
   // against AND the region VICE boots — read from the .bread, never silently PAL.
   const region = projectRegion(projectDir)
-  const { code, errors, linkerConfig, mainCeiling, perf } = compile(
+  const { code, errors, linkerConfig, mainCeiling, highBase, highCeiling, perf } = compile(
     source,
     vocabulary,
     assets,
@@ -127,7 +127,7 @@ export async function buildAndRun(
   // missing/unreadable (older toolchain, IO hiccup) — correct while the image is gapless.
   let ram: RamInfo
   try {
-    ram = ramInfoFromMap(readFileSync(mapPath, 'utf8'), mainCeiling)
+    ram = ramInfoFromMap(readFileSync(mapPath, 'utf8'), mainCeiling, highBase, highCeiling)
   } catch {
     ram = ramInfo(statSync(prgPath).size, mainCeiling)
   }
@@ -135,6 +135,14 @@ export async function buildAndRun(
     ram.state === 'ok' ? 'info' : 'warn',
     M.ramLine(ram.usedBytes, ram.budgetBytes, mainCeiling.toString(16).toUpperCase())
   )
+  // The high BSS pool (big arrays) walls independently of code/data — log it on its own
+  // line so the console echoes both bars (B1.T5).
+  if (ram.high) {
+    add(
+      ram.high.state === 'ok' ? 'info' : 'warn',
+      M.ramLine(ram.high.usedBytes, ram.high.budgetBytes, highCeiling.toString(16).toUpperCase())
+    )
+  }
 
   // 3) run in VICE — unless this was a plain Build (no run requested). Skipping is a
   // clean success at stage 'cc65', NOT a needsVicePath case (don't nudge Settings).

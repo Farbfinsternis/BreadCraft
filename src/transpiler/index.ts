@@ -34,6 +34,11 @@ export interface CompileResult {
   linkerConfig: string
   /** The address the program image must stay below (the RAM health-bar ceiling, S1c). */
   mainCeiling: number
+  /** Base of the high BSS pool (big arrays above the graphics bank), or null when RAM is
+   *  one pool — the second RAM bar measures against this (B1.T5). */
+  highBase: number | null
+  /** Top of the high BSS pool ($C800). */
+  highCeiling: number
   /** Estimated per-frame CPU cost (a guess from the code) for the PERF health-bar, or
    *  null when the program has no frame loop to talk about. */
   perf: PerfInfo | null
@@ -53,13 +58,25 @@ export function compile(
 ): CompileResult {
   const tokens = tokenize(source, vocabulary, locale)
   const { program, errors: parseErrors } = parse(tokens, vocabulary, locale)
-  const { code, errors: codegenErrors, linkerConfig, mainCeiling } = generate(program, assets, locale)
+  const { code, errors: codegenErrors, linkerConfig, mainCeiling, highBase, highCeiling } = generate(
+    program,
+    assets,
+    locale
+  )
 
   const errors: CompileError[] = [
     ...parseErrors.map((e) => ({ stage: 'parse' as const, severity: 'error' as const, ...e })),
     ...codegenErrors.map((e) => ({ stage: 'codegen' as const, ...e }))
   ]
-  return { code, errors, linkerConfig, mainCeiling, perf: estimateFramePerf(program, region) }
+  return {
+    code,
+    errors,
+    linkerConfig,
+    mainCeiling,
+    highBase,
+    highCeiling,
+    perf: estimateFramePerf(program, region)
+  }
 }
 
 export { tokenize } from './lexer'

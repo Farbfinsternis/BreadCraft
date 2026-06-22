@@ -1,4 +1,4 @@
-import type { RamInfo } from '@shared/ipc'
+import type { RamInfo, RamPool } from '@shared/ipc'
 
 // STAHL S1: the project-aware memory-map planner.
 //
@@ -28,6 +28,8 @@ const SPRITE_BLOCK = 64 // a sprite shape is 64 bytes; its pointer byte = (addr 
 const REGION_SIZE = 0x0800 // 2KB sprite island (bank-0 sprites-only reservation)
 const LOAD_ADDR = 0x0801 // C64 BASIC start — every .prg loads here
 const HIMEM = 0xd000 // top of usable RAM below the I/O area
+const STACKSIZE = 0x0800 // cc65 C stack, reserved at the top of RAM (__STACKSIZE__)
+const HIGH_CEILING = HIMEM - STACKSIZE // $C800 — top of the high BSS pool, below the stack
 
 // Bank-1 layout (custom charset). Graphics packed at the top so the initialized program
 // image stays contiguous from $0801 up to the charset, and BSS lives above the bank.
@@ -85,6 +87,12 @@ export interface MemoryMap {
    *  fullness against this, STAHL S1c): the charset ($7000, bank 1), the sprite island
    *  ($3800, bank 0 sprites-only), or the top of RAM ($D000, graphics-less). */
   mainCeiling: number
+  /** Base of the SECOND RAM pool — the high BSS region for big arrays, placed above the
+   *  graphics bank (bank-1 charset → $8000; bank-0 sprites-only → $4000). null when BSS
+   *  is contiguous with code in the low pool (graphics-less), i.e. only one bar (B1.T5). */
+  highBase: number | null
+  /** Top of the high BSS pool ($C800, just below the C stack). */
+  highCeiling: number
   /** The complete ld65 config tailored to this project (pass to cl65 via -C). */
   cfg: string
 }
@@ -109,6 +117,8 @@ function planBank1(use: MemoryUse): MemoryMap {
     charsetAddr,
     spritesAddr,
     mainCeiling: charsetAddr, // the charset is the lowest graphics → MAIN stops here
+    highBase: B1_BSS, // big arrays live in the high pool above the $4000–$7FFF bank
+    highCeiling: HIGH_CEILING,
     cfg: buildCfgBank1(charsetAddr)
   }
 }
@@ -126,17 +136,21 @@ function planBank0(use: MemoryUse): MemoryMap {
     charsetAddr: null,
     spritesAddr,
     mainCeiling: spritesAddr ?? HIMEM,
+    // Sprites-only also splits RAM: MAIN caps under the $3800 island, BSS goes high ($4000).
+    // Graphics-less keeps BSS contiguous with code below $D000 → one pool, no high bar.
+    highBase: spritesAddr !== null ? B0_HIGH : null,
+    highCeiling: HIGH_CEILING,
     cfg: buildCfgBank0(spritesAddr)
   }
 }
 
-/** Finish a RamInfo from a used-bytes figure: budget, free, fraction, traffic-light state. */
-function finishRamInfo(usedBytes: number, ceilingAddr: number): RamInfo {
-  const budgetBytes = ceilingAddr - LOAD_ADDR
+/** Finish a RamPool from a used-bytes figure: budget, free, fraction, traffic-light state. */
+function finishPool(usedBytes: number, baseAddr: number, ceilingAddr: number): RamPool {
+  const budgetBytes = ceilingAddr - baseAddr
   const freeBytes = budgetBytes - usedBytes
   const fraction = budgetBytes > 0 ? usedBytes / budgetBytes : 1
-  const state: RamInfo['state'] = fraction >= 1 ? 'over' : fraction >= 0.85 ? 'warn' : 'ok'
-  return { usedBytes, budgetBytes, freeBytes, fraction, state, ceilingAddr }
+  const state: RamPool['state'] = fraction >= 1 ? 'over' : fraction >= 0.85 ? 'warn' : 'ok'
+  return { usedBytes, budgetBytes, freeBytes, fraction, state, baseAddr, ceilingAddr }
 }
 
 /** Compute RAM fullness from a built .prg's size and the planned ceiling (STAHL S1c).
@@ -144,7 +158,7 @@ function finishRamInfo(usedBytes: number, ceilingAddr: number): RamInfo {
  *  load-address header IS the bytes used). Kept for the overflow path, where the link
  *  failed and no map file exists. The honest measure is `ramInfoFromMap` (B1.T1). */
 export function ramInfo(prgSizeBytes: number, ceilingAddr: number): RamInfo {
-  return finishRamInfo(Math.max(0, prgSizeBytes - 2), ceilingAddr)
+  return finishPool(Math.max(0, prgSizeBytes - 2), LOAD_ADDR, ceilingAddr)
 }
 
 /** One row of the ld65 `-m` map file's "Segment list" (absolute addresses). */
@@ -184,23 +198,36 @@ export function parseMapSegments(mapText: string): MapSegment[] {
   return segs
 }
 
-/** Honest RAM use from the ld65 map (B1.T1), measured against the planned ceiling.
+/** Honest RAM use from the ld65 map (B1.T1), measured against the planned ceiling(s).
  *
- *  "Used" is the top address occupied by any segment that consumes the MAIN budget —
- *  i.e. whose Start sits in [$0801, ceiling) — minus the load address. Two reasons this
- *  beats the .prg size:
+ *  "Used" is the top address occupied by any segment in a pool, minus the pool base.
+ *  Two reasons this beats the .prg size:
  *    - it ignores padding/gaps the .prg gains once assets load at a fixed high address
  *      (B1.T2+) — the bytes between MAIN's end and the reserved island are not "used";
- *    - it counts low BSS, which occupies RAM at runtime but never appears in the file.
- *  Segments at/above the ceiling (the reserved charset/sprite island, and the high BSS
- *  region in a graphics project) are excluded — they don't compete with MAIN. */
-export function ramInfoFromMap(mapText: string, ceilingAddr: number): RamInfo {
-  let top = LOAD_ADDR - 1
+ *    - it counts BSS, which occupies RAM at runtime but never appears in the file.
+ *
+ *  The LOW pool is [$0801, ceiling) — code + data. When the layout splits RAM (bank-1
+ *  charset, or bank-0 sprites-only), `highBase` marks a SECOND, non-fungible pool above
+ *  the graphics bank where the big BSS arrays live ($8000–$C800); it's reported as
+ *  `high` so the UI can give it its own bar (B1.T5). The graphics island itself (charset/
+ *  sprite copy targets, between the two pools) belongs to neither and is excluded. With
+ *  `highBase === null` (graphics-less) BSS sits in the low pool and there is one pool. */
+export function ramInfoFromMap(
+  mapText: string,
+  ceilingAddr: number,
+  highBase: number | null = null,
+  highCeiling: number = HIGH_CEILING
+): RamInfo {
+  let lowTop = LOAD_ADDR - 1
+  let highTop = (highBase ?? 0) - 1
   for (const s of parseMapSegments(mapText)) {
     if (s.size === 0) continue
-    if (s.start >= LOAD_ADDR && s.start < ceilingAddr) top = Math.max(top, s.end)
+    if (s.start >= LOAD_ADDR && s.start < ceilingAddr) lowTop = Math.max(lowTop, s.end)
+    else if (highBase !== null && s.start >= highBase && s.start < highCeiling) highTop = Math.max(highTop, s.end)
   }
-  return finishRamInfo(top - (LOAD_ADDR - 1), ceilingAddr)
+  const low = finishPool(lowTop - (LOAD_ADDR - 1), LOAD_ADDR, ceilingAddr)
+  if (highBase === null) return low
+  return { ...low, high: finishPool(highTop - (highBase - 1), highBase, highCeiling) }
 }
 
 function hex(n: number): string {

@@ -27,6 +27,17 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   konkurrieren — Lücken bleiben außen vor, und tief liegender Arbeitsspeicher, der gar nicht in
   der Datei steht, wird ehrlich mitgerechnet. An den heutigen Spielen ändert sich die Zahl nicht
   (ITD bleibt bei seinen ~91 %); die Messung steht nur ab jetzt auf festem Grund.
+- **Zwei Speicher-Balken statt einem — du siehst jetzt beide Etagen (BRONZE B1.T5).**
+  Seit die Grafik nach oben ausgezogen ist, hat dein Spiel zwei getrennte Speicher-Etagen, zwischen
+  denen man nicht umräumen kann: **Code/Daten** unten (~26 KB) und **Spiel-Arrays** oben (~18 KB für
+  große Felder wie Spielwelten oder Gegnerlisten). Bisher zeigte der RAM-Balken nur die untere — wer
+  die obere vollschrieb, sah nichts, bis der Linker hart „zu groß" meldete. Jetzt steht im Health-
+  Streifen ein eigener Balken pro Etage; jeder färbt sich für sich amber/rot, sobald *seine* Wand
+  naht. Die richtige Struktur steht schon **beim Öffnen** des Projekts — nicht erst nach einem Build:
+  hat dein Projekt einen eigenen Zeichensatz, siehst du sofort beide Etagen-Balken (noch leer, „—"),
+  die sich beim nächsten Build füllen. Spiele ohne eigene Grafik behalten wie bisher einen einzigen
+  „RAM"-Balken — der schlichte Erstkontakt bleibt schlicht. (Into The Deep: Code/Daten ~35 %,
+  Spiel-Arrays ~0 % — der ganze gewonnene Array-Platz steht sichtbar offen.)
 
 ## [0.2.6] - 2026-06-19
 

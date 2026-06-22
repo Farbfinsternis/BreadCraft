@@ -94,6 +94,11 @@ export interface CodeGenResult {
   /** The address the program image must stay below (VIC island $3000/$3800 or $D000) —
    *  the ceiling the RAM health-bar measures against (STAHL S1c). */
   mainCeiling: number
+  /** Base of the high BSS pool (big arrays above the graphics bank), or null for a
+   *  single-pool layout — the second RAM bar measures against this (B1.T5). */
+  highBase: number | null
+  /** Top of the high BSS pool ($C800). */
+  highCeiling: number
 }
 
 /**
@@ -703,7 +708,14 @@ class Generator {
       '}',
       ''
     ].join('\n')
-    return { code, errors: this.errors, linkerConfig: map.cfg, mainCeiling: map.mainCeiling }
+    return {
+      code,
+      errors: this.errors,
+      linkerConfig: map.cfg,
+      mainCeiling: map.mainCeiling,
+      highBase: map.highBase,
+      highCeiling: map.highCeiling
+    }
   }
 
   /**

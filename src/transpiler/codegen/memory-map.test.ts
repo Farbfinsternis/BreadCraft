@@ -196,4 +196,89 @@ BSS                   001001  001100  000100  00001
     const r = ramInfoFromMap(ITD_MAP.replace(/\n/g, '\r\n'), 0x3000)
     expect(r.usedBytes).toBe(9283)
   })
+
+  it('reports no high pool when highBase is null (graphics-less, single bar)', () => {
+    const r = ramInfoFromMap(ITD_MAP, 0x3000)
+    expect(r.high).toBeUndefined()
+    expect(r.baseAddr).toBe(0x0801)
+  })
+})
+
+// B1.T5: the bank-1 (and bank-0 sprites-only) layout splits RAM into two non-fungible
+// pools — code/data low, big BSS arrays high above the graphics bank. The map measure
+// reports the high pool as `high` so it gets its own health bar.
+describe('ramInfoFromMap: high BSS pool (B1.T5)', () => {
+  // A bank-1 layout: MAIN ends at ONCE ($2C43), charset copied in at $7000 (not a gap we
+  // count), and the big arrays (BSS) sit high at $8000.
+  const BANK1_MAP = `Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+EXEHDR                000801  00080C  00000C  00001
+CODE                  00080D  002000  0017F4  00001
+RODATA                002001  002C43  000C43  00001
+BSS                   008000  009000  001001  00001
+`
+
+  it('splits into a low pool (code/data) and a high pool (BSS arrays)', () => {
+    const r = ramInfoFromMap(BANK1_MAP, 0x7000, 0x8000, 0xc800)
+    // Low pool: RODATA top ($2C43) − $0801, against the $7000 ceiling.
+    expect(r.baseAddr).toBe(0x0801)
+    expect(r.usedBytes).toBe(0x2c43 - 0x0801 + 1)
+    expect(r.budgetBytes).toBe(0x7000 - 0x0801)
+    expect(r.state).toBe('ok') // ~24% of the now-huge low pool
+    // High pool: BSS end ($9000) − $8000, against the $C800 ceiling.
+    expect(r.high).toBeDefined()
+    expect(r.high!.baseAddr).toBe(0x8000)
+    expect(r.high!.usedBytes).toBe(0x9000 - 0x8000 + 1)
+    expect(r.high!.budgetBytes).toBe(0xc800 - 0x8000)
+    expect(r.high!.ceilingAddr).toBe(0xc800)
+  })
+
+  it('the high pool reports empty (0 used) when the program declares no big arrays', () => {
+    const noBss = `Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+EXEHDR                000801  00080C  00000C  00001
+CODE                  00080D  002000  0017F4  00001
+`
+    const r = ramInfoFromMap(noBss, 0x7000, 0x8000, 0xc800)
+    expect(r.high).toBeDefined()
+    expect(r.high!.usedBytes).toBe(0) // no segment in [$8000, $C800) → empty, honest headroom
+    expect(r.high!.state).toBe('ok')
+  })
+
+  it('the high pool turns over when the big arrays cross its ceiling', () => {
+    const tooBig = `Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+EXEHDR                000801  00080C  00000C  00001
+CODE                  00080D  002000  0017F4  00001
+BSS                   008000  00D000  005001  00001
+`
+    const r = ramInfoFromMap(tooBig, 0x7000, 0x8000, 0xc800)
+    expect(r.high!.state).toBe('over') // BSS end ($D000) past the $C800 ceiling
+    expect(r.high!.freeBytes).toBeLessThan(0)
+  })
+})
+
+describe('planMemory: high-pool exposure (B1.T5)', () => {
+  it('bank-1 charset → high pool at $8000–$C800', () => {
+    const m = planMemory({ usesCharset: true, usesSprites: false })
+    expect(m.highBase).toBe(0x8000)
+    expect(m.highCeiling).toBe(0xc800)
+  })
+
+  it('bank-0 sprites-only → high pool at $4000 (above the sprite island)', () => {
+    const m = planMemory({ usesCharset: false, usesSprites: true })
+    expect(m.highBase).toBe(0x4000)
+    expect(m.highCeiling).toBe(0xc800)
+  })
+
+  it('graphics-less → no high pool (BSS is contiguous with code, one bar)', () => {
+    const m = planMemory({ usesCharset: false, usesSprites: false })
+    expect(m.highBase).toBeNull()
+  })
 })

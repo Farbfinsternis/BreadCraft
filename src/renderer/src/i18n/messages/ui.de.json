@@ -223,6 +223,9 @@
   "console.railLabel": "Output-Konsole",
 
   "health.ram.meta": "noch kein Build · cc65-Map liefert den Wert",
+  "health.ram.code": "RAM · CODE/DATEN",
+  "health.ram.arrays": "RAM · SPIEL-ARRAYS",
+  "health.ram.line": "{used} / {budget} B · {free} B frei bis {ceiling}",
   "health.perf.meta": "noch kein Build · grobe Schätzung aus dem Code",
   "health.perf.estimate": "~{cycles} Takte/Frame von {budget} ({region}) · geschätzt",
   "health.perf.full": "FRAME VOLL",
