@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-06-22
+
 ### Behoben
 - **Ein frisch in die hohe Bank umgezogener Bildschirm startet jetzt sauber leer (BRONZE B1, Review #2).**
   Der C64-KERNAL putzt beim Start nur den alten Bildschirm bei `$0400` — nicht den, der in Bank 1
