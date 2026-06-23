@@ -7,6 +7,23 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Der Tilemap-Editor zeigt jetzt alle 256 Kachel-Plätze an ihrer festen Stelle — wie der PETSCII-Editor.**
+  Bisher rückte die Kachel-Palette nur die *benutzten* Tiles dicht zusammen: eine an Platz 130 gemalte
+  Kachel landete irgendwo in einer kompakten Liste, und das Muskelgedächtnis aus dem Zeichensatz-Editor
+  war wertlos. Jetzt sitzt jedes Tile in einem festen 16×16-Raster genau auf seinem Platz; leere Plätze
+  bleiben da, nur abgedunkelt — du findest deine Kachel dort wieder, wo du sie gemalt hast.
+- **Ein Radierer.** Neben dem Stift sitzt jetzt ein zweites Werkzeug, das Zellen gezielt wieder leer macht
+  (es stempelt das Leerzeichen). Wie der Stift funktioniert er auch ziehend.
+- **Ein „Leeren"-Knopf** in der Werkzeugleiste wischt die ganze Karte in einem Schritt blank — mit
+  Sicherheitsabfrage, denn rückgängig machen geht (noch) nicht.
+
+### Geändert
+- **„Leer" heißt jetzt sauber Leerzeichen (Bildschirmcode 32), nicht mehr Platz 0.** Platz 0 ist im C64-Font
+  in Wahrheit das `@` — eine frische oder geleerte Karte zeigte darum, sobald Platz 0 bemalt war, lauter
+  `@`-Reste und wirkte unlöschbar. Neue Karten, der Radierer und „Leeren" setzen die Zelle jetzt auf
+  echtes Leerzeichen, genau das, was auch `Cls` schreibt. Der Belegt-Zähler zählt entsprechend.
+
 ## [0.2.7] - 2026-06-22
 
 ### Behoben

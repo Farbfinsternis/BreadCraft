@@ -27,10 +27,18 @@ import {
 
 const MAP_CELLS = MAP_W * MAP_H // 1000
 
+/**
+ * The "empty" tile = Space (C64 screen code 32), NOT slot 0. Slot 0 is `@` in the
+ * native font; Space is blank in the standard font and is exactly what Cls/clrscr/
+ * bc_cls write ($20). A fresh map, Clear and the eraser all stamp this, so an empty
+ * cell renders blank as long as slot 32 is kept blank (TILEMAP_EDITOR_UX 2026-06-23).
+ */
+export const EMPTY_TILE = 32
+
 export const useTilemapStore = defineStore('tilemap', () => {
   // Dense parallel grids (row-major). A bumped ref version lets the editor
   // re-render on in-place writes (a Uint8Array isn't deeply reactive).
-  const tiles = ref<Uint8Array>(new Uint8Array(MAP_CELLS))
+  const tiles = ref<Uint8Array>(new Uint8Array(MAP_CELLS).fill(EMPTY_TILE))
   const colors = ref<Uint8Array>(new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM))
   const version = ref(0)
   const dirty = ref(false)
@@ -39,9 +47,9 @@ export const useTilemapStore = defineStore('tilemap', () => {
   let projectDir: string | null = null
   let assetRel: string = TILEMAP_FILE
 
-  /** The tile number at a cell (0 = empty / char 0). */
+  /** The tile number at a cell (EMPTY_TILE = blank Space). */
   function tileAt(col: number, row: number): number {
-    if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return 0
+    if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return EMPTY_TILE
     return tiles.value[row * MAP_W + col]
   }
 
@@ -67,7 +75,7 @@ export const useTilemapStore = defineStore('tilemap', () => {
   async function loadForProject(dir: string, rel: string | null): Promise<void> {
     projectDir = dir
     assetRel = rel ?? TILEMAP_FILE
-    tiles.value = new Uint8Array(MAP_CELLS)
+    tiles.value = new Uint8Array(MAP_CELLS).fill(EMPTY_TILE)
     colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
     version.value++
     dirty.value = false
@@ -105,12 +113,22 @@ export const useTilemapStore = defineStore('tilemap', () => {
     if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
-    tiles.value = new Uint8Array(MAP_CELLS)
+    tiles.value = new Uint8Array(MAP_CELLS).fill(EMPTY_TILE)
     colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
     version.value++
     dirty.value = false
     const text = serializeTilemap({ tiles: tiles.value, colors: colors.value })
     await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
+  }
+
+  /** Empty the whole map in one step (T1): every cell back to Space (EMPTY_TILE) +
+   *  the default Color-RAM colour. Destructive and there is no undo yet, so the editor
+   *  guards this behind a confirm dialog. A new array identity triggers a full redraw. */
+  function clear(): void {
+    tiles.value = new Uint8Array(MAP_CELLS).fill(EMPTY_TILE)
+    colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
+    version.value++
+    dirty.value = true
   }
 
   /** "Save as" (P2.T0b): bind to a new rel and write the CURRENT map there. */
@@ -130,6 +148,7 @@ export const useTilemapStore = defineStore('tilemap', () => {
     tileAt,
     colorAt,
     setTile,
+    clear,
     loadForProject,
     save,
     currentRel,

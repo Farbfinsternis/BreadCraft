@@ -4,9 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { usePaletteStore, C64_PALETTE } from '../stores/palette'
 import { usePanelsStore } from '../stores/panels'
 import { useCharsetStore } from '../stores/charset'
-import { useTilemapStore } from '../stores/tilemap'
+import { useTilemapStore, EMPTY_TILE } from '../stores/tilemap'
 import { useProjectStore } from '../stores/project'
-import { MAP_W, MAP_H } from '../stores/assetIo'
+import { MAP_W, MAP_H, DEFAULT_COLOR_RAM } from '../stores/assetIo'
 import { drawChar } from '../pixel-engine/charsetRender'
 import FloatPanel from '../components/FloatPanel.vue'
 
@@ -55,14 +55,16 @@ const indexPalette = computed<string[]>(() => [
 
 const bg = computed(() => palette.colorOf('background'))
 
-// The tiles available as brushes = the painted characters of the project charset.
-// Char 0 is offered too (the "empty" tile = clear a cell).
-const paintedTiles = computed<number[]>(() => {
-  const used = [0]
-  for (let i = 1; i < 256; i++) if (charset.isUsed(i)) used.push(i)
-  return used
-})
+// The tile palette shows ALL 256 slots at their FIXED position (T2), exactly the
+// 16×16 geometry of the PETSCII editor's navigator — so a tile painted at slot 130
+// is found at position 130 (muscle memory). Unused slots stay in place, only dimmed.
+const tileSlots = Array.from({ length: 256 }, (_, i) => i)
+const hasAnyTile = computed(() => charset.usedCount() > 0)
 const selectedTile = ref(0)
+
+// Current tool (T3): the pen stamps the selected tile, the eraser stamps Space.
+type Tool = 'draw' | 'erase'
+const tool = ref<Tool>('draw')
 
 // The Color-RAM colour the pen writes into each painted cell — the free 4th MC
 // colour (the %11 bit-pair) per 8×8 cell (TILEMAP_EDITOR.md §4, only meaningful in
@@ -162,8 +164,8 @@ function showGhost(col: number, row: number): void {
   hoverIndex = idx
   octx.save()
   octx.globalAlpha = 0.5
-  const ramHex = C64_PALETTE[activeColor.value & 7]?.hex ?? C64_PALETTE[1].hex
-  drawChar(octx, charset.chars[selectedTile.value], col * CHAR_PX, row * CHAR_PX, 1, indexPalette.value, isMC.value, ramHex)
+  const ramHex = C64_PALETTE[stampColor() & 7]?.hex ?? C64_PALETTE[1].hex
+  drawChar(octx, charset.chars[stampTile()], col * CHAR_PX, row * CHAR_PX, 1, indexPalette.value, isMC.value, ramHex)
   octx.restore()
 }
 
@@ -176,15 +178,27 @@ function clearGhost(): void {
   hoverIndex = -1
 }
 
+// What a click stamps: the pen writes the selected tile + active Color-RAM colour;
+// the eraser writes Space (EMPTY_TILE) + the default colour (T3). Colour is moot for
+// a blank Space cell but we keep it tidy/consistent.
+function stampTile(): number {
+  return tool.value === 'erase' ? EMPTY_TILE : selectedTile.value
+}
+function stampColor(): number {
+  return tool.value === 'erase' ? DEFAULT_COLOR_RAM : activeColor.value
+}
+
 function paintAt(ev: PointerEvent): void {
   const c = cellFromEvent(ev)
   if (!c) return
   const beforeTile = tilemap.tileAt(c.col, c.row)
   const beforeColor = tilemap.colorAt(c.col, c.row)
-  tilemap.setTile(c.col, c.row, selectedTile.value, activeColor.value)
+  const tn = stampTile()
+  const color = stampColor()
+  tilemap.setTile(c.col, c.row, tn, color)
   // Redraw just THIS cell immediately (the fast path during a drag) — no full-map
   // repaint. setTile is a no-op if unchanged, so only draw when tile OR colour changed.
-  if (beforeTile !== selectedTile.value || beforeColor !== activeColor.value) {
+  if (beforeTile !== tn || beforeColor !== color) {
     scheduleDraw(false, c.row * MAP_W + c.col)
   }
 }
@@ -227,7 +241,7 @@ watch(
 )
 // A changed tile/colour/palette makes any shown ghost stale → drop it; the next
 // pointer move redraws it fresh.
-watch([selectedTile, activeColor, indexPalette], () => clearGhost())
+watch([selectedTile, activeColor, indexPalette, tool], () => clearGhost())
 
 function initCanvas(): void {
   const canvas = canvasRef.value
@@ -255,13 +269,19 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onPointerUp)
 })
 
-// Counter: how many cells are non-empty (tile != 0).
+// Counter: how many cells are non-empty (tile != Space/EMPTY_TILE).
 const filledCount = computed(() => {
   void tilemap.version
   let n = 0
-  for (let i = 0; i < MAP_W * MAP_H; i++) if (tilemap.tiles[i] !== 0) n++
+  for (let i = 0; i < MAP_W * MAP_H; i++) if (tilemap.tiles[i] !== EMPTY_TILE) n++
   return n
 })
+
+/** Empty the whole map (T1). Destructive + no undo, so confirm first. */
+function clearMap(): void {
+  if (!window.confirm(t('tilemap.clearConfirm'))) return
+  tilemap.clear()
+}
 
 function resetLayout(): void {
   panels.reset(SCOPE)
@@ -299,7 +319,7 @@ function tilePreviewRef(tn: number) {
 }
 // Repaint all visible previews when the charset/palette changes.
 const previewVersion = ref(0)
-watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => previewVersion.value++, {
+watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.value++, {
   deep: true
 })
 </script>
@@ -314,6 +334,10 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
       <button class="tm-reset" :title="t('tilemap.resetLayoutTitle')" @click="resetLayout">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
         {{ t('tilemap.resetLayout') }}
+      </button>
+      <button class="tm-reset tm-clear" :title="t('tilemap.clearTitle')" @click="clearMap">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+        {{ t('tilemap.clear') }}
       </button>
       <button class="tm-reset" :title="t('saveas.title.tilemap')" @click="saveAs">
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
@@ -338,13 +362,13 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
       <!-- Kacheln (tile palette = painted charset characters) -->
       <FloatPanel :scope="SCOPE" id="tiles" :title="t('tilemap.panel.tiles')" :min-width="160" :min-height="140">
         <p class="tm-hint">{{ t('tilemap.tilesHint') }}</p>
-        <div v-if="paintedTiles.length <= 1" class="tm-empty">{{ t('tilemap.noCharset') }}</div>
-        <div v-else class="tm-tiles" :key="previewVersion">
+        <p v-if="!hasAnyTile" class="tm-empty">{{ t('tilemap.noCharset') }}</p>
+        <div class="tm-tiles" :key="previewVersion">
           <button
-            v-for="tn in paintedTiles"
+            v-for="tn in tileSlots"
             :key="tn"
             class="tm-tile"
-            :class="{ 'is-sel': selectedTile === tn }"
+            :class="{ 'is-sel': selectedTile === tn, 'is-empty': !charset.isUsed(tn) }"
             :style="{ background: bg.hex }"
             :title="t('tilemap.tile', { n: tn })"
             @click="selectedTile = tn"
@@ -373,12 +397,18 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
         </div>
       </FloatPanel>
 
-      <!-- Werkzeug (Phase 1: only the single-tile pen) -->
+      <!-- Werkzeug: single-tile pen | eraser (stamps Space) -->
       <FloatPanel :scope="SCOPE" id="tools" :title="t('tilemap.panel.tools')" :min-width="160" :min-height="100">
-        <button class="tm-tool is-active" disabled>
-          <svg class="ico" viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /></svg>
-          {{ t('tilemap.tool.draw') }}
-        </button>
+        <div class="tm-tools">
+          <button class="tm-tool" :class="{ 'is-active': tool === 'draw' }" @click="tool = 'draw'">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /></svg>
+            {{ t('tilemap.tool.draw') }}
+          </button>
+          <button class="tm-tool" :class="{ 'is-active': tool === 'erase' }" @click="tool = 'erase'">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M20 20H7L3 16a2 2 0 0 1 0-3l9-9a2 2 0 0 1 3 0l6 6a2 2 0 0 1 0 3l-7 7" /><path d="M9 11l5 5" /></svg>
+            {{ t('tilemap.tool.erase') }}
+          </button>
+        </div>
       </FloatPanel>
 
       <!-- Color-RAM: the free 4th MC colour painted per cell (multicolor only) -->
@@ -540,29 +570,39 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
   line-height: 1.5;
 }
 
-/* ---- tile palette ---- */
+/* ---- tile palette ----
+   All 256 slots fixed in a 16×16 grid (T2), same geometry as the PETSCII navigator,
+   so each tile keeps its slot position. 1fr cells size to the panel width. */
 .tm-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 32px);
-  gap: 4px;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 1px;
 }
 .tm-tile {
   position: relative;
-  width: 32px;
-  height: 32px;
+  aspect-ratio: 1;
   padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.4);
   border-radius: 2px;
   cursor: pointer;
   overflow: hidden;
-  transition: box-shadow 100ms ease;
+  transition: box-shadow 100ms ease, opacity 100ms ease;
+}
+/* Unused slots stay in place (T2) but dim back so the painted tiles stand out. */
+.tm-tile.is-empty {
+  opacity: 0.28;
+}
+.tm-tile.is-empty:hover,
+.tm-tile.is-empty.is-sel {
+  opacity: 1;
 }
 .tm-tile:hover {
   box-shadow: 0 0 0 1px var(--bc-arc-300);
+  z-index: 1;
 }
 .tm-tile.is-sel {
   box-shadow: 0 0 0 2px var(--bc-arc-400), 0 0 8px rgba(94, 196, 255, 0.6);
-  z-index: 1;
+  z-index: 2;
 }
 .tm-tile-canvas {
   display: block;
@@ -612,6 +652,11 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
 }
 
 /* ---- tools ---- */
+.tm-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bc-space-2);
+}
 .tm-tool {
   display: inline-flex;
   align-items: center;
@@ -619,21 +664,47 @@ watch([indexPalette, () => charset.chars, paintedTiles, activeColor], () => prev
   height: 32px;
   padding: 0 14px;
   font: 600 12px/1 var(--bc-font-sans);
+  color: var(--bc-text-300);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--bc-border);
+  border-radius: var(--bc-radius-pill);
+  cursor: pointer;
+  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.tm-tool:hover {
+  color: var(--bc-text-100);
+  border-color: var(--bc-border-strong);
+}
+.tm-tool.is-active {
   color: var(--bc-text-100);
   background: rgba(94, 196, 255, 0.08);
-  border: 1px solid var(--bc-border-strong);
-  border-radius: var(--bc-radius-pill);
+  border-color: var(--bc-border-strong);
   box-shadow: var(--bc-glow-arc);
-  cursor: default;
 }
 .tm-tool .ico {
   width: 14px;
   height: 14px;
   fill: none;
-  stroke: var(--bc-arc-300);
+  stroke: var(--bc-text-400);
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.tm-tool.is-active .ico {
+  stroke: var(--bc-arc-300);
+}
+
+/* The Clear button is destructive — warm up its hover so it doesn't read like Save. */
+.tm-clear {
+  border-color: var(--bc-border) !important;
+}
+.tm-clear .ico {
+  stroke: var(--bc-filament);
+}
+.tm-clear:hover {
+  color: var(--bc-text-100);
+  border-color: var(--bc-filament);
+  box-shadow: 0 0 0 1px var(--bc-filament);
 }
 
 /* ---- Color-RAM swatch grid ---- */
