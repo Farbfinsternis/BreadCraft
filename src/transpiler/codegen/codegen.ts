@@ -335,6 +335,13 @@ class Generator {
    *  DrawText/HUD collision structurally impossible until the user paints walls). */
   private tilesetSolid: boolean[] | null = null
 
+  // ---- animated tiles (AnimateTile): animated-charset trick ----
+  /** AnimateTile used → emit the bc_anim_* registry + tick (cycles a tile's 8 charset
+   *  bytes through consecutive frame slots) and hook bc_anim_tick() onto every VWait.
+   *  Set in the first pass (collect) so the VWait hook is robust regardless of the
+   *  order AnimateTile and VWait appear in. Needs an active tileset (BC_CHARSET). */
+  private usesAnimTiles = false
+
   // ---- text output (DrawText / Color) ----
   /** DrawText used → emit the bc_drawtext helper (writes C64 screen codes straight to
    *  Screen-RAM, since conio's cputsxy writes PETSCII and mis-indexes a custom charset)
@@ -581,6 +588,10 @@ class Generator {
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
 
+    // Animated-tile registry + tick (AnimateTile), emitted only when used. Needs
+    // BC_CHARSET, which the active tileset guarantees (genAnimateTile errors otherwise).
+    const animTiles = this.animTileDecls()
+
     // Number→text helper (S8.T1): one shared scratch buffer big enough for an unsigned
     // int (65535 = 5 digits + NUL). Lets DrawText show a score/lives count and backs
     // Str$(). One buffer means one conversion per drawn line — the HUD case; richer
@@ -700,6 +711,7 @@ class Generator {
       ...arrayDecls,
       ...baked,
       ...tileWorld,
+      ...animTiles,
       ...strHelpers,
       ...textDecls,
       ...globalDecls,
@@ -787,6 +799,83 @@ class Generator {
     return out
   }
 
+  /**
+   * File-scope registry + tick for animated tiles (AnimateTile), emitted only when used.
+   * The animated-charset trick: each registration remembers a stage tile, a run of
+   * consecutive frame slots, and a tempo; bc_anim_tick() (called once per VWait) copies
+   * the current frame's 8 bytes onto the stage tile every `tempo` frames. One 8-byte copy
+   * animates every cell showing that tile (they all read the same charset bytes) — no
+   * Screen-RAM writes, so the per-frame cost is a counter plus an occasional copy. A slot
+   * offset is slot*8 up to 2040, so the byte index must be a 16-bit unsigned int, not a
+   * byte. Capped at 8 registrations (a small fixed table, no allocation).
+   *
+   * The natural authoring layout has the stage tile sit INSIDE the frame run (e.g. the key
+   * is tile 160 and its frames are 160..163). Then the stage slot is also a frame's storage
+   * and would be destroyed once another frame is copied over it — after one loop that frame
+   * is gone. So each registration saves the stage slot's original 8 bytes (bc_anim_home),
+   * and showing the frame whose source IS the stage slot restores from that copy instead of
+   * reading the (now-overwritten) slot. The disjoint layout (stage outside the run) never
+   * hits the home path and behaves identically.
+   */
+  private animTileDecls(): string[] {
+    if (!this.usesAnimTiles) return []
+    return [
+      '/* animated tiles (AnimateTile): cycle a tile through consecutive frame slots; one',
+      '   8-byte charset copy animates every cell showing it. bc_anim_tick() runs per VWait. */',
+      '#define BC_ANIM_MAX 8',
+      'static unsigned char bc_anim_n = 0;',
+      'static unsigned char bc_anim_tile[BC_ANIM_MAX];   /* visible stage tile */',
+      'static unsigned char bc_anim_first[BC_ANIM_MAX];  /* first frame slot */',
+      'static unsigned char bc_anim_frames[BC_ANIM_MAX]; /* frame count */',
+      'static unsigned char bc_anim_tempo[BC_ANIM_MAX];  /* VWaits per frame change */',
+      'static unsigned char bc_anim_idx[BC_ANIM_MAX];    /* current frame */',
+      'static unsigned char bc_anim_tk[BC_ANIM_MAX];     /* ticks since last change */',
+      'static unsigned char bc_anim_home[BC_ANIM_MAX][8]; /* saved bytes of the stage slot */',
+      '/* paint the current frame onto the stage tile; the frame stored in the stage slot',
+      '   itself comes from the saved home copy (the slot has been overwritten by now). */',
+      'static void bc_anim_show(unsigned char k) {',
+      '  unsigned char dst = bc_anim_tile[k];',
+      '  unsigned char src = (unsigned char)(bc_anim_first[k] + bc_anim_idx[k]);',
+      '  unsigned int a = (unsigned int)dst * 8;',
+      '  unsigned char i;',
+      '  if (src == dst) {',
+      '    for (i = 0; i < 8; ++i) BC_CHARSET[a + i] = bc_anim_home[k][i];',
+      '  } else {',
+      '    unsigned int b = (unsigned int)src * 8;',
+      '    for (i = 0; i < 8; ++i) BC_CHARSET[a + i] = BC_CHARSET[b + i];',
+      '  }',
+      '}',
+      'static void bc_anim_add(unsigned char tile, unsigned char first, unsigned char frames, unsigned char tempo) {',
+      '  unsigned int a;',
+      '  unsigned char i;',
+      '  if (bc_anim_n >= BC_ANIM_MAX || frames == 0) return;',
+      '  if (tempo == 0) tempo = 1;',
+      '  bc_anim_tile[bc_anim_n] = tile;',
+      '  bc_anim_first[bc_anim_n] = first;',
+      '  bc_anim_frames[bc_anim_n] = frames;',
+      '  bc_anim_tempo[bc_anim_n] = tempo;',
+      '  bc_anim_idx[bc_anim_n] = 0;',
+      '  bc_anim_tk[bc_anim_n] = 0;',
+      '  /* save the stage slot so a frame stored there survives being overwritten */',
+      '  a = (unsigned int)tile * 8;',
+      '  for (i = 0; i < 8; ++i) bc_anim_home[bc_anim_n][i] = BC_CHARSET[a + i];',
+      '  bc_anim_show(bc_anim_n); /* show frame 0 at once, no startup flicker */',
+      '  ++bc_anim_n;',
+      '}',
+      'static void bc_anim_tick(void) {',
+      '  unsigned char k;',
+      '  for (k = 0; k < bc_anim_n; ++k) {',
+      '    if (++bc_anim_tk[k] >= bc_anim_tempo[k]) {',
+      '      bc_anim_tk[k] = 0;',
+      '      if (++bc_anim_idx[k] >= bc_anim_frames[k]) bc_anim_idx[k] = 0;',
+      '      bc_anim_show(k);',
+      '    }',
+      '  }',
+      '}',
+      ''
+    ]
+  }
+
   // ---- declaration collection (first pass) ----
 
   /**
@@ -869,6 +958,12 @@ class Generator {
       case 'ForStmt':
         this.declare(s.variable)
         s.body.forEach((x) => this.collect(x))
+        break
+      case 'CommandStmt':
+        // First-pass flag so the VWait → bc_anim_tick() hook fires no matter whether
+        // AnimateTile appears before or after the loop's VWait (the second pass would
+        // otherwise miss an AnimateTile placed after the VWait it should drive).
+        if (s.name.toLowerCase() === 'animatetile') this.usesAnimTiles = true
         break
       default:
         break
@@ -1171,6 +1266,8 @@ class Generator {
       case 'vwait':
         // Frame sync (PAL 50Hz) — the proven cbm.h call (Sprachdef §F, _preflight/game.c).
         this.emit('waitvsync();')
+        // Advance any AnimateTile registrations once per frame (cheap no-op if none).
+        if (this.usesAnimTiles) this.emit('bc_anim_tick();')
         break
       case 'usetileset':
         this.genUseTileset(s)
@@ -1180,6 +1277,9 @@ class Generator {
         break
       case 'settile':
         this.genSetTile(s)
+        break
+      case 'animatetile':
+        this.genAnimateTile(s)
         break
       case 'sprite':
         this.genSprite(s)
@@ -1438,6 +1538,34 @@ class Generator {
     const off = `${this.screenRowOffset(row, a[1].kind === 'Identifier')} + (${col})`
     this.emit(`BC_SCREEN[${off}] = ${tile};`)
     this.emit(`COLOR_RAM[${off}] = (${color}) | 8;`)
+  }
+
+  /**
+   * `AnimateTile tile, first, frames, tempo` → register an animated tile (animated-
+   * charset trick). The engine swaps the stage tile's 8 charset bytes through `frames`
+   * consecutive slots starting at `first`, advancing every `tempo` VWaits. Because every
+   * cell showing `tile` reads the same 8 charset bytes, one copy animates them all — no
+   * Screen-RAM writes. The bytes live IN the charset (BC_CHARSET), so a tileset must be
+   * active (UseTileset baked it); the registry/tick helper is emitted from animTileDecls.
+   */
+  private genAnimateTile(s: CommandStmt): void {
+    const a = s.args
+    if (a.length < 4) {
+      this.err(this.M.animateTileArgs(), s)
+      this.emit('/* AnimateTile: zu wenige Argumente */')
+      return
+    }
+    if (!this.activeTileset) {
+      // The frames are charset bytes; without a baked charset there's nothing to cycle.
+      this.err(this.M.animateTileNoTileset(), s)
+      return
+    }
+    this.usesAnimTiles = true
+    const tile = this.expr(a[0])
+    const first = this.expr(a[1])
+    const frames = this.expr(a[2])
+    const tempo = this.expr(a[3])
+    this.emit(`bc_anim_add(${tile}, ${first}, ${frames}, ${tempo});`)
   }
 
   /**

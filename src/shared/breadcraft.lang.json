@@ -956,6 +956,42 @@
       ]
     },
     {
+      "id": "cmd-animatetile",
+      "name": "AnimateTile",
+      "kind": "command",
+      "category": "tiles",
+      "i18nKey": "cmd.animatetile",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "phase1",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "Registriert eine animierte Kachel: die Engine kopiert periodisch die 8 Charset-Bytes der Bühnen-Kachel aus dem nächsten Frame-Slot (frames aufeinanderfolgende Slots ab first). Kein Screen-Schreiben — alle Zellen mit dieser Kachel animieren zugleich. Der Wechsel-Tick hängt an VWait (bc_anim_tick nach waitvsync).",
+      "$note": "ANIMIERTE KACHEL (animierter-Charset-Trick): die Frames liegen als normale Kacheln in `frames` AUFEINANDERFOLGENDEN Slots ab `first`; die Bühnen-Kachel `tile` (die in der Map sichtbare) bekommt alle `tempo` Frames die nächsten 8 Bytes kopiert → fast gratis (ein 8-Byte-Copy pro Wechsel), unabhängig davon, wie viele Zellen die Kachel zeigen. Beim Aufruf wird Frame 0 sofort gesetzt (kein Anfangs-Flackern). Braucht ein aktives Tileset (vorher UseTileset). Mehrere animierte Kacheln möglich (bis 8). Für drehende Schlüssel/Münzen, Wasser, Fackeln. Die Frame-Slots kosten ECHTE Tileset-Slots (im 256-Zähler sichtbar) — ehrlich, kein Gratis-Speicher.",
+      "params": [
+        {
+          "name": "tile",
+          "type": ".b",
+          "i18nKey": "param.animatetile.tile"
+        },
+        {
+          "name": "first",
+          "type": ".b",
+          "i18nKey": "param.animatetile.first"
+        },
+        {
+          "name": "frames",
+          "type": ".b",
+          "i18nKey": "param.animatetile.frames"
+        },
+        {
+          "name": "tempo",
+          "type": ".b",
+          "i18nKey": "param.animatetile.tempo"
+        }
+      ]
+    },
+    {
       "id": "fn-gettile",
       "name": "GetTile",
       "kind": "function",

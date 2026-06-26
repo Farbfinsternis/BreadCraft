@@ -8,6 +8,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **`AnimateTile` — animierte Kacheln.** Ein neuer Befehl lässt eine Kachel auf einem Timer durch
+  aufeinanderfolgende Frame-Plätze blättern: `AnimateTile kachel, erster_frame, anzahl, tempo`. Dahinter
+  steckt der klassische C64-Trick des animierten Zeichensatzes — getauscht werden nur die 8 Zeichensatz-
+  Bytes der Kachel, also animieren *alle* Zellen, die diese Kachel zeigen, gleichzeitig, fast geschenkt
+  (ein 8-Byte-Kopiervorgang pro Wechsel, der Tick hängt automatisch an `VWait`). Für drehende Schlüssel
+  und Münzen, glucksendes Wasser, flackernde Fackeln. Die Frames sind ganz normale Kacheln, die du in
+  freie Plätze pixelst — sie kosten echte Tileset-Plätze (im 256-Zähler sichtbar, kein Gratis-Speicher).
+  Bis zu 8 animierte Kacheln gleichzeitig; setzt ein aktives `UseTileset` voraus.
 - **Der Tilemap-Editor zeigt jetzt alle 256 Kachel-Plätze an ihrer festen Stelle — wie der PETSCII-Editor.**
   Bisher rückte die Kachel-Palette nur die *benutzten* Tiles dicht zusammen: eine an Platz 130 gemalte
   Kachel landete irgendwo in einer kompakten Liste, und das Muskelgedächtnis aus dem Zeichensatz-Editor

@@ -87,6 +87,8 @@ export interface CodegenMessages {
   drawMapName(): string
   drawMapNoProject(id: string): string
   drawMapNoTileset(id: string): string
+  animateTileArgs(): string
+  animateTileNoTileset(): string
   setTileArgs(): string
   spriteArgs(): string
   spriteNumberRange(name: string): string
@@ -290,6 +292,8 @@ const DE_CODEGEN: CodegenMessages = {
   drawMapNoProject: (id) =>
     `DrawMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`,
   drawMapNoTileset: (id) => `DrawMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
+  animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
+  animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   setTileArgs: () => `SetTile erwartet spalte, zeile, tile, farbe`,
   spriteArgs: () => `Sprite erwartet n, x, y (oder n, OFF)`,
   spriteNumberRange: (name) => `${name} erwartet die Sprite-Nummer n (0–7)`,
@@ -367,6 +371,8 @@ const EN_CODEGEN: CodegenMessages = {
   drawMapNoProject: (id) =>
     `DrawMap "${id}": no project context — maps can only be resolved inside a project`,
   drawMapNoTileset: (id) => `DrawMap "${id}": no tileset active — call UseTileset "…" first`,
+  animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
+  animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
   setTileArgs: () => `SetTile expects column, row, tile, colour`,
   spriteArgs: () => `Sprite expects n, x, y (or n, OFF)`,
   spriteNumberRange: (name) => `${name} expects the sprite number n (0–7)`,

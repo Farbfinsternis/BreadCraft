@@ -1107,3 +1107,48 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
     expect(code).toContain('blocked = bc_solid[bc_tile_at(120, 100)];')
   })
 })
+
+describe('codegen: AnimateTile (animated-charset trick)', () => {
+  it('registers an animated tile and hooks the tick onto VWait', () => {
+    const { code, errors } = gen('UseTileset "main"\nAnimateTile 160, 64, 4, 8\nVWait', fakeAssets())
+    expect(errors).toEqual([])
+    // The registry + tick helper is emitted, and the call registers the tile.
+    expect(code).toContain('static void bc_anim_tick(void)')
+    expect(code).toContain('bc_anim_add(160, 64, 4, 8);')
+    // VWait advances the animation once per frame.
+    expect(code).toContain('waitvsync();\n  bc_anim_tick();')
+  })
+
+  it('saves the stage slot so a frame stored in it survives (stage inside the frame run)', () => {
+    // The natural layout: key shown as tile 160, frames 160..163 — stage == first frame.
+    const { code, errors } = gen('UseTileset "main"\nAnimateTile 160, 160, 4, 8', fakeAssets())
+    expect(errors).toEqual([])
+    // A per-registration home copy + the restore branch keep frame 0 from being lost.
+    expect(code).toContain('static unsigned char bc_anim_home[BC_ANIM_MAX][8];')
+    expect(code).toContain('if (src == dst) {')
+    expect(code).toContain('BC_CHARSET[a + i] = bc_anim_home[k][i];')
+    expect(code).toContain('bc_anim_add(160, 160, 4, 8);')
+  })
+
+  it('hooks the tick even when AnimateTile appears after the VWait (first-pass flag)', () => {
+    const { code, errors } = gen('UseTileset "main"\nVWait\nAnimateTile 160, 64, 4, 8', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('waitvsync();\n  bc_anim_tick();')
+  })
+
+  it('emits neither helper nor tick when AnimateTile is unused', () => {
+    const { code } = gen('UseTileset "main"\nVWait', fakeAssets())
+    expect(code).not.toContain('bc_anim_tick();')
+    expect(code).not.toContain('bc_anim_add')
+  })
+
+  it('errors without an active tileset (the frames are charset bytes)', () => {
+    const { errors } = gen('AnimateTile 160, 64, 4, 8', fakeAssets())
+    expect(errors.some((e) => /kein Tileset aktiv/.test(e))).toBe(true)
+  })
+
+  it('errors on too few arguments', () => {
+    const { errors } = gen('UseTileset "main"\nAnimateTile 160, 64', fakeAssets())
+    expect(errors.some((e) => /AnimateTile erwartet/.test(e))).toBe(true)
+  })
+})
