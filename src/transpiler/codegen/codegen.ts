@@ -62,6 +62,15 @@ function colorConst(index: number): string {
   return COLOR_CONST[index] ?? COLOR_CONST[0]
 }
 
+/** Max number of SIMULTANEOUSLY animated tile TYPES (AnimateTile registrations) — a
+ *  fixed static table on the C64, no allocation. NOT a per-tile frame cap (frames are
+ *  free up to 255) and NOT per map cell (one registration animates every cell showing
+ *  the tile). Each slot costs 14 bytes of RAM, zero per-frame CPU (the tick loops over
+ *  the live count, not this max). 32 gives a designer room for wide multi-tile lava
+ *  bands plus a handful of distinct pickups. Drives both the C #define and the
+ *  compile-time over-budget warning, so the two never drift. */
+const ANIM_TILE_MAX = 32
+
 // CodeGen: AST → cc65-C source. The mappings follow Sprachdef §I and the proven
 // reference in _preflight/game.c (conio: bordercolor/bgcolor/clrscr/cputsxy,
 // waitvsync for frame sync). Pure and non-throwing: unmapped constructs become a
@@ -341,6 +350,12 @@ class Generator {
    *  Set in the first pass (collect) so the VWait hook is robust regardless of the
    *  order AnimateTile and VWait appear in. Needs an active tileset (BC_CHARSET). */
   private usesAnimTiles = false
+  /** Count of AnimateTile call-sites emitted so far. Once it passes ANIM_TILE_MAX the
+   *  runtime table is full and further registrations silently no-op on the C64, so we
+   *  warn at compile time (once, on the call that overflows) instead of letting a tile
+   *  quietly fail to animate. Counts statements, so a call in a loop is one — the
+   *  runtime guard in bc_anim_add stays as the safety net for that rarer case. */
+  private animTileCount = 0
 
   // ---- text output (DrawText / Color) ----
   /** DrawText used → emit the bc_drawtext helper (writes C64 screen codes straight to
@@ -807,7 +822,8 @@ class Generator {
    * animates every cell showing that tile (they all read the same charset bytes) — no
    * Screen-RAM writes, so the per-frame cost is a counter plus an occasional copy. A slot
    * offset is slot*8 up to 2040, so the byte index must be a 16-bit unsigned int, not a
-   * byte. Capped at 8 registrations (a small fixed table, no allocation).
+   * byte. Capped at ANIM_TILE_MAX registrations (a small fixed table, no allocation);
+   * genAnimateTile warns at compile time before the cap is reached.
    *
    * The natural authoring layout has the stage tile sit INSIDE the frame run (e.g. the key
    * is tile 160 and its frames are 160..163). Then the stage slot is also a frame's storage
@@ -822,7 +838,7 @@ class Generator {
     return [
       '/* animated tiles (AnimateTile): cycle a tile through consecutive frame slots; one',
       '   8-byte charset copy animates every cell showing it. bc_anim_tick() runs per VWait. */',
-      '#define BC_ANIM_MAX 8',
+      `#define BC_ANIM_MAX ${ANIM_TILE_MAX}`,
       'static unsigned char bc_anim_n = 0;',
       'static unsigned char bc_anim_tile[BC_ANIM_MAX];   /* visible stage tile */',
       'static unsigned char bc_anim_first[BC_ANIM_MAX];  /* first frame slot */',
@@ -1561,6 +1577,12 @@ class Generator {
       return
     }
     this.usesAnimTiles = true
+    this.animTileCount++
+    if (this.animTileCount === ANIM_TILE_MAX + 1) {
+      // The call that tips over the table: warn once. Earlier calls stay silent, later
+      // ones don't re-warn — one clear message, not a flood.
+      this.err(this.M.animateTileTooMany(ANIM_TILE_MAX), s, 'warn')
+    }
     const tile = this.expr(a[0])
     const first = this.expr(a[1])
     const frames = this.expr(a[2])

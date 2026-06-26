@@ -1151,4 +1151,22 @@ describe('codegen: AnimateTile (animated-charset trick)', () => {
     const { errors } = gen('UseTileset "main"\nAnimateTile 160, 64', fakeAssets())
     expect(errors.some((e) => /AnimateTile erwartet/.test(e))).toBe(true)
   })
+
+  it('sizes the runtime table at 32 simultaneously animated tiles', () => {
+    const { code } = gen('UseTileset "main"\nAnimateTile 160, 64, 4, 8', fakeAssets())
+    expect(code).toContain('#define BC_ANIM_MAX 32')
+  })
+
+  it('does not warn at exactly 32 registrations (the table still fits)', () => {
+    const calls = Array.from({ length: 32 }, (_, i) => `AnimateTile ${i}, 64, 4, 8`).join('\n')
+    const { warnings } = gen(`UseTileset "main"\n${calls}`, fakeAssets())
+    expect(warnings).toEqual([])
+  })
+
+  it('warns once on the 33rd registration (table full → tile stays still)', () => {
+    const calls = Array.from({ length: 33 }, (_, i) => `AnimateTile ${i}, 64, 4, 8`).join('\n')
+    const { warnings } = gen(`UseTileset "main"\n${calls}`, fakeAssets())
+    const overflow = warnings.filter((w) => /mehr als 32/.test(w))
+    expect(overflow.length).toBe(1)
+  })
 })

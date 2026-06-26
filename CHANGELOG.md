@@ -7,6 +7,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-06-26
+
+### Geändert
+- **Mehr gleichzeitig animierte Kacheln: von 8 auf 32.** Ein Level mit einem breiten Lavaband aus
+  mehreren verschiedenen Kacheln, dazu drehende Schlüssel und Tränke, stieß schnell an die alte Grenze
+  von 8. Die Obergrenze gilt pro *Kachel-Typ*, nicht pro Zelle — eine animierte Wasser-Kachel über die
+  ganze untere Zeile kostet weiterhin nur einen Platz. 32 gibt genug Luft für optisch anspruchsvolle
+  Level; die paar zusätzlichen Bytes zeigt die RAM-Anzeige ehrlich an, die Frame-Rate berührt es nicht.
+- **Ehrliche Warnung statt stiller Niederlage.** Wer mehr als 32 Kacheln gleichzeitig animiert, bekam
+  bisher keinen Hinweis — die überzählige Kachel blieb einfach stehen. Jetzt meldet sich der Übersetzer
+  mit einem Tipp (dass dieselbe Kachel mehrfach platziert nur einen Platz kostet).
+- **Klargestellt: BreadCraft läuft vorerst nur unter Windows.** Die README sagt es jetzt ausdrücklich —
+  entwickelt und getestet wird auf Windows, das mitgelieferte cc65 ist der Windows-Build, und macOS/Linux
+  sind noch nicht unterstützt. Plattform-Unabhängigkeit kommt später, Hand in Hand mit einem Download, der
+  die Werkzeuge beim ersten Start selbst holt. Niemand soll mit falschen Erwartungen ankommen.
+
 ## [0.2.9] - 2026-06-26
 
 ### Hinzugefügt

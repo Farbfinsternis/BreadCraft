@@ -89,6 +89,7 @@ export interface CodegenMessages {
   drawMapNoTileset(id: string): string
   animateTileArgs(): string
   animateTileNoTileset(): string
+  animateTileTooMany(max: number): string
   setTileArgs(): string
   spriteArgs(): string
   spriteNumberRange(name: string): string
@@ -294,6 +295,10 @@ const DE_CODEGEN: CodegenMessages = {
   drawMapNoTileset: (id) => `DrawMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
   animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
+  animateTileTooMany: (max) =>
+    `AnimateTile: mehr als ${max} gleichzeitig animierte Kacheln — ab der ${max + 1}. ` +
+    `bleibt die Kachel stehen. Tipp: eine Kachel animiert ALLE Zellen, die sie zeigen, ` +
+    `zugleich — wiederholst Du dieselbe Kachel, kostet das nur einen Platz.`,
   setTileArgs: () => `SetTile erwartet spalte, zeile, tile, farbe`,
   spriteArgs: () => `Sprite erwartet n, x, y (oder n, OFF)`,
   spriteNumberRange: (name) => `${name} erwartet die Sprite-Nummer n (0–7)`,
@@ -373,6 +378,10 @@ const EN_CODEGEN: CodegenMessages = {
   drawMapNoTileset: (id) => `DrawMap "${id}": no tileset active — call UseTileset "…" first`,
   animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
   animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
+  animateTileTooMany: (max) =>
+    `AnimateTile: more than ${max} tiles animated at once — from the ${max + 1}th on the ` +
+    `tile stays still. Tip: one tile animates EVERY cell showing it at once, so repeating ` +
+    `the same tile costs only one slot.`,
   setTileArgs: () => `SetTile expects column, row, tile, colour`,
   spriteArgs: () => `Sprite expects n, x, y (or n, OFF)`,
   spriteNumberRange: (name) => `${name} expects the sprite number n (0–7)`,

@@ -92,6 +92,10 @@ you paint here is what runs on the C64.*
 
 This is the honest part.
 
+- **Windows only, for now.** BreadCraft is built and tested on Windows, and the
+  cc65 it bundles is the Windows build. macOS and Linux are not supported yet —
+  cross-platform support arrives later, hand in hand with a first-run download
+  that fetches the toolchain for you. Until then, this is a Windows program.
 - **No finished game has been built with it yet.** The goal is that a simple
   platformer (the in-progress test game *Into The Deep*), a Sokoban-style puzzle,
   and a Maniac-Mansion-style adventure can all be built — that bar has not been
@@ -135,6 +139,8 @@ The stage BreadCraft stands on today:
 ## Building it
 
 It is an [Electron](https://www.electronjs.org/) app (Vue + TypeScript).
+For now it is developed and packaged for **Windows only** — the bundled cc65 is
+the Windows build, and the paths have not been exercised on macOS or Linux.
 
 ```
 npm install
