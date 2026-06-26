@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-06-26
+
 ### Hinzugefügt
 - **`AnimateTile` — animierte Kacheln.** Ein neuer Befehl lässt eine Kachel auf einem Timer durch
   aufeinanderfolgende Frame-Plätze blättern: `AnimateTile kachel, erster_frame, anzahl, tempo`. Dahinter
