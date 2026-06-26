@@ -37,3 +37,31 @@ describe('outline: function/statement detection', () => {
     expect(scanOutline('Function Talk()')).toEqual([{ name: 'Talk', kind: 'statement', line: 1 }])
   })
 })
+
+describe('outline: "; #" section waypoints', () => {
+  it('reads a "; #" comment as a section, interleaved in source order', () => {
+    const src = ['; # Konstanten', 'Function Reset()', '; # Hauptschleife', 'Function Loop()'].join(
+      '\n'
+    )
+    expect(scanOutline(src)).toEqual([
+      { name: 'Konstanten', kind: 'section', line: 1 },
+      { name: 'Reset', kind: 'statement', line: 2 },
+      { name: 'Hauptschleife', kind: 'section', line: 3 },
+      { name: 'Loop', kind: 'statement', line: 4 }
+    ])
+  })
+
+  it('tolerates extra #, leading indent, and trims the title', () => {
+    expect(scanOutline('   ;  ##   Spieler-Logik  ')).toEqual([
+      { name: 'Spieler-Logik', kind: 'section', line: 1 }
+    ])
+  })
+
+  it('a plain ; comment without # is not a section', () => {
+    expect(scanOutline('; just a note')).toEqual([])
+  })
+
+  it('an empty "; #" marker (no title) is ignored', () => {
+    expect(scanOutline('; #')).toEqual([])
+  })
+})

@@ -7,6 +7,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Wegmarken im Outliner — `; #`-Kommentare als Abschnitts-Überschriften.** Wer einen längeren Crumb durchwühlt,
+  um die Stelle mit den Konstanten wiederzufinden, setzt jetzt einfach eine Marke: ein Kommentar, dessen erstes
+  Zeichen nach dem `;` ein `#` ist, taucht im Outliner als eigene Überschrift auf — `; # Konstanten`,
+  `; # Hauptschleife`. Es bleibt ein ganz gewöhnlicher Kommentar (cc65 und der Transpiler übersehen ihn wie eh
+  und je); das `#` ist nur ein Wink an den Outliner. Die Marken stehen in Quell-Reihenfolge zwischen den
+  Funktionen, ein Klick springt zur Zeile — so wird der Outliner zu *deiner* Landkarte durch *meinen* Code,
+  ohne dass du eine Zeile davon anfassen musst. (Verschachtelung über `; ##` ist vorbereitet, aber noch flach.)
+
 ## [0.2.8] - 2026-06-26
 
 ### Hinzugefügt

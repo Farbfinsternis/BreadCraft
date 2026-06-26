@@ -32,14 +32,16 @@ const symbols = computed<OutlineSymbol[]>(() => scanOutline(project.activeConten
       <button
         v-for="s in symbols"
         :key="`${s.kind}:${s.name}:${s.line}`"
-        class="ol-row ol-fn"
+        class="ol-row"
+        :class="s.kind === 'section' ? 'ol-section' : 'ol-fn'"
         style="--d: 0"
         :title="t('outliner.lineTitle', { n: s.line })"
         @click="revealLine(s.line)"
       >
-        <svg class="ico-sm" viewBox="0 0 24 24"><path d="M4 7V5a2 2 0 0 1 2-2h2M4 17v2a2 2 0 0 0 2 2h2M20 7V5a2 2 0 0 0-2-2h-2M20 17v2a2 2 0 0 1-2 2h-2" /></svg>
+        <svg v-if="s.kind === 'section'" class="ico-sm" viewBox="0 0 24 24"><path d="M6 4h9l3 3v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 9h6M9 13h6M9 17h4" /></svg>
+        <svg v-else class="ico-sm" viewBox="0 0 24 24"><path d="M4 7V5a2 2 0 0 1 2-2h2M4 17v2a2 2 0 0 0 2 2h2M20 7V5a2 2 0 0 0-2-2h-2M20 17v2a2 2 0 0 1-2 2h-2" /></svg>
         <span class="ol-name">{{ s.name }}</span>
-        <span class="ol-kind">{{
+        <span v-if="s.kind !== 'section'" class="ol-kind">{{
           s.kind === 'statement' ? t('outliner.kind.statement') : t('outliner.kind.function')
         }}</span>
       </button>
@@ -67,6 +69,24 @@ const symbols = computed<OutlineSymbol[]>(() => scanOutline(project.activeConten
 }
 .ol-kind {
   font: 400 10px/1 var(--bc-font-mono);
+  color: var(--bc-text-500);
+}
+/* A user '; #' waypoint: a section header, not a symbol. Set apart so the eye
+   reads it as a divider the functions below it belong to. */
+.ol-section {
+  margin-top: var(--bc-space-2);
+  color: var(--bc-text-300);
+}
+.ol-section:first-child {
+  margin-top: 0;
+}
+.ol-section .ol-name {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+.ol-section .ico-sm {
   color: var(--bc-text-500);
 }
 .outline-empty {
