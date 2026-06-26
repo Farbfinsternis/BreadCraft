@@ -32,6 +32,12 @@ const props = defineProps<{
    *  is visible. null/undefined = no ghost. Always 8×8 (the glyph's hi-res shape),
    *  independent of the paint grid's width (4 in MC, 8 in hi-res). */
   ghost?: ReadonlyArray<boolean> | null
+  /** Light table (onion skin): the PREVIOUS tile's row-major cells (same length as
+   *  `cells`, values 0–3). Drawn as a faint REAL-colour ghost only in THIS tile's
+   *  background cells (idx 0), BEHIND the paint — so real pixels (1–3) occlude it.
+   *  Opposite of `ghost` (which sits on top). null/undefined = off. The shell picks
+   *  the previous tile (slot N−1); the canvas knows nothing about animations. */
+  onion?: Uint8Array | null
 }>()
 
 const emit = defineEmits<{
@@ -150,6 +156,34 @@ const ghostColor = computed(() => {
   return hexToRgba(hex, 0.5)
 })
 
+/** Onion-skin opacity: the previous tile shows clearly but reads as a ghost, never
+ *  mistaken for a real pixel. Over the cell's true background colour. */
+const ONION_ALPHA = 0.5
+
+/** Light table is on and matches the grid (same mode ⇒ same length as the view). */
+const onionActive = computed(
+  () => !!props.onion && props.onion.length === view.value.length
+)
+
+/** CSS background for one paint cell. Hover preview wins (shows the pen you're about
+ *  to drop). Otherwise, when the light table is on and this cell is background (idx 0),
+ *  the previous tile's pixel shows through as a faint colour ghost BEHIND — so real
+ *  pixels (idx 1–3) naturally occlude it. Else just the cell's own colour. */
+function bgFor(idx: number, i: number): string {
+  const base = props.palette[idx] ?? props.palette[0]
+  if (i === hoverCell.value) {
+    return `linear-gradient(${ghostColor.value}, ${ghostColor.value}), ${base}`
+  }
+  if (onionActive.value && idx === 0) {
+    const o = props.onion![i]
+    if (o !== 0) {
+      const c = hexToRgba(props.palette[o] ?? base, ONION_ALPHA)
+      return `linear-gradient(${c}, ${c}), ${base}`
+    }
+  }
+  return base
+}
+
 /** A `#rgb`/`#rrggbb` hex to an `rgba(…)` string at the given alpha. */
 function hexToRgba(hex: string, alpha: number): string {
   let h = hex.replace('#', '')
@@ -204,11 +238,7 @@ function sameCells(a: Uint8Array, b: Uint8Array): boolean {
       :key="i"
       class="pc-px"
       :class="{ 'is-hover': i === hoverCell }"
-      :style="
-        i === hoverCell
-          ? { background: `linear-gradient(${ghostColor}, ${ghostColor}), ${palette[idx] ?? palette[0]}` }
-          : { background: palette[idx] ?? palette[0] }
-      "
+      :style="{ background: bgFor(idx, i) }"
     />
     <!-- Font-Linse ghost overlay (S9.T3): 8×8 white wash on top, never occluded. -->
     <div v-if="ghost" class="pc-ghost" aria-hidden="true">

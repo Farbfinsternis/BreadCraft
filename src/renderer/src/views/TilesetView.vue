@@ -5,6 +5,7 @@ import { usePaletteStore, C64_PALETTE } from '../stores/palette'
 import { usePanelsStore } from '../stores/panels'
 import { useCharsetStore } from '../stores/charset'
 import { useProjectStore } from '../stores/project'
+import { useUiStore } from '../stores/ui'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelCanvas from '../components/PixelCanvas.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
@@ -27,6 +28,7 @@ const palette = usePaletteStore()
 const panels = usePanelsStore()
 const charset = useCharsetStore()
 const project = useProjectStore()
+const ui = useUiStore()
 
 const SCOPE = 'petscii'
 
@@ -95,6 +97,18 @@ const rightIndex: PixelIndex = 0 // background = DPaint erase
 
 /** The selected character's cells (reactive Uint8Array from the store). */
 const currentCells = computed(() => charset.pixels(selectedChar.value))
+
+// ---- Leuchttisch (light table / onion skin) ----
+// Shows the PREVIOUS charset slot (N−1) as a faint colour ghost behind the paint
+// grid, so animation phases — painted into consecutive slots, then driven by the
+// CRUMB AnimateTile command — can be aligned frame-to-frame. Editor-local: it knows
+// nothing about AnimateTile, only slot order (the natural reference). Off for slot 0
+// (no predecessor). Only the canvas gets it; the navigator stays clean.
+const onionCells = computed<Uint8Array | null>(() => {
+  if (!ui.lightTable) return null
+  const prev = selectedChar.value - 1
+  return prev < 0 ? null : charset.pixels(prev)
+})
 
 /** The engine emitted a new grid — write it straight back to the store. */
 function onCanvasUpdate(cells: Uint8Array): void {
@@ -248,6 +262,19 @@ onBeforeUnmount(() => {
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
         {{ t('saveas.save') }}
       </button>
+      <!-- Leuchttisch (onion skin): show the previous tile (N−1) as a colour ghost
+           beneath the pixels, to align animation phases. -->
+      <button
+        v-if="tab === 'paint'"
+        class="pt-reset"
+        :class="{ 'is-on': ui.lightTable }"
+        :title="t('tileset.lightTableTitle')"
+        :aria-pressed="ui.lightTable"
+        @click="ui.toggleLightTable()"
+      >
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
+        {{ t('tileset.lightTable') }}
+      </button>
       <button
         class="pt-save"
         :disabled="!charset.dirty"
@@ -342,6 +369,7 @@ onBeforeUnmount(() => {
             :left-index="leftIndex"
             :right-index="rightIndex"
             :ghost="editGhost"
+            :onion="onionCells"
             @update="onCanvasUpdate"
             @history="onHistory"
           />
@@ -474,6 +502,16 @@ onBeforeUnmount(() => {
   color: var(--bc-text-100);
   border-color: var(--bc-copper-300);
   box-shadow: var(--bc-glow-copper);
+}
+/* Toggle "on" state (Leuchttisch): arc-blue lit, like an active editor mode. */
+.pt-reset.is-on {
+  color: var(--bc-arc-200);
+  border-color: var(--bc-arc-400);
+  background: rgba(94, 196, 255, 0.08);
+  box-shadow: var(--bc-glow-arc);
+}
+.pt-reset.is-on .ico {
+  stroke: var(--bc-arc-300);
 }
 .pt-reset .ico {
   width: 13px;

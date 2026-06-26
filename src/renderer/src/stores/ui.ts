@@ -95,6 +95,11 @@ interface PersistedUi {
    *  full width. Toolbar + HealthBars deliberately stay (cost-honesty always
    *  visible — memory breadcraft-health-bars). Persisted (persist-everything rule). */
   zen: boolean
+  /** Light table (onion skin): in the PETSCII/Tileset editor, show the previous tile
+   *  (slot N−1) as a faint colour ghost beneath the paint grid, so animation phases
+   *  (painted into consecutive slots, later driven by AnimateTile) can be aligned
+   *  frame-to-frame. Editor-local, knows nothing about AnimateTile. Persisted. */
+  lightTable: boolean
 }
 
 function loadPersisted(): Partial<PersistedUi> {
@@ -128,6 +133,9 @@ export const useUiStore = defineStore(
 
     // Zen mode hides the side panels for a full-width editor (see PersistedUi).
     const zen = ref<boolean>(saved.zen ?? false)
+
+    // Light table (onion skin) for the PETSCII/Tileset editor (see PersistedUi).
+    const lightTable = ref<boolean>(saved.lightTable ?? false)
 
     // ---- in-app prompt dialog (replaces the Electron-disabled window.prompt/alert) ----
     // The active request (null = closed) and the resolver that the modal calls back.
@@ -253,10 +261,15 @@ export const useUiStore = defineStore(
       zen.value = value
     }
 
+    function toggleLightTable(): void {
+      lightTable.value = !lightTable.value
+    }
+
     return {
       collapsed,
       sizes,
       zen,
+      lightTable,
       prompt,
       newProject,
       saveAs,
@@ -265,6 +278,7 @@ export const useUiStore = defineStore(
       setSize,
       toggleZen,
       setZen,
+      toggleLightTable,
       ask,
       notify,
       confirm,
@@ -278,5 +292,5 @@ export const useUiStore = defineStore(
       cancelSaveAs
     }
   },
-  { persist: { key: STORAGE_KEY, paths: ['collapsed', 'sizes', 'zen'] } }
+  { persist: { key: STORAGE_KEY, paths: ['collapsed', 'sizes', 'zen', 'lightTable'] } }
 )

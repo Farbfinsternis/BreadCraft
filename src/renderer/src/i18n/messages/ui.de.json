@@ -132,6 +132,8 @@
   "tileset.tab.meta": "MetaTiles",
   "tileset.resetLayout": "Layout zurücksetzen",
   "tileset.resetLayoutTitle": "Panels wieder ordentlich anordnen",
+  "tileset.lightTable": "Leuchttisch",
+  "tileset.lightTableTitle": "Vorheriges Tile (N−1) als Farb-Ghost unter den Pixeln einblenden — zum Ausrichten von Animationsphasen",
   "tileset.counterTitle": "Belegte von 256 Zeichen",
   "tileset.counterSuffix": "/ 256 Zeichen",
   "tileset.panel.charset": "Zeichensatz",

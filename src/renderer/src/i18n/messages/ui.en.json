@@ -132,6 +132,8 @@
   "tileset.tab.meta": "MetaTiles",
   "tileset.resetLayout": "Reset layout",
   "tileset.resetLayoutTitle": "Arrange the panels neatly again",
+  "tileset.lightTable": "Light table",
+  "tileset.lightTableTitle": "Show the previous tile (N−1) as a colour ghost beneath the pixels — to align animation phases",
   "tileset.counterTitle": "Used of 256 characters",
   "tileset.counterSuffix": "/ 256 characters",
   "tileset.panel.charset": "Character set",
