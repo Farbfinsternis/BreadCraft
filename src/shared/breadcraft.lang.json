@@ -1077,7 +1077,7 @@
       "cost": "cheap",
       "since": "phase1",
       "proven": true,
-      "$note": "Positionieren, NICHT zeichnen (VIC zeichnet alle 8 in Hardware). Zwei Varianten: n,x,y ODER n,OFF.",
+      "$note": "Positionieren, NICHT zeichnen (VIC zeichnet alle 8 in Hardware). Zwei Varianten: n,x,y ODER n,OFF. Optionaler 4. Parameter frame biegt den Sprite-Pointer auf das gleichnamige Frame um (1 Byte/Aufruf, Pointer-Swap; Frames kommen aus UseSprite). NICHT geklammert — der Nutzer schreibt z.B. `(tick/8) Mod 4` selbst (kosten-ehrlich).",
       "params": [
         {
           "name": "n",
@@ -1097,6 +1097,14 @@
           "type": ".b",
           "i18nKey": "param.sprite.y",
           "variant": "pos"
+        },
+        {
+          "name": "frame",
+          "type": ".b",
+          "i18nKey": "param.sprite.frame",
+          "variant": "pos",
+          "optional": true,
+          "$note": "Optional: Frame-Index (0-basiert) der animierten Gestalt; biegt den Sprite-Pointer um. Nicht geklammert (offene Sprache, Nutzer schreibt Mod selbst)."
         }
       ],
       "variants": [
@@ -1105,7 +1113,8 @@
           "params": [
             "n",
             "x",
-            "y"
+            "y",
+            "frame"
           ],
           "i18nKey": "cmd.sprite.variant.pos"
         },

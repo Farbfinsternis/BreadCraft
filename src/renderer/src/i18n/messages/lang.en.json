@@ -119,6 +119,7 @@
   "param.sprite.n": "Which of the 8 sprites (0–7).",
   "param.sprite.x": "X position (0–319; needs 9 bits, hence .w).",
   "param.sprite.y": "Y position.",
+  "param.sprite.frame": "Optional: frame of the animated shape (0-based) — bends the sprite pointer. Keep it in range yourself, e.g. (tick/8) Mod 4.",
   "cmd.showsprite": "Makes a sprite visible.",
   "param.showsprite.n": "Which of the 8 sprites (0–7).",
   "cmd.hidesprite": "Hides a sprite without forgetting its position.",

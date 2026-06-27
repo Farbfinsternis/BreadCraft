@@ -97,6 +97,8 @@ export interface CodegenMessages {
   useSpriteSecondArg(): string
   useSpriteNoProject(id: string): string
   useSpriteSlotRange(slot: number): string
+  spriteIslandFull(id: string, used: number, need: number, free: number): string
+  spriteFrameTooHigh(slot: number, frame: number, count: number): string
   unknownArray(name: string): string
   arrayIndexCount(name: string): string
   recordNoField(cName: string, field: string): string
@@ -310,6 +312,14 @@ const DE_CODEGEN: CodegenMessages = {
     `UseSprite "${id}": kein Projekt-Kontext — Assets können nur in einem Projekt aufgelöst werden`,
   useSpriteSlotRange: (slot) =>
     `UseSprite: Slot ${slot} gibt es nicht — der C64 hat genau 8 Sprite-Slots (0–7)`,
+  spriteIslandFull: (id, used, need, free) =>
+    `UseSprite "${id}": die Sprite-Insel ist voll. ${used} Blöcke belegt, dieses Sprite ` +
+    `braucht ${need} (ein Block je Frame), frei sind nur noch ${free}. Tipp: weniger ` +
+    `Frames oder weniger gleichzeitige Sprites — alle Frames müssen zugleich im RAM liegen.`,
+  spriteFrameTooHigh: (slot, frame, count) =>
+    `Sprite ${slot}, Frame ${frame}: dieses Sprite hat nur ${count} Frame(s) (0–${count - 1}). ` +
+    `Ein zu hoher Frame zeigt den Nachbar-Block — kein Absturz, aber wohl nicht gewollt. ` +
+    `Tipp: mit 'Mod ${count}' im Bereich bleiben.`,
   unknownArray: (name) => `Unbekanntes Array '${name}' — fehlt ein 'Dim ${name}…'?`,
   arrayIndexCount: (name) => `Array '${name}' erwartet 1 oder 2 Indizes`,
   recordNoField: (cName, field) => `Record '${cName}' hat kein Feld '${field}'`,
@@ -392,6 +402,14 @@ const EN_CODEGEN: CodegenMessages = {
     `UseSprite "${id}": no project context — assets can only be resolved inside a project`,
   useSpriteSlotRange: (slot) =>
     `UseSprite: slot ${slot} doesn't exist — the C64 has exactly 8 sprite slots (0–7)`,
+  spriteIslandFull: (id, used, need, free) =>
+    `UseSprite "${id}": the sprite island is full. ${used} blocks used, this sprite needs ` +
+    `${need} (one block per frame), but only ${free} are free. Tip: fewer frames or fewer ` +
+    `simultaneous sprites — every frame has to live in RAM at the same time.`,
+  spriteFrameTooHigh: (slot, frame, count) =>
+    `Sprite ${slot}, frame ${frame}: this sprite has only ${count} frame(s) (0–${count - 1}). ` +
+    `A frame past the end shows the neighbouring block — no crash, but probably not intended. ` +
+    `Tip: keep it in range with 'Mod ${count}'.`,
   unknownArray: (name) => `unknown array '${name}' — is a 'Dim ${name}…' missing?`,
   arrayIndexCount: (name) => `array '${name}' expects 1 or 2 indices`,
   recordNoField: (cName, field) => `record '${cName}' has no field '${field}'`,

@@ -119,6 +119,7 @@
   "param.sprite.n": "Welches der 8 Sprites (0–7).",
   "param.sprite.x": "X-Position (0–319; braucht 9 Bit, daher .w).",
   "param.sprite.y": "Y-Position.",
+  "param.sprite.frame": "Optional: Frame der animierten Gestalt (0-basiert) — biegt den Sprite-Pointer um. Bereich selbst klammern, z.B. (tick/8) Mod 4.",
   "cmd.showsprite": "Macht ein Sprite sichtbar.",
   "param.showsprite.n": "Welches der 8 Sprites (0–7).",
   "cmd.hidesprite": "Versteckt ein Sprite, ohne seine Position zu vergessen.",

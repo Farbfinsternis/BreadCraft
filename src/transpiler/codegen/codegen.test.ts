@@ -891,25 +891,76 @@ describe('codegen: sprites (M3.T2) — Sprite/ShowSprite/HideSprite', () => {
     expect(errors.some((e) => /Sprite erwartet/.test(e))).toBe(true)
   })
 
+  it('Sprite n,x,y,frame bends the pointer to that frame (SA4)', () => {
+    const src = ['UseSprite 0, "player"', 'Sprite 0, 100, 100, 1'].join('\n')
+    const { code, errors } = gen(src, fakeAssets())
+    expect(errors).toEqual([])
+    // Position still set, plus the one-byte pointer swap to bc_spr_base + frame.
+    expect(code).toContain('VIC.spr_pos[0].x = (unsigned char)((100) & 0xFF);')
+    expect(code).toContain('BC_SPR_PTR[0] = bc_spr_base[0] + (1);')
+  })
+
+  it('Sprite n,x,y (3-arg) leaves the pointer untouched (no frame swap)', () => {
+    const { code } = gen(['UseSprite 0, "player"', 'Sprite 0, 100, 100'].join('\n'), fakeAssets())
+    // UseSprite sets the frame-0 pointer; the 3-arg Sprite must NOT add a `+ (frame)` swap.
+    expect(code).not.toContain('bc_spr_base[0] + (')
+  })
+
+  it('a variable frame index works (the user drives the cycle, e.g. tick Mod n)', () => {
+    const src = ['t.b = 9', 'UseSprite 0, "player"', 'Sprite 0, 100, 100, t Mod 2'].join('\n')
+    const { code, errors } = gen(src, fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toContain('BC_SPR_PTR[0] = bc_spr_base[0] + ((t % 2));')
+  })
+
+  it('warns (best-effort) when a constant frame is past the slot’s baked frame count', () => {
+    // player has 2 frames (0,1) → frame 2 is out of range.
+    const src = ['UseSprite 0, "player"', 'Sprite 0, 100, 100, 2'].join('\n')
+    const { warnings, errors } = gen(src, fakeAssets())
+    expect(errors).toEqual([])
+    expect(warnings.some((w) => /nur 2 Frame/.test(w))).toBe(true)
+  })
+
+  it('does NOT warn when the constant frame is in range', () => {
+    const src = ['UseSprite 0, "player"', 'Sprite 0, 100, 100, 1'].join('\n')
+    const { warnings } = gen(src, fakeAssets())
+    expect(warnings.some((w) => /Frame/.test(w))).toBe(false)
+  })
+
 })
 
 describe('codegen: UseSprite (P2.T3) — bake a painted sprite into the program', () => {
-  it('bakes frame 0, copies it to the slot block, points the slot', () => {
+  it('bakes ALL frames, copies them to consecutive blocks, points the slot at frame 0', () => {
     const { code, errors } = gen('UseSprite 0, "player"', fakeAssets())
     expect(errors).toEqual([])
-    expect(code).toContain('static const unsigned char sprite_player[63]')
-    // frame 0 bytes (255 … 0x42), NOT frame 1 (all 0x99)
-    expect(code).toMatch(/255,/)
-    expect(code).toContain('66') // 0x42 = 66, the last byte of frame 0
-    expect(code).not.toMatch(/153, 153, 153/) // 0x99 = 153 (frame 1) must not appear
-    expect(code).toContain('_d = BC_SPR_DATA(0)')
-    expect(code).toContain('_d[_s] = sprite_player[_s]')
-    expect(code).toContain('BC_SPR_PTR[0] = BC_SPR_BLOCK0 + (0);')
+    // Both frames baked into one flat array (2 × 63 = 126 bytes) — SA3.
+    expect(code).toContain('static const unsigned char sprite_player[126]')
+    expect(code).toMatch(/255,/) // frame 0 first byte
+    expect(code).toContain('66') // 0x42 = 66, frame 0's last byte
+    expect(code).toMatch(/153, 153, 153/) // 0x99 = 153 (frame 1) IS now baked too
+    // Copy loop walks the flat source into block (localBase + f); localBase = 0 here.
+    expect(code).toContain('const unsigned char* _src = sprite_player;')
+    expect(code).toContain('_d = BC_SPR_DATA(0 + _f)')
+    expect(code).toContain('_d[_s] = *_src++')
+    // Runtime slot→base table + pointer at frame 0.
+    expect(code).toContain('static unsigned char bc_spr_base[8];')
+    expect(code).toContain('bc_spr_base[0] = BC_SPR_BLOCK0 + 0;')
+    expect(code).toContain('BC_SPR_PTR[0] = bc_spr_base[0];')
+  })
+
+  it('lays consecutive sprites at consecutive base blocks (SA3 + the allocator)', () => {
+    const src = ['UseSprite 0, "player"', 'UseSprite 1, "player"'].join('\n')
+    const { code, errors } = gen(src, fakeAssets())
+    expect(errors).toEqual([])
+    // player has 2 frames → slot 0 takes blocks 0–1, slot 1 starts at block 2.
+    expect(code).toContain('bc_spr_base[0] = BC_SPR_BLOCK0 + 0;')
+    expect(code).toContain('bc_spr_base[1] = BC_SPR_BLOCK0 + 2;')
+    expect(code).toContain('_d = BC_SPR_DATA(2 + _f)') // second sprite copies into blocks 2+
   })
 
   it('emits the sprite-data memory-map defines in the header when used', () => {
     const { code } = gen('UseSprite 0, "player"', fakeAssets())
-    expect(code).toContain('#define BC_SPR_DATA(n)')
+    expect(code).toContain('#define BC_SPR_DATA(i)')
     expect(code).toContain('#define BC_SPR_PTR')
     expect(code).toContain('#define BC_SPR_BLOCK0')
   })
@@ -949,11 +1000,14 @@ describe('codegen: UseSprite (P2.T3) — bake a painted sprite into the program'
     expect(code).not.toContain('VIC.spr_mcolor0 =')
   })
 
-  it('accepts a variable slot (expression, runtime-safe block math)', () => {
+  it('accepts a variable slot (expression indexes the runtime tables)', () => {
     const { code, errors } = gen(['s.b = 3', 'UseSprite s, "player"'].join('\n'), fakeAssets())
     expect(errors).toEqual([])
-    expect(code).toContain('_d = BC_SPR_DATA(s)')
-    expect(code).toContain('BC_SPR_PTR[s] = BC_SPR_BLOCK0 + (s);')
+    // Data blocks come from the compile-time allocator (localBase 0), independent of the
+    // variable slot; the slot only indexes the runtime base table + the pointer slots.
+    expect(code).toContain('_d = BC_SPR_DATA(0 + _f)')
+    expect(code).toContain('bc_spr_base[s] = BC_SPR_BLOCK0 + 0;')
+    expect(code).toContain('BC_SPR_PTR[s] = bc_spr_base[s];')
   })
 
   it('errors on a constant slot out of range (0–7)', () => {
@@ -979,6 +1033,67 @@ describe('codegen: UseSprite (P2.T3) — bake a painted sprite into the program'
   it('errors with too few args', () => {
     const { errors } = gen('UseSprite "player"', fakeAssets())
     expect(errors.some((e) => /Slot .* und einen Sprite-Namen/.test(e))).toBe(true)
+  })
+})
+
+describe('codegen: UseSprite block allocator (SA2) — honest island ceiling', () => {
+  // A project with a baked charset → bank 1, whose sprite island holds exactly 16 blocks
+  // (memory-map spriteBlocksAvail). The allocator draws one block per frame, so a player
+  // with N frames takes N blocks; build it on demand to probe the ceiling.
+  function islandAssets(frameCount: number): AssetContext {
+    const charset = JSON.stringify({
+      format: 'breadcraft.petscii',
+      charCount: 256,
+      chars: Array.from({ length: 256 }, () => [0, 0, 0, 0, 0, 0, 0, 0])
+    })
+    const sprite = JSON.stringify({
+      format: 'breadcraft.sprite',
+      frames: Array.from({ length: frameCount }, () => Array.from({ length: 63 }, () => 0))
+    })
+    const files: Record<string, string> = { 'main.petscii': charset, 'player.sprite': sprite }
+    return {
+      manifest: { palette: null, charsets: ['main.petscii'], tilemaps: [], sprites: ['player.sprite'] },
+      readFile: (rel) => (rel in files ? files[rel] : null)
+    }
+  }
+
+  it('passt knapp: a 15-frame sprite fits under the 16-block bank-1 ceiling', () => {
+    const { errors } = gen('UseTileset "main"\nUseSprite 0, "player"', islandAssets(15))
+    expect(errors).toEqual([])
+  })
+
+  it('passt exakt: a 16-frame sprite fills the island to the brim, no error', () => {
+    const { errors } = gen('UseTileset "main"\nUseSprite 0, "player"', islandAssets(16))
+    expect(errors).toEqual([])
+  })
+
+  it('läuft über: a 17-frame sprite overflows the island → honest build error', () => {
+    const { errors } = gen('UseTileset "main"\nUseSprite 0, "player"', islandAssets(17))
+    expect(errors.some((e) => /Sprite-Insel ist voll/.test(e))).toBe(true)
+    // The message is concrete: 0 used, needs 17, only 16 free.
+    expect(errors.some((e) => /0 Blöcke belegt.*braucht 17.*nur noch 16/.test(e))).toBe(true)
+  })
+
+  it('accumulates across calls: two 10-frame sprites overflow on the second', () => {
+    const src = ['UseTileset "main"', 'UseSprite 0, "player"', 'UseSprite 1, "player"'].join('\n')
+    const { errors } = gen(src, islandAssets(10))
+    // First UseSprite takes blocks 0–9; the second needs 10 more but only 6 remain.
+    expect(errors.some((e) => /10 Blöcke belegt.*braucht 10.*nur noch 6/.test(e))).toBe(true)
+  })
+
+  it('without a charset the island is bigger (bank 0, 32 blocks): 20 frames fit', () => {
+    const noCharset: AssetContext = {
+      manifest: { palette: null, charsets: [], tilemaps: [], sprites: ['player.sprite'] },
+      readFile: (rel) =>
+        rel === 'player.sprite'
+          ? JSON.stringify({
+              format: 'breadcraft.sprite',
+              frames: Array.from({ length: 20 }, () => Array.from({ length: 63 }, () => 0))
+            })
+          : null
+    }
+    const { errors } = gen('UseSprite 0, "player"', noCharset)
+    expect(errors).toEqual([])
   })
 })
 

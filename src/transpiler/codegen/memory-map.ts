@@ -77,6 +77,12 @@ export interface MemoryMap {
   spritePtrAddr: number
   /** The bank-relative base block for sprite data: pointer[n] = spriteBlock0 + n. */
   spriteBlock0: number | null
+  /** How many 64-byte sprite blocks the island holds — the hard ceiling the compile-time
+   *  frame-block allocator checks against (pointer-swap animation, SPRITE_ANIMATIONS.md SA1).
+   *  Bank 1 (charset): 16 ($7C00–$8000); bank 0 (sprites-only): 32 ($3800 + 2KB). 0 with no
+   *  sprites. Pointer-swap shares this pool across ALL sprites (one block per FRAME), so a
+   *  6-frame walk cycle draws 6 blocks — an honest build error replaces a runtime corruption. */
+  spriteBlocksAvail: number
   /** The $D018 / VIC.addr value placing screen + charset within the bank. */
   d018: number
   /** The charset's runtime copy-target address, or null if the project uses none. */
@@ -113,6 +119,8 @@ function planBank1(use: MemoryUse): MemoryMap {
     screenAddr: B1_SCREEN,
     spritePtrAddr: B1_SCREEN + SPRITE_PTR_OFFSET,
     spriteBlock0: spritesAddr !== null ? (spritesAddr - B1_BASE) / SPRITE_BLOCK : null,
+    // The island runs from the sprite base to the top of the bank ($8000 = B1_BSS).
+    spriteBlocksAvail: spritesAddr !== null ? (B1_BSS - B1_SPRITES) / SPRITE_BLOCK : 0,
     d018: d018For(B1_SCREEN, charsetAddr, B1_BASE),
     charsetAddr,
     spritesAddr,
@@ -132,6 +140,8 @@ function planBank0(use: MemoryUse): MemoryMap {
     screenAddr: B0_SCREEN,
     spritePtrAddr: B0_SCREEN + SPRITE_PTR_OFFSET,
     spriteBlock0: spritesAddr !== null ? spritesAddr / SPRITE_BLOCK : null,
+    // The bank-0 sprite island is the reserved 2KB region ($3800 + REGION_SIZE).
+    spriteBlocksAvail: spritesAddr !== null ? REGION_SIZE / SPRITE_BLOCK : 0,
     d018: d018For(B0_SCREEN, B0_SPRITES, 0), // unused (no charset → no VIC.addr write)
     charsetAddr: null,
     spritesAddr,

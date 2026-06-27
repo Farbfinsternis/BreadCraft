@@ -383,6 +383,20 @@ class Generator {
   /** UseSprite used (P2.T3) → emit the sprite-shape memory-map #defines (the 64-byte-
    *  aligned data block above the charset + the pointer slots). */
   private usesSpriteData = false
+  /** Compile-time block allocator for pointer-swap animation (SPRITE_ANIMATIONS.md SA2).
+   *  Every UseSprite draws one 64-byte block PER FRAME from the shared sprite island; the
+   *  cursor is the running base, the budget the island's ceiling (memory-map spriteBlocksAvail).
+   *  When `cursor + frames.length` would cross the budget we fail the build HONESTLY rather
+   *  than let the game show a neighbour's bytes at runtime ([[breadcraft-limits-philosophy]]). */
+  private spriteBlockCursor = 0
+  /** How many 64-byte sprite blocks the island holds — set up front from the memory plan
+   *  (the bank depends on whether a charset is baked, so it's pre-scanned in generate). */
+  private spriteBlockBudget = 0
+  /** Constant slot → its baked frame count, from a pre-scan of UseSprite (SA4). Lets
+   *  `Sprite n,x,y,frame` warn (best-effort) when a constant `frame` is past the last one.
+   *  Pre-scanned because Sprite calls inside functions are emitted before the top-level
+   *  UseSprite that defines the slot. Only constant-slot UseSprites are recorded. */
+  private readonly spriteFrameCount = new Map<number, number>()
 
   // ---- input (M3.T3): Joystick ----
   /** Joystick() used → pull in <joystick.h> and install the driver once in main. */
@@ -487,10 +501,75 @@ class Generator {
     return found
   }
 
+  /** Does the program bake a charset (any UseTileset, anywhere)? A custom charset moves
+   *  graphics to bank 1, which shrinks the sprite island to 16 blocks; without one a
+   *  sprites-only program stays in bank 0 with 32. The sprite-block allocator (SA2) needs
+   *  this budget at the FIRST UseSprite, which may be parsed before UseTileset — so it's
+   *  pre-scanned up front, the same shape as programDrawsText. */
+  private programUsesCharset(program: Program): boolean {
+    let found = false
+    const visit = (node: unknown): void => {
+      if (found || node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === 'usetileset') {
+        found = true
+        return
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+    return found
+  }
+
+  /** Pre-scan UseSprite calls with a constant slot, recording slot → baked frame count, so
+   *  `Sprite n,x,y,frame` can warn (best-effort) on a constant frame past the end (SA4).
+   *  Resolves quietly — any asset error is reported properly later in genUseSprite. */
+  private collectSpriteFrameCounts(program: Program): void {
+    if (!this.assets) return
+    const visit = (node: unknown): void => {
+      if (node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === 'usesprite') {
+        const args = rec.args as Expr[] | undefined
+        const slotArg = args?.[0]
+        if (slotArg?.kind === 'NumberLit' && args?.[1]) {
+          const slotNum = Number(slotArg.raw)
+          const id = this.stringArg(args[1])
+          if (id && Number.isInteger(slotNum) && slotNum >= 0 && slotNum <= 7) {
+            try {
+              const resolved = resolveSprite(id, this.assets!.manifest, this.assets!.readFile, this.locale)
+              this.spriteFrameCount.set(slotNum, resolved.frames.length)
+            } catch {
+              // genUseSprite reports resolve errors; the warn just won't fire for this slot.
+            }
+          }
+        }
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+  }
+
   generate(program: Program): CodeGenResult {
     // Whole-program text detection up front (before the walk), so UseTileset can decide
     // whether to seed the Hires font region (F2). DrawText/Color may appear after UseTileset.
     this.willDrawText = this.programDrawsText(program)
+    // Sprite-island block budget up front (SA2): the bank (and so the island size) is fixed
+    // by whether a charset is baked, which may be declared after the first UseSprite.
+    this.spriteBlockBudget = planMemory({
+      usesCharset: this.programUsesCharset(program),
+      usesSprites: true
+    }).spriteBlocksAvail
+    // Slot → frame count, for the best-effort out-of-range warn on `Sprite n,x,y,frame` (SA4).
+    this.collectSpriteFrameCounts(program)
 
     // First pass: collect declarations (types, globals, consts) so the second pass
     // can emit correctly-typed declarations and narrowing checks. Function signatures
@@ -556,16 +635,17 @@ class Generator {
     if (this.usesSprites) {
       header.push('/* sprites: positions/enable via VIC registers (c64.h) */', '')
     }
-    // UseSprite (P2.T3) bakes shapes into a 64-byte-aligned block (bank 1: $7C00). Slot n's
-    // shape lives at BC_SPR_DATA(n) = base + n*64; its pointer BC_SPR_PTR[n] (screen page +
-    // $3F8) holds the BANK-RELATIVE block number BC_SPR_BLOCK0 + n. All addresses + the
-    // block base come from the memory plan, so they follow the bank.
+    // UseSprite bakes shapes into 64-byte-aligned blocks (bank 1: $7C00+). Every FRAME gets
+    // its own block (SA3): BC_SPR_DATA(i) = base + i*64 is the i-th block, i a compile-time
+    // index from the block allocator (SA2) — no longer tied to the slot. A sprite-pointer
+    // BC_SPR_PTR[slot] (screen page + $3F8) holds the BANK-RELATIVE block number
+    // BC_SPR_BLOCK0 + i. All addresses + the block base come from the memory plan.
     if (this.usesSpriteData) {
       const spr = hx(map.spritesAddr!)
       header.push(
-        `#define BC_SPR_DATA(n) ((unsigned char*)(${spr} + (unsigned int)(n) * 64))`,
+        `#define BC_SPR_DATA(i) ((unsigned char*)(${spr} + (unsigned int)(i) * 64))`,
         `#define BC_SPR_PTR  ((unsigned char*)${hx(map.spritePtrAddr)}) /* sprite-pointer slots 0..7 */`,
-        `#define BC_SPR_BLOCK0 (${map.spriteBlock0})          /* slot n adds n */`,
+        `#define BC_SPR_BLOCK0 (${map.spriteBlock0})          /* bank-relative block of the island base */`,
         ''
       )
     }
@@ -635,6 +715,12 @@ class Generator {
 
     // Baked asset data (charset bytes, map tiles) — file scope, like Dim arrays.
     const baked = this.bakedData.length > 0 ? [...this.bakedData, ''] : []
+
+    // Slot → base-block table (SA3): UseSprite records each slot's frame-0 block here, and
+    // `Sprite n,x,y,frame` (SA4) adds the frame index to swap the hardware pointer (1 byte).
+    const spriteRuntime = this.usesSpriteData
+      ? ['/* sprite slot → frame-0 base block (pointer-swap animation) */', 'static unsigned char bc_spr_base[8];', '']
+      : []
 
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
@@ -761,6 +847,7 @@ class Generator {
       ...structDecls,
       ...arrayDecls,
       ...baked,
+      ...spriteRuntime,
       ...tileWorld,
       ...animTiles,
       ...strHelpers,
@@ -1672,6 +1759,26 @@ class Generator {
     this.emit(`VIC.spr_pos[${n}].x = (unsigned char)((${x}) & 0xFF);`)
     this.emit(`if ((${x}) & 0x100) VIC.spr_hi_x |= (1 << (${n})); else VIC.spr_hi_x &= ~(1 << (${n}));`)
     this.emit(`VIC.spr_pos[${n}].y = (${y});`)
+    // 4th param `frame` (SA4): bend the sprite pointer to that frame's block — one byte
+    // written, no compare, no tick. Setting it every call is cheaper than a "changed?"
+    // guard (Sprite is called every frame to position anyway). Frame is NOT clamped (open
+    // language: the user writes `Mod`); an out-of-range frame shows a neighbour block, no
+    // crash. UseSprite filled bc_spr_base[slot]; force the data defines in case a stray
+    // 4-arg Sprite appears without a UseSprite (then bc_spr_base is 0 → block 0 + frame).
+    if (a.length >= 4) {
+      this.usesSpriteData = true
+      const frame = this.expr(a[3])
+      // Best-effort warn: constant slot + constant frame past the slot's baked frame count.
+      if (a[0].kind === 'NumberLit' && a[3].kind === 'NumberLit') {
+        const slotNum = Number(a[0].raw)
+        const frameNum = Number(a[3].raw)
+        const count = this.spriteFrameCount.get(slotNum)
+        if (count !== undefined && Number.isInteger(frameNum) && frameNum >= count) {
+          this.err(this.M.spriteFrameTooHigh(slotNum, frameNum, count), s, 'warn')
+        }
+      }
+      this.emit(`BC_SPR_PTR[${n}] = bc_spr_base[${n}] + (${frame});`)
+    }
   }
 
   /** `ShowSprite n` / `HideSprite n` → flip the sprite's enable bit (VIC.spr_ena). */
@@ -1748,23 +1855,49 @@ class Generator {
     }
     const frame0 = frames[0] // resolveSprite guarantees ≥1 frame of 63 bytes
 
+    // Compile-time block allocator (SA2): each frame needs its own 64-byte block so the
+    // hardware can pointer-swap between them; draw frames.length blocks from the shared
+    // island and fail the build honestly if it would overflow (rather than the game showing
+    // a neighbour's bytes at runtime). The base is recorded for SA3's slot→base table.
+    const localBase = this.spriteBlockCursor
+    if (localBase + frames.length > this.spriteBlockBudget) {
+      const free = Math.max(0, this.spriteBlockBudget - localBase)
+      this.err(this.M.spriteIslandFull(id, localBase, frames.length, free), s)
+      return
+    }
+    this.spriteBlockCursor += frames.length
+
     this.usesSprites = true
     this.usesSpriteData = true
     const slot = this.expr(a[0])
     const dataName = `sprite_${safeAssetName(id)}`
+    // Bake EVERY frame, not just frame 0 (SA3): all frames must live in RAM at once so the
+    // hardware can pointer-swap between them (SA4). Flatten the frames into one array, frame
+    // f at offset f*63 — the copy loop below walks it linearly.
+    const stride = frame0.length // 63 bytes per frame (resolveSprite guarantees this)
+    const flat = new Uint8Array(frames.length * stride)
+    frames.forEach((f, i) => flat.set(f, i * stride))
     this.bakedData.push(
-      `static const unsigned char ${dataName}[${frame0.length}] = {`,
-      byteRows(frame0),
+      `static const unsigned char ${dataName}[${flat.length}] = {`,
+      byteRows(flat),
       '};'
     )
 
-    this.emit(`/* UseSprite ${slot}, "${id}" */`)
-    // Copy the 63 shape bytes into this slot's sprite-data block, then point the slot.
     this.emit(
-      `{ unsigned char _s; unsigned char* _d = BC_SPR_DATA(${slot}); ` +
-        `for (_s = 0; _s < ${frame0.length}; ++_s) _d[_s] = ${dataName}[_s]; }`
+      `/* UseSprite ${slot}, "${id}" — ${frames.length} frame(s) → blocks ` +
+        `${localBase}..${localBase + frames.length - 1} */`
     )
-    this.emit(`BC_SPR_PTR[${slot}] = BC_SPR_BLOCK0 + (${slot});`)
+    // Copy each frame into its own 64-byte block (localBase + f), walking the flat source
+    // with a running pointer (no per-frame multiply). One-time setup, like the charset copy.
+    this.emit(
+      `{ unsigned char _f, _s; const unsigned char* _src = ${dataName}; ` +
+        `for (_f = 0; _f < ${frames.length}; ++_f) { unsigned char* _d = BC_SPR_DATA(${localBase} + _f); ` +
+        `for (_s = 0; _s < ${stride}; ++_s) _d[_s] = *_src++; } }`
+    )
+    // Record the slot's base block (frame 0) in the runtime table, so `Sprite n,x,y,frame`
+    // can swap the pointer by adding `frame` (SA4); point the slot at frame 0 now.
+    this.emit(`bc_spr_base[${slot}] = BC_SPR_BLOCK0 + ${localBase};`)
+    this.emit(`BC_SPR_PTR[${slot}] = bc_spr_base[${slot}];`)
     // Individual per-sprite colour (the "10" pair), chosen in the sprite editor and
     // stored in the .sprite — so player and blob can differ.
     this.emit(`VIC.spr_color[${slot}] = ${colorConst(spriteColor)};`)

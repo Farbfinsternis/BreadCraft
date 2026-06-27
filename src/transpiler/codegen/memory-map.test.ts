@@ -65,6 +65,16 @@ describe('memory-map planner (STAHL S1a)', () => {
     expect(none.charsetAddr).toBeNull()
   })
 
+  it('spriteBlocksAvail: bank 1 → 16 blocks, bank 0 → 32, no sprites → 0 (pointer-swap pool, SA1)', () => {
+    // Bank 1 (charset): the island is $7C00 up to the bank top $8000 → 16 blocks of 64 B.
+    expect(planMemory({ usesCharset: true, usesSprites: true }).spriteBlocksAvail).toBe(16)
+    // Bank 0 (sprites-only): the reserved 2KB region → 32 blocks.
+    expect(planMemory({ usesCharset: false, usesSprites: true }).spriteBlocksAvail).toBe(32)
+    // No sprites → no island, no blocks (neither layout).
+    expect(planMemory({ usesCharset: true, usesSprites: false }).spriteBlocksAvail).toBe(0)
+    expect(planMemory({ usesCharset: false, usesSprites: false }).spriteBlocksAvail).toBe(0)
+  })
+
   it('mainCeiling: charset → $7000 (bank 1), sprites-only → $3800, graphics-less → $D000', () => {
     expect(planMemory({ usesCharset: true, usesSprites: true }).mainCeiling).toBe(0x7000)
     expect(planMemory({ usesCharset: false, usesSprites: true }).mainCeiling).toBe(0x3800)

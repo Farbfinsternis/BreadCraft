@@ -7,6 +7,23 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Animierte Sprites — `Sprite` bekommt einen 4. Parameter `frame`.** `Sprite n, x, y, frame` zeigt
+  dieselbe Hardware-Gestalt in einer anderen Frame-Form, indem es den Sprite-Pointer umbiegt — **ein
+  einziges geschriebenes Byte pro Aufruf**, kein Kopieren von Shape-Bytes. Genau wie animierte Kacheln
+  treibt der Nutzer das Tempo selbst, z. B. `Sprite 0, x, y, (tick / 8) Mod 4` — kein versteckter Automat,
+  kein neues Keyword. Ohne den 4. Parameter verhält sich `Sprite` unverändert (nur Position). Wer einen
+  konstanten Frame jenseits der gemalten Anzahl angibt, bekommt eine freundliche Warnung (kein Absturz —
+  ein Frame außerhalb zeigt den Nachbar-Block).
+- **Alle Sprite-Frames liegen zugleich im RAM.** Damit der Pointer-Swap funktioniert, backt `UseSprite`
+  ab jetzt **jeden** gemalten Frame eines Sprites (nicht mehr nur Frame 0) und kopiert sie in
+  aufeinanderfolgende 64-Byte-Blöcke der Sprite-Insel.
+- **Ehrliche Sprite-Insel-Decke.** Jeder Frame zieht einen 64-Byte-Block aus der gemeinsamen Insel.
+  Reicht der Platz nicht (Bank 1 mit Zeichensatz fasst 16 Blöcke, Bank 0 ohne Zeichensatz 32), scheitert
+  der Build mit einer klaren Meldung („Sprite-Insel ist voll: N belegt, dieses Sprite braucht M, frei
+  nur K") statt das Spiel zur Laufzeit fremde Bytes zeigen zu lassen. Per Copy-at-runtime bleibt die
+  `.prg` dabei kompakt (kein Auffüllen bis zur Insel).
+
 ## [0.2.11] - 2026-06-27
 
 ### Geändert
