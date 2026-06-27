@@ -38,6 +38,10 @@ const props = defineProps<{
    *  Opposite of `ghost` (which sits on top). null/undefined = off. The shell picks
    *  the previous tile (slot N−1); the canvas knows nothing about animations. */
   onion?: Uint8Array | null
+  /** Read-only: render the grid but ignore paint strokes (no engine mutation, no
+   *  `update`). Used for the reserved Hires font slots 0–63, which the MC editor must
+   *  not paint — they are shaped in the Hires Font editor (MIXED_MODE_FONT_PLAN F3). */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -117,6 +121,7 @@ function penFor(button: number): PixelIndex {
 }
 
 function onPointerDown(ev: PointerEvent): void {
+  if (props.readonly) return
   const cell = cellFromEvent(ev)
   if (!cell) return
   ev.preventDefault()

@@ -9,6 +9,7 @@ import { useProjectStore } from '../stores/project'
 import { MAP_W, MAP_H, DEFAULT_COLOR_RAM } from '../stores/assetIo'
 import { drawChar } from '../pixel-engine/charsetRender'
 import FloatPanel from '../components/FloatPanel.vue'
+import { FONT_SLOTS } from '@shared/font-slots'
 
 const { t } = useI18n()
 
@@ -55,12 +56,13 @@ const indexPalette = computed<string[]>(() => [
 
 const bg = computed(() => palette.colorOf('background'))
 
-// The tile palette shows ALL 256 slots at their FIXED position (T2), exactly the
-// 16×16 geometry of the PETSCII editor's navigator — so a tile painted at slot 130
-// is found at position 130 (muscle memory). Unused slots stay in place, only dimmed.
-const tileSlots = Array.from({ length: 256 }, (_, i) => i)
+// The tile palette shows the TILE slots (64–255) at their fixed relative position —
+// the same 16-wide geometry as the PETSCII editor's tile navigator. The reserved Hires
+// font region (0–63) is hidden here entirely (MIXED_MODE_FONT_PLAN F3): letters aren't
+// map tiles and live in the Font tab. Unused slots stay in place, only dimmed.
+const tileSlots = Array.from({ length: 256 - FONT_SLOTS }, (_, i) => i + FONT_SLOTS)
 const hasAnyTile = computed(() => charset.usedCount() > 0)
-const selectedTile = ref(0)
+const selectedTile = ref(FONT_SLOTS)
 
 // Current tool (T3): the pen stamps the selected tile, the eraser stamps Space.
 type Tool = 'draw' | 'erase'

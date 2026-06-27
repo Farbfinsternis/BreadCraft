@@ -3,10 +3,16 @@
 // (901225-01): 256 glyphs x 8 bytes, glyph N at bytes [N*8 .. N*8+7], MSB = leftmost
 // pixel. This is the EXACT set that `cputsxy`/DrawText indexes once a custom tileset
 // has NOT replaced it, so the ghost shown in slot N is literally what the hardware
-// would draw there. EDITOR-ONLY reference data — it is never emitted into a .prg.
+// would draw there.
+//
+// Two uses: (1) the editor ghost overlay (display only), and (2) since MIXED_MODE_FONT_
+// PLAN F2, a runtime SEED for the reserved Hires font slots 0–63 — `seedFontRegion`
+// (font-slots.ts) bakes these bytes into a custom charset's empty font slots so DrawText
+// stays readable after UseTileset replaced the ROM charset. So a SUBSET of this data CAN
+// now reach a generated .prg (only the seeded slots, only when the program draws text).
 //
 // Source: Commodore C64 character ROM, baked in once (the file lives in VICE, which
-// other machines do not have). User-approved embed (2026-06-15); editor display only.
+// other machines do not have). User-approved embed (2026-06-15).
 
 /** 256 glyphs x 8 bytes, the C64 uppercase/graphics charset (screen-code indexed). */
 export const C64_ROM_FONT_UPPER: readonly number[] = [

@@ -7,6 +7,34 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-06-27
+
+### Geändert
+- **Scharfer Text auch in Multicolor-Projekten (C64 Mixed-Mode).** `DrawText`, `Color` und `Cls`
+  setzen die Schrift jetzt in gestochenem Hires, statt sie im Multicolor-Projekt zwangsweise matschig
+  (halbe Auflösung) zu rendern. Möglich macht das die Hardware selbst: der VIC-II entscheidet pro Zelle
+  über Bit 3 im Color-RAM, ob sie Hires oder Multicolor ist — Schrift lässt das Bit jetzt frei, Kacheln
+  setzen es weiterhin. Nebenbei bekommt Text alle 16 Farben zurück.
+- **Lesbare Schrift trotz eigenem Zeichensatz.** Ein eigenes Tileset ersetzt den ROM-Zeichensatz, sodass
+  `DrawText` bisher ins Leere griff. Zeichnet ein Programm Text, füllt BreadCraft die noch leeren
+  Font-Slots (0–63) automatisch mit dem C64-ROM-Font — die Buchstaben erscheinen scharf neben den bunten
+  Kacheln, ohne dass man sie erst selbst malen muss. Schon gemalte Slots bleiben unangetastet; ohne
+  Text-Nutzung wird der Zeichensatz nicht angefasst (keine Streu-Buchstaben auf Kacheln).
+- **Font-Slots aus den Kachel-Editoren ausgeblendet.** Die Slots 0–63 gehören der scharfen Schrift und
+  tauchen in den Kachel-Oberflächen gar nicht mehr auf: Der PETSCII-Navigator und die Tilemap-Palette
+  zeigen nur noch die echten Kachel-Slots (64–255). Die Schrift bearbeitet man im Font-Reiter — so kann
+  man sie nicht mehr versehentlich übermalen, und beide Editoren beginnen direkt beim ersten Kachel-Slot.
+- **Ehrlicher Kachel-Zähler.** Der Zähler im Zeichensatz-Editor zählt jetzt belegte Kacheln gegen die
+  192 echten Kachel-Slots (64–255) statt gegen 256 — die 64 für die Schrift reservierten Slots sind so
+  sichtbar abgezogen (Tooltip erklärt es). Kein verstecktes Budget.
+
+### Hinzugefügt
+- **Hires-Font-Editor.** Ein neuer Reiter „Font" im PETSCII-Editor formt die scharfe Schrift (Slots 0–63)
+  in echtem Hires — 8×8, ein Pixel pro Punkt, statt der doppelt-breiten Multicolor-Punkte. Jeder Slot
+  zeigt seinen Buchstaben als Etikett; noch unbearbeitete Glyphen starten vom mitgelieferten C64-ROM-Font,
+  sodass man sofort eine Vorlage hat. Es ist derselbe eine Zeichensatz — nur eine andere Brille —, also
+  greifen Speichern und `DrawText` ohne Umweg.
+
 ## [0.2.10] - 2026-06-26
 
 ### Geändert

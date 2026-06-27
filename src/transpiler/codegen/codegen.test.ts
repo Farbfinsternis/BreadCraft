@@ -96,14 +96,17 @@ describe('codegen: setup commands → conio', () => {
     expect(code).not.toContain('cputsxy')
   })
 
-  it('Color sets the pen; HIRES text uses the full nibble, MULTICOLOR sets bit 3', () => {
+  it('Color sets the pen; text is HIRES (bit 3 clear, full nibble) in BOTH modes — Mixed-Mode', () => {
+    // C64 Mixed-Mode (MIXED_MODE_FONT_PLAN F1): text cells leave bit 3 CLEAR so the VIC
+    // draws crisp 8px glyphs even in a MULTICOLOR-text project (tiles set bit 3 themselves).
     const hires = gen(['Graphics TEXT, HIRES', 'Color WHITE', 'DrawText 0, 0, "HI"'].join('\n'))
     expect(hires.errors).toEqual([])
     expect(hires.code).toContain('bc_pen = (COLOR_WHITE);')
 
     const mc = gen(['Graphics TEXT, MULTICOLOR', 'Color YELLOW', 'DrawText 0, 0, "HI"'].join('\n'))
     expect(mc.errors).toEqual([])
-    expect(mc.code).toContain('bc_pen = ((COLOR_YELLOW) & 7) | 8;')
+    expect(mc.code).toContain('bc_pen = (COLOR_YELLOW);')
+    expect(mc.code).not.toContain('| 8') // text must NOT be folded into multicolor
   })
 
   it('Color without a colour fails honestly', () => {
@@ -1105,6 +1108,31 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
     expect(code).toContain('static const unsigned char bc_solid[256] = {')
     expect(code).toContain('  0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,')
     expect(code).toContain('blocked = bc_solid[bc_tile_at(120, 100)];')
+  })
+
+  it('seeds the empty Hires font slots with the ROM font when the program draws text (F2)', () => {
+    // A custom charset replaces the ROM font, so DrawText would index empty low slots and
+    // show nothing. With text in the program, the empty font slots (0–63) get the ROM glyphs.
+    // Slot 0 = '@' = [0x3c,0x66,0x6e,0x6e,0x60,0x62,0x3c,0x00]; slot 1 was painted [1..8] in
+    // fakeAssets and must be KEPT (painted glyph wins). 16 bytes/row = slot 0 + slot 1.
+    const { code, errors } = gen('UseTileset "main"\nDrawText 0, 0, "HI"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toMatch(/tileset_main\[2048\] = \{\s*60, 102, 110, 110, 96, 98, 60, 0, 1, 2, 3, 4, 5, 6, 7, 8,/)
+  })
+
+  it('does NOT seed the font region when the program draws no text (no stray letters on tiles)', () => {
+    // Without DrawText/Color the charset is left exactly as painted — an empty low slot used
+    // as a blank tile must stay blank, never gain a ROM letter.
+    const { code, errors } = gen('UseTileset "main"', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toMatch(/tileset_main\[2048\] = \{\s*0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8,/)
+  })
+
+  it('seeds even when DrawText sits inside a loop, after UseTileset (whole-program scan)', () => {
+    const src = ['UseTileset "main"', 'While 1', '  DrawText 0, 0, "HI"', 'Wend'].join('\n')
+    const { code, errors } = gen(src, fakeAssets())
+    expect(errors).toEqual([])
+    expect(code).toMatch(/tileset_main\[2048\] = \{\s*60, 102, 110, 110, 96, 98, 60, 0,/)
   })
 })
 

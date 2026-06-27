@@ -9,10 +9,10 @@ import { useUiStore } from '../stores/ui'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelCanvas from '../components/PixelCanvas.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
+import FontEditor from '../components/FontEditor.vue'
 import { charPixelHexes } from '../pixel-engine/charsetRender'
 import type { PixelIndex, ToolId } from '../pixel-engine'
-import { charForSlot } from '@shared/font-slots'
-import { romGlyphBits } from '@shared/c64-rom-font'
+import { FONT_SLOTS } from '@shared/font-slots'
 
 const { t } = useI18n()
 
@@ -21,7 +21,9 @@ const { t } = useI18n()
  * breadcraft-pixel-engine, PETSCII_EDITOR.md §8.4). It feeds <PixelToolbar> +
  * <PixelCanvas> the grid size (8×8), the index→hex palette (from the project
  * palette), and the active pens; the engine itself lives in <PixelCanvas>. The
- * shell-only bits stay here: navigator, pen roles, "X/256" counter, MetaTiles tab.
+ * shell-only bits stay here: the tile navigator (slots 64–255 — the Hires font region
+ * 0–63 is hidden, it lives in the Font tab), pen roles, the "X/192 tiles" budget
+ * counter, and the Font / MetaTiles tabs.
  */
 
 const palette = usePaletteStore()
@@ -59,7 +61,7 @@ panels.ensure(
   { tools: { minWidth: TOOLS_MIN_W, minHeight: TOOLS_MIN_H } }
 )
 
-type Tab = 'paint' | 'meta'
+type Tab = 'paint' | 'font' | 'meta'
 const tab = ref<Tab>('paint')
 
 const activeTool = ref<ToolId>('draw')
@@ -67,8 +69,11 @@ const canUndo = ref(false)
 const canRedo = ref(false)
 const canvasRef = ref<InstanceType<typeof PixelCanvas> | null>(null)
 
-const selectedChar = ref(0)
-const chars = Array.from({ length: 256 }, (_, i) => i)
+// The MC tile editor shows ONLY tile territory: slots 64–255. The reserved Hires font
+// region (0–63) lives entirely in the Font tab (MIXED_MODE_FONT_PLAN F3 → fully hidden
+// here), so it can't be reached or overpainted. Selection opens on the first tile (64).
+const selectedChar = ref(FONT_SLOTS)
+const tileChars = Array.from({ length: 256 - FONT_SLOTS }, (_, i) => i + FONT_SLOTS)
 
 const bg = computed(() => palette.colorOf('background'))
 const s1 = computed(() => palette.colorOf('shared1'))
@@ -136,7 +141,19 @@ function saveAs(): void {
   void project.saveAssetAs('charset', '.petscii', t('saveas.title.charset'))
 }
 
-const usedCount = computed(() => charset.usedCount())
+// Tile budget (MIXED_MODE_FONT_PLAN F5 — the font reservation made visible, Health-Bar
+// spirit): the font owns slots 0–63, so only 192 slots (64–255) are tile territory.
+// The counter shows used TILES of that 192, never the full 256 — the 64-slot cost of
+// crisp text is honest, not hidden.
+const TILE_CAP = 256 - FONT_SLOTS // 192
+const usedTiles = computed(() => {
+  let n = 0
+  for (const key of Object.keys(charset.chars)) {
+    const slot = Number(key)
+    if (slot >= FONT_SLOTS && charset.isUsed(slot)) n++
+  }
+  return n
+})
 
 // ---- Solid-Tool (S11): mark tiles solid in the Properties-Bar ----
 // Solidity is a property of the TILE, not its map position (STAHL S11): a solid tile
@@ -174,56 +191,20 @@ function onNavUp(): void {
   painting.value = false
 }
 
-// ---- Font-Linse (S9.T3): hold G to peek the letter ghosts ----
-// The ghost shows where each PETSCII letter NATIVELY lives, drawn on top so a tile
-// sitting on a letter slot stays visible. It's a momentary peek (hold G), never a
-// persistent mode — so it only ever appears on purpose. Only "named" slots get a
-// ghost (charForSlot != null: @, A–Z, space, digits, punctuation); the anonymous
-// graphics slots stay free tile territory.
-const ghostPeek = ref(false)
-
-/** The 8×8 ghost bits for a slot, or null if it isn't a font (named) slot. */
-function ghostFor(slot: number): boolean[] | null {
-  return charForSlot(slot) === null ? null : romGlyphBits(slot)
-}
-/** The selected character's ghost, only while G is held. */
-const editGhost = computed(() => (ghostPeek.value ? ghostFor(selectedChar.value) : null))
-
-function isTypingTarget(e: KeyboardEvent): boolean {
-  const el = e.target as HTMLElement | null
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
-}
-
 // Ctrl/Cmd+S saves the charset (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void charset.save()
-    return
   }
-  if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey && !e.altKey && !isTypingTarget(e)) {
-    ghostPeek.value = true
-  }
-}
-function onKeyup(e: KeyboardEvent): void {
-  if (e.key.toLowerCase() === 'g') ghostPeek.value = false
-}
-// Stuck-key guard: if focus leaves the window while G is held, the keyup never
-// arrives — drop the ghost so it can't stick on.
-function onBlur(): void {
-  ghostPeek.value = false
 }
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  window.addEventListener('keyup', onKeyup)
-  window.addEventListener('blur', onBlur)
   // End a solid-paint stroke even if the pointer is released off a navigator cell.
   window.addEventListener('pointerup', onNavUp)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('keyup', onKeyup)
-  window.removeEventListener('blur', onBlur)
   window.removeEventListener('pointerup', onNavUp)
 })
 </script>
@@ -233,10 +214,13 @@ onBeforeUnmount(() => {
     <!-- Giant engraved watermark — identifies the editor; panels may cover it. -->
     <span class="pt-watermark" aria-hidden="true">PETSCII</span>
 
-    <!-- Tab strip: Malen / MetaTiles -->
+    <!-- Tab strip: Malen / Font / MetaTiles -->
     <div class="pt-tabs">
       <button class="pt-tab" :class="{ 'is-active': tab === 'paint' }" @click="tab = 'paint'">
         {{ t('tileset.tab.paint') }}
+      </button>
+      <button class="pt-tab" :class="{ 'is-active': tab === 'font' }" @click="tab = 'font'">
+        {{ t('tileset.tab.font') }}
       </button>
       <button class="pt-tab" :class="{ 'is-active': tab === 'meta' }" @click="tab = 'meta'">
         {{ t('tileset.tab.meta') }}
@@ -285,8 +269,8 @@ onBeforeUnmount(() => {
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8M7 3v5h8" /></svg>
         {{ t('asset.save') }}
       </button>
-      <span class="pt-counter" :title="t('tileset.counterTitle')">
-        <span class="pt-counter-val">{{ usedCount }}</span> {{ t('tileset.counterSuffix') }}
+      <span class="pt-counter" :title="t('tileset.counterTitle', { font: FONT_SLOTS })">
+        <span class="pt-counter-val">{{ usedTiles }}</span> / {{ TILE_CAP }} {{ t('tileset.counterSuffix') }}
       </span>
     </div>
 
@@ -297,11 +281,12 @@ onBeforeUnmount(() => {
         <div class="pt-charset-body">
           <div class="pt-nav" @contextmenu.prevent>
             <button
-              v-for="c in chars"
+              v-for="c in tileChars"
               :key="c"
               class="pt-nav-cell"
               :class="{ 'is-sel': selectedChar === c, 'is-brush': solidBrush }"
               :style="{ background: bg.hex }"
+              :title="t('tilemap.tile', { n: c })"
               @pointerdown="onNavDown(c, $event)"
               @pointerenter="onNavEnter(c)"
             >
@@ -315,17 +300,8 @@ onBeforeUnmount(() => {
                   :style="{ background: hex }"
                 />
               </span>
-              <!-- Solid-Tile ring (S11): a steel-grey frame marks a tile that blocks
-                   the player. Below the ghost so the font lens still reads on top. -->
+              <!-- Solid-Tile ring (S11): a steel-grey frame marks a tile that blocks the player. -->
               <span v-if="charset.isSolid(c)" class="pt-nav-solid" aria-hidden="true" />
-              <!-- Font-Linse ghost (S9.T3): letter shape on top, visible while G held. -->
-              <span v-if="ghostPeek && ghostFor(c)" class="pt-nav-ghost" aria-hidden="true">
-                <i
-                  v-for="(on, gi) in ghostFor(c) || []"
-                  :key="gi"
-                  :class="{ 'is-on': on }"
-                />
-              </span>
             </button>
           </div>
 
@@ -368,7 +344,6 @@ onBeforeUnmount(() => {
             :tool="activeTool"
             :left-index="leftIndex"
             :right-index="rightIndex"
-            :ghost="editGhost"
             :onion="onionCells"
             @update="onCanvasUpdate"
             @history="onHistory"
@@ -404,6 +379,9 @@ onBeforeUnmount(() => {
         </div>
       </FloatPanel>
     </div>
+
+    <!-- ===== FONT TAB — Hires font editor for slots 0–63 (MIXED_MODE_FONT_PLAN F4) ===== -->
+    <FontEditor v-else-if="tab === 'font'" />
 
     <!-- ===== METATILES TAB (placeholder, honest) ===== -->
     <div v-else class="pt-meta">
@@ -714,21 +692,6 @@ onBeforeUnmount(() => {
     0 0 4px rgba(139, 151, 168, 0.5);
 }
 
-/* Font-Linse ghost over a navigator cell: the letter shape in white at 30% opacity,
-   ON TOP of whatever is painted (z above the mini-preview) so a tile clobbering a
-   letter slot is obvious. Only present while G is held. */
-.pt-nav-ghost {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: repeat(8, 1fr);
-  pointer-events: none;
-}
-.pt-nav-ghost i.is-on {
-  background: rgba(255, 255, 255, 0.3);
-}
 .pt-nav-cell:hover {
   box-shadow: 0 0 0 1px var(--bc-arc-300);
   z-index: 1;

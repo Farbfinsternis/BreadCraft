@@ -34,6 +34,7 @@ import {
 } from '../assets'
 import { planMemory, vicD018 } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
+import { seedFontRegion } from '@shared/font-slots'
 import type { Locale } from '@shared/ipc'
 
 /** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
@@ -365,6 +366,11 @@ class Generator {
   /** DrawText or Color used → emit the bc_pen pen-colour global (the Color command's
    *  state, read by every DrawText). */
   private usesPen = false
+  /** Whole-program flag (set up front, before the walk): does the program draw text anywhere
+   *  (DrawText / Color, even inside a loop or function)? Decided before UseTileset bakes the
+   *  charset so the Hires font region can be seeded only when text is actually drawn — without
+   *  it, a tile sitting on an empty low slot would gain a stray letter (MIXED_MODE_FONT_PLAN F2). */
+  private willDrawText = false
   /** Cls used → emit the bc_cls helper. It clears the visible screen, which is the KERNAL's
    *  $0400 in bank 0 (clrscr) but the relocated BC_SCREEN in bank 1 (B1.T4) — and the bank
    *  isn't known until the memory plan, so Cls goes through a helper resolved at the end. */
@@ -455,7 +461,37 @@ class Generator {
     this.errors.push({ message, line: at.line, col: at.col, severity })
   }
 
+  /** Does the program draw text (DrawText / Color) ANYWHERE — including inside loops,
+   *  conditionals or functions? A generic deep walk (resilient to any block-bearing node
+   *  kind) over the AST, so UseTileset's font-region seeding can be gated on real text use
+   *  even though those statements may be parsed after UseTileset (MIXED_MODE_FONT_PLAN F2). */
+  private programDrawsText(program: Program): boolean {
+    let found = false
+    const visit = (node: unknown): void => {
+      if (found || node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt') {
+        const name = String(rec.name).toLowerCase()
+        if (name === 'drawtext' || name === 'color') {
+          found = true
+          return
+        }
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+    return found
+  }
+
   generate(program: Program): CodeGenResult {
+    // Whole-program text detection up front (before the walk), so UseTileset can decide
+    // whether to seed the Hires font region (F2). DrawText/Color may appear after UseTileset.
+    this.willDrawText = this.programDrawsText(program)
+
     // First pass: collect declarations (types, globals, consts) so the second pass
     // can emit correctly-typed declarations and narrowing checks. Function signatures
     // are collected too (so calls can be checked/emitted before the def is reached).
@@ -1406,12 +1442,14 @@ class Generator {
     return `bc_str(${this.expr(e)})`
   }
 
-  /** A colour as the Color-RAM byte for the current text mode. In MULTICOLOR text a cell
-   *  is only drawn multicolor when bit 3 is set, and just the low 3 bits choose the "11"
-   *  pixel colour; in HIRES text the full nibble is the foreground. So the pen folds the
-   *  mode in here, once, where gfxColor is known. */
+  /** A colour as the Color-RAM byte for TEXT (DrawText / Color / Cls). Text cells are
+   *  rendered HIRES even in a MULTICOLOR-text project: we deliberately leave bit 3 CLEAR so
+   *  the VIC draws crisp 8px glyphs (the C64 Mixed-Mode — bit 3 is per-cell, and tiles set
+   *  it themselves). That also gives text the full 16-colour nibble back. The font glyphs
+   *  live in the reserved Hires slots 0–63 (see _intern/MIXED_MODE_FONT_PLAN.md F2). Tiles
+   *  keep their own `| 8` (genSetTile / genDrawMap) — they do NOT pass through here. */
   private penCellValue(colorExpr: string): string {
-    return this.gfxColor === 'MULTICOLOR' ? `((${colorExpr}) & 7) | 8` : `(${colorExpr})`
+    return `(${colorExpr})`
   }
 
   /** Report a missing argument for a string function (S8.T3) and yield a safe 0/"". */
@@ -1449,6 +1487,13 @@ class Generator {
       this.err(e instanceof AssetResolveError ? e.message : String(e), s)
       return
     }
+
+    // Mixed-Mode font (MIXED_MODE_FONT_PLAN F2): a custom charset replaces the ROM font,
+    // so DrawText would index empty low slots and show nothing. When the program draws text,
+    // seed the empty font slots (0–63) with the C64 ROM font — they render Hires (F1's pen
+    // leaves bit 3 clear) next to the MC tiles. Painted glyphs are kept; gated on real text
+    // use so a tile on an empty low slot never gains a stray letter.
+    if (this.willDrawText) bytes = seedFontRegion(bytes)
 
     // B1.T4: the charset lives in bank 1 ($7000). It's copied there at runtime from a const
     // in RODATA — direct-linking into the bank would force the .prg to pad up from $0801 to
