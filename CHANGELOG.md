@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-06-28
+
 ### Hinzugefügt
 - **Animierte Sprites — `Sprite` bekommt einen 4. Parameter `frame`.** `Sprite n, x, y, frame` zeigt
   dieselbe Hardware-Gestalt in einer anderen Frame-Form, indem es den Sprite-Pointer umbiegt — **ein
@@ -23,6 +25,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   der Build mit einer klaren Meldung („Sprite-Insel ist voll: N belegt, dieses Sprite braucht M, frei
   nur K") statt das Spiel zur Laufzeit fremde Bytes zeigen zu lassen. Per Copy-at-runtime bleibt die
   `.prg` dabei kompakt (kein Auffüllen bis zur Insel).
+- **Leuchttisch im Sprite-Editor.** Beim Zeichnen eines Frames kannst du jetzt — wie schon bei animierten
+  Kacheln — das vorherige Frame blass im Hintergrund einblenden, um eine Bewegung sauber von Bild zu Bild
+  aufzubauen. Ein Knopf in der Aktionsleiste schaltet ihn ein und aus (Frame 0 hat keinen Vorgänger und
+  bleibt sauber leer); er teilt sich den Schalter mit dem Zeichensatz-Editor.
+- **Sprite-Insel-Füllstand schon beim Zeichnen sichtbar.** Neben dem Frame-Zähler zeigt der Sprite-Editor
+  jetzt, wie viele der 16 (mit Zeichensatz) bzw. 32 (ohne) Insel-Blöcke dieses Sprite belegt — jeder Frame
+  ist ein Block. Die Zahl wird gelb, wenn dieses eine Sprite gegen die Decke drückt, und rot, wenn es sie
+  allein überschreitet. So spürst du die Grenze schon vor dem Build; der genaue Gesamt-Füllstand aller
+  Sprites bleibt das Wort des Builds (die ehrliche „Insel voll"-Meldung).
 
 ## [0.2.11] - 2026-06-27
 

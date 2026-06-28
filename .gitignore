@@ -14,3 +14,6 @@ build
 # Dev-only material — NOT part of the repo. Shipped code must never reference it
 # (see memory: breadcraft-repo-structure). The SSOT lives in src/shared/, not here.
 _intern
+
+# Dev-only briefing for an image model (cheat-sheet artwork); not part of the repo
+BREADCRAFT_CHEATSHEET_BRIEFING.md

@@ -96,6 +96,19 @@ watch(
 /** The selected frame's cells (reactive Uint8Array from the store). */
 const currentCells = computed(() => sprite.pixels(selectedFrame.value))
 
+// ---- Leuchttisch (light table / onion skin) ----
+// Shows the PREVIOUS frame (N−1) as a faint colour ghost behind the paint grid, so
+// animation phases — drawn into consecutive frames, then driven by `Sprite n,x,y,frame`
+// (SA4) — can be aligned frame-to-frame. The previous frame in the strip is the
+// natural reference (cleaner than the charset's slot order). Editor-local: it knows
+// nothing about the pointer swap, only strip order. Off for frame 0 (no predecessor).
+// Shares the global `ui.lightTable` toggle with the Tileset editor (SPRITE_ANIMATIONS SA5).
+const onionCells = computed<Uint8Array | null>(() => {
+  if (!ui.lightTable) return null
+  const prev = selectedFrame.value - 1
+  return prev < 0 ? null : sprite.pixels(prev)
+})
+
 /** Pick the figure's individual colour and arm its pen, so the next stroke uses it. */
 function pickIndivColor(index: number): void {
   sprite.setColor(index)
@@ -153,6 +166,21 @@ async function newSprite(): Promise<void> {
 
 const frameTotal = computed(() => sprite.frameCount())
 
+// ---- Sprite-island footprint (SA6) — make the honest 16/32-block ceiling felt
+// WHILE drawing, not only when the build stops. Each frame bakes one 64-byte block
+// of the shared sprite island; the island holds 16 blocks when the project uses a
+// charset (VIC bank 1) and 32 without (bank 0) — the same prediction the RAM bar
+// uses (charset presence). This is THIS sprite's footprint; all sprites share the
+// island, so the exact project-wide total is the build's word (the honest overflow
+// error, SA2). The tooltip says so. Amber as this one sprite nears the ceiling, red
+// if it alone exceeds it.
+const islandBudget = computed(() => (project.assets.charsets.length > 0 ? 16 : 32))
+const islandState = computed<'ok' | 'warn' | 'over'>(() => {
+  if (frameTotal.value > islandBudget.value) return 'over'
+  if (frameTotal.value / islandBudget.value >= 0.75) return 'warn'
+  return 'ok'
+})
+
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
@@ -185,6 +213,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
         {{ t('saveas.save') }}
       </button>
+      <!-- Leuchttisch (onion skin): show the previous frame (N−1) as a colour ghost
+           beneath the pixels, to align animation phases (SA5). -->
+      <button
+        class="sp-reset"
+        :class="{ 'is-on': ui.lightTable }"
+        :title="t('sprite.lightTableTitle')"
+        :aria-pressed="ui.lightTable"
+        @click="ui.toggleLightTable()"
+      >
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
+        {{ t('sprite.lightTable') }}
+      </button>
       <button
         class="sp-save"
         :disabled="!sprite.dirty"
@@ -197,6 +237,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </button>
       <span class="sp-counter" :title="t('sprite.counterTitle')">
         <span class="sp-counter-val">{{ frameTotal }}</span> {{ t('sprite.counterSuffix') }}
+      </span>
+      <span class="sp-island" :class="`is-${islandState}`" :title="t('sprite.islandTitle')">
+        {{ t('sprite.island') }} <span class="sp-island-val">{{ frameTotal }}/{{ islandBudget }}</span>
       </span>
     </div>
 
@@ -251,6 +294,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             :tool="activeTool"
             :left-index="leftIndex"
             :right-index="rightIndex"
+            :onion="onionCells"
             @update="onCanvasUpdate"
             @history="onHistory"
           />
@@ -381,6 +425,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   border-color: var(--bc-copper-300);
   box-shadow: var(--bc-glow-copper);
 }
+/* Light table active: arc-blue "on" state, mirrors the Tileset editor's toggle. */
+.sp-reset.is-on {
+  color: var(--bc-arc-200);
+  border-color: var(--bc-arc-400);
+  background: rgba(94, 196, 255, 0.08);
+  box-shadow: var(--bc-glow-arc);
+}
+.sp-reset.is-on .ico {
+  stroke: var(--bc-arc-300);
+}
 .sp-reset .ico {
   width: 13px;
   height: 13px;
@@ -426,6 +480,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 .sp-counter-val {
   color: var(--bc-arc-300);
+}
+/* Sprite-island footprint (SA6): mono like the counter; the value goes amber as this
+   sprite nears the shared island ceiling, red if it alone exceeds it. */
+.sp-island {
+  font: 500 11px/1 var(--bc-font-mono);
+  color: var(--bc-text-400);
+  letter-spacing: 0.04em;
+}
+.sp-island-val {
+  color: var(--bc-arc-300);
+}
+.sp-island.is-warn .sp-island-val {
+  color: var(--bc-warn, #e0a000);
+}
+.sp-island.is-over,
+.sp-island.is-over .sp-island-val {
+  color: var(--bc-danger, #d04040);
 }
 
 /* ---- surface ---- */
