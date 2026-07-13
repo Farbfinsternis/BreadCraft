@@ -4,7 +4,7 @@ import type { BreadAssets, GraphicsMode, OpenedProject } from '@shared/ipc'
 import { DEFAULT_GRAPHICS_MODE } from '@shared/ipc'
 
 /** Asset kinds the explorer can list/open/create (P2.T0). */
-export type AssetEditorKind = 'sprite' | 'charset' | 'tilemap' | 'palette'
+export type AssetEditorKind = 'sprite' | 'charset' | 'tilemap' | 'palette' | 'image'
 
 const EMPTY_MANIFEST: BreadAssets = {
   palette: null,
@@ -71,7 +71,8 @@ export const useProjectStore = defineStore('project', () => {
     sprite: '',
     charset: '',
     tilemap: '',
-    palette: ''
+    palette: '',
+    image: ''
   })
 
   const debugMode = ref(saved.debugMode ?? true)
@@ -126,6 +127,7 @@ export const useProjectStore = defineStore('project', () => {
     if (kind === 'sprite') return assets.sprites
     if (kind === 'charset') return assets.charsets
     if (kind === 'tilemap') return assets.tilemaps
+    if (kind === 'image') return assets.images
     return assets.palette ? [assets.palette] : []
   }
 
@@ -163,6 +165,7 @@ export const useProjectStore = defineStore('project', () => {
     if (kind === 'sprite') return (await import('./sprite')).useSpriteStore()
     if (kind === 'charset') return (await import('./charset')).useCharsetStore()
     if (kind === 'tilemap') return (await import('./tilemap')).useTilemapStore()
+    if (kind === 'image') return (await import('./image')).useImageStore()
     return (await import('./palette')).usePaletteStore()
   }
 

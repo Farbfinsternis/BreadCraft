@@ -103,6 +103,7 @@
   "saveas.title.sprite": "Sprite speichern unter…",
   "saveas.title.charset": "Zeichensatz speichern unter…",
   "saveas.title.tilemap": "Karte speichern unter…",
+  "saveas.title.image": "Bild speichern unter…",
   "saveas.folder": "Ordner im Projekt",
   "saveas.fileName": "Dateiname",
   "saveas.namePlaceholder": "z. B. player",
@@ -240,6 +241,10 @@
   "image.clash.some": "{n} Zellen über dem C64-Limit",
   "image.clash.none": "C64-legal ✓",
   "image.color.bg": "Hintergrund (geteilt)",
+  "image.new": "Neu",
+  "image.newTitle": "Eine frische, leere Leinwand beginnen — nichts wird gespeichert, bis du auf Speichern unter tippst",
+  "image.newDiscardWarn": "Das aktuelle Bild hat ungespeicherte Änderungen. Ein neues beginnen und sie verwerfen?",
+  "image.newDiscardConfirm": "Verwerfen & neu beginnen",
 
   "welcome.newProject": "Neues Projekt",
   "welcome.openProject": "Projekt laden",

@@ -34,6 +34,9 @@ const PAL_RGB = C64_PALETTE.map((c) => hexToRgb(c.hex))
 export const useImageStore = defineStore('image', () => {
   const pixels = ref<Uint8Array>(new Uint8Array(CANVAS_CELLS))
   const dirty = ref(false)
+  // Bumped whenever the buffer is REPLACED from outside (load / switch / new) — never
+  // on an in-editor edit — so the view reloads its engine (and undo history) then only.
+  const loadToken = ref(0)
 
   // The project this image belongs to (set on load). Saves target this dir.
   let projectDir: string | null = null
@@ -71,6 +74,7 @@ export const useImageStore = defineStore('image', () => {
     }
     pixels.value = next
     dirty.value = false
+    loadToken.value++
   }
 
   /** A C64-legal copy of the canvas: every cell reconciled to ≤ background + 3 colours
@@ -112,6 +116,7 @@ export const useImageStore = defineStore('image', () => {
     assetRel = rel
     pixels.value = blank(background())
     dirty.value = false
+    loadToken.value++
     await save()
   }
 
@@ -122,6 +127,7 @@ export const useImageStore = defineStore('image', () => {
     assetRel = IMAGE_FILE
     pixels.value = blank(background())
     dirty.value = false
+    loadToken.value++
   }
 
   /** "Save as": bind to a new rel and write the CURRENT canvas there. */
@@ -136,6 +142,7 @@ export const useImageStore = defineStore('image', () => {
   return {
     pixels,
     dirty,
+    loadToken,
     setPixels,
     loadForProject,
     save,

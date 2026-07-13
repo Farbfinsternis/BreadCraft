@@ -4,6 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { usePaletteStore, C64_PALETTE } from '../stores/palette'
 import { usePanelsStore } from '../stores/panels'
 import { useImageStore } from '../stores/image'
+import { useProjectStore } from '../stores/project'
+import { useUiStore } from '../stores/ui'
 import { PixelEngine, type PixelIndex, type ToolId } from '../pixel-engine'
 import {
   MAX_CELL_COLORS,
@@ -40,6 +42,8 @@ const { t } = useI18n()
 const palette = usePaletteStore()
 const panels = usePanelsStore()
 const image = useImageStore()
+const project = useProjectStore()
+const ui = useUiStore()
 
 const SCOPE = 'image'
 
@@ -362,6 +366,34 @@ function save(): void {
   void image.save()
 }
 
+/** Pull the store's canvas into the engine, resetting undo to a clean slate. Used on
+ *  mount and whenever the store swaps the buffer from outside (open / switch / new). */
+function reloadFromStore(): void {
+  engine.load(image.pixels.slice())
+  afterMutation()
+}
+
+/** New image: a fresh, UNSAVED scratch canvas (mirrors the sprite editor's sketch pad).
+ *  Nothing hits disk until "Save as"; if the current image has unsaved edits we ask
+ *  before discarding. newBlank() bumps the store's loadToken → the watcher reloads. */
+async function newImage(): Promise<void> {
+  if (image.dirty) {
+    const ok = await ui.confirm({
+      title: t('image.newTitle'),
+      message: t('image.newDiscardWarn'),
+      confirmLabel: t('image.newDiscardConfirm')
+    })
+    if (!ok) return
+  }
+  image.newBlank()
+}
+
+/** Save-As: pick folder + name in the project (`.image`), write the current canvas
+ *  there and bind to it — the way you make a second, third, … room image. */
+function saveAs(): void {
+  void project.saveAssetAs('image', '.image', t('saveas.title.image'))
+}
+
 /** Switch mode; entering C64-true reconciles the WHOLE image legal in one undo step. */
 function setMode(m: PaintMode): void {
   if (m === mode.value) return
@@ -401,11 +433,14 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
+// Reload when the store swaps the buffer from outside (project open, explorer switch,
+// New) — NOT on in-editor edits (those only bump the buffer via setPixels).
+watch(() => image.loadToken, reloadFromStore)
+
 onMounted(() => {
   // Load the project's image (loadProjectAssets filled the store on open; a blank
   // canvas is the project background). engine.load resets history to a clean slate.
-  engine.load(image.pixels.slice())
-  afterMutation()
+  reloadFromStore()
   fitToViewport()
   if (viewportRef.value) {
     resizeObserver = new ResizeObserver(() => fitToViewport())
@@ -474,6 +509,14 @@ onBeforeUnmount(() => {
       <button class="img-reset" :title="t('tileset.resetLayoutTitle')" @click="resetLayout">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
         {{ t('tileset.resetLayout') }}
+      </button>
+      <button class="img-reset" :title="t('image.newTitle')" @click="newImage">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M14 3v5h5M14 3l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M12 11v6M9 14h6" /></svg>
+        {{ t('image.new') }}
+      </button>
+      <button class="img-reset" :title="t('saveas.title.image')" @click="saveAs">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
+        {{ t('saveas.save') }}
       </button>
       <button
         class="img-save"

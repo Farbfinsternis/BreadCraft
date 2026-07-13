@@ -103,6 +103,7 @@
   "saveas.title.sprite": "Save sprite as…",
   "saveas.title.charset": "Save charset as…",
   "saveas.title.tilemap": "Save map as…",
+  "saveas.title.image": "Save image as…",
   "saveas.folder": "Folder in project",
   "saveas.fileName": "File name",
   "saveas.namePlaceholder": "e.g. player",
@@ -240,6 +241,10 @@
   "image.clash.some": "{n} cells over the C64 limit",
   "image.clash.none": "C64-legal ✓",
   "image.color.bg": "Background (shared)",
+  "image.new": "New",
+  "image.newTitle": "Start a fresh, empty canvas — nothing is saved until you choose Save as",
+  "image.newDiscardWarn": "The current image has unsaved changes. Start a new one and discard them?",
+  "image.newDiscardConfirm": "Discard & start new",
 
   "welcome.newProject": "New project",
   "welcome.openProject": "Open project",

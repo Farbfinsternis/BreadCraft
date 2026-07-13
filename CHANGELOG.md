@@ -28,8 +28,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   dafür verlustfrei in die drei C64-Byte-Ebenen gepackt; ein Frei-Modus-Bild mit Farb-Clash rastet
   beim Speichern auf die nächste C64-legale Farbe (die gemalte Ansicht bleibt unangetastet). Unterbau:
   geteilter Format-Codec, strenger Build-Resolver (`resolveImage`) und Puffer⇄C64-Bytes-Packer, alle
-  mit Round-Trip-Tests. **Weiter offen:** Bild im Programm anzeigen (`UseImage`/`DrawImage`, B2.T3/T4),
-  Mehr-Datei-Verwaltung im Explorer, Live-Nachbar-Umfärben im C64-Modus.
+  mit Round-Trip-Tests.
+- **Mehrere Bilder pro Projekt (BRONZE B2.T2b).** Für ein Point-&-Click-Adventure (viele Räume) kann ein
+  Projekt jetzt beliebig viele Bilder halten: **„Neu"** beginnt eine leere Leinwand, **„Speichern unter"**
+  legt eine benannte `.image`-Datei an (`raum1.image`, `hoehle.image`, …), und ein Klick im Datei-Explorer
+  öffnet sie wieder — der Editor lädt beim Wechsel sauber neu. Gleiches Muster wie Sprites/Zeichensätze.
+  **Weiter offen:** Bild im Programm anzeigen (`UseImage`/`DrawImage`, B2.T3/T4), Live-Nachbar-Umfärben
+  im C64-Modus, Daten-Nachladen von Disk für große Adventures (terminiert SILBER).
 
 ## [0.2.13] - 2026-07-13
 

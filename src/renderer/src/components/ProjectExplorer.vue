@@ -45,7 +45,8 @@ const EXT_ROUTE: Record<string, { route: string; kind?: AssetEditorKind }> = {
   sprite: { route: 'sprite', kind: 'sprite' },
   petscii: { route: 'tileset', kind: 'charset' },
   tilemap: { route: 'tilemap', kind: 'tilemap' },
-  palette: { route: 'palette', kind: 'palette' }
+  palette: { route: 'palette', kind: 'palette' },
+  image: { route: 'image', kind: 'image' }
 }
 
 function extOf(rel: string): string {
