@@ -83,6 +83,26 @@ export class PixelEngine {
     return mergeFrame(reverted, drawn)
   }
 
+  /**
+   * Apply extra writes into the CURRENT (still-open) stroke, before `end()`. The
+   * image editor's C64-true reconcile uses this so a paint AND the cell-fix it
+   * triggers commit as ONE undo step. No-op when not stroking. Returns the changes
+   * that actually landed (skips no-op writes). Values are plain cell numbers — the
+   * grid is index-agnostic, so callers painting the 16-colour bitmap pass 0–15.
+   */
+  amend(writes: readonly { x: number; y: number; value: number }[]): CellChange[] {
+    if (!this.stroking) return []
+    const out: CellChange[] = []
+    for (const w of writes) {
+      const c = this.grid.set(w.x, w.y, w.value as PixelIndex)
+      if (c) {
+        this.strokeChanges.push(c)
+        out.push(c)
+      }
+    }
+    return out
+  }
+
   /** Finish the current stroke and commit it to history. */
   end(): void {
     if (!this.stroking) return

@@ -1,22 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePaletteStore, C64_PALETTE } from '../stores/palette'
 import { usePanelsStore } from '../stores/panels'
 import { PixelEngine, type PixelIndex, type ToolId } from '../pixel-engine'
+import {
+  MAX_CELL_COLORS,
+  cellOf,
+  cellColors,
+  countClashCells,
+  reconcileCells,
+  cellsInBox,
+  type Cell
+} from '../pixel-engine/imageCells'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
 
 const { t } = useI18n()
 
 /**
- * Image (bitmap) editor — BRONZE B2.T2a, FIRST visible slice (deliberately useless):
- * a paintable C64 Multicolor-bitmap canvas. It reuses the HEADLESS pixel engine for
- * data + tools + undo/redo, but renders to a real <canvas> instead of <PixelCanvas> —
- * the DOM-grid PixelCanvas draws one node per cell, which doesn't scale to a full
- * 160×200 screen (32 000 cells). What's NOT here yet, on purpose: saving (B2.T1 asset
- * format) and the per-cell colour-clash guard (the rest of B2.T2a). The 4 colours are
- * one GLOBAL palette for now, not the honest per-8×8-cell budget.
+ * Image (bitmap) editor — BRONZE B2.T2a, the per-cell COLOUR model (memory
+ * breadcraft-imageeditor-color-clash). The canvas is a flat 16-colour-per-pixel
+ * buffer (the shared headless engine's grid, holding values 0–15 instead of the
+ * usual 0–3 index — the grid is index-agnostic). Two modes, per the 2026-06-28
+ * decision (NEWBIE-FIRST):
+ *   • FREE (default) — paint any of the 16 C64 colours, no clash check; feels like
+ *     DPaint. The per-cell budget readout still shows where you've exceeded the
+ *     C64 limit, so you LEARN the hardware without being blocked.
+ *   • C64-TRUE — each 8×8 cell is forced to the honest budget (global background +
+ *     3 cell-own colours). A fourth colour snaps to the nearest one the cell can
+ *     still afford (Multipaint's intelligent adaptation), reconciled per stroke.
+ *
+ * Still a preview: saving comes with the B2.T1 image format. Rendering goes to a
+ * real <canvas> (the DOM-grid PixelCanvas can't scale to 32 000 cells — B2.T2a
+ * finding). Neighbour-recolour live-clash and zoom/overview are later polish.
  */
 
 const palette = usePaletteStore()
@@ -31,9 +48,11 @@ const W = 160
 const H = 200
 const DISP_W = 320
 const DISP_H = 200
+const CELLS_X = 40
+const CELLS_Y = 25
 
 // The shared headless engine (no Vue): a freehand drag becomes ONE undo step, and we
-// get line/rect/fill for free. We render its snapshot ourselves after each change.
+// get line/rect/fill for free. Its grid stores the raw 16-colour bitmap (0–15).
 const engine = new PixelEngine(W, H)
 
 const TOOLS_MIN_W = 120
@@ -44,7 +63,7 @@ panels.ensure(
   {
     canvas: { x: 24, y: 24, width: 660, height: 460 },
     tools: { x: 700, y: 24, width: 200, height: TOOLS_MIN_H },
-    colors: { x: 700, y: 24 + TOOLS_MIN_H + 16, width: 200, height: 230 }
+    colors: { x: 700, y: 24 + TOOLS_MIN_H + 16, width: 210, height: 300 }
   },
   { tools: { minWidth: TOOLS_MIN_W, minHeight: TOOLS_MIN_H } }
 )
@@ -54,36 +73,85 @@ const canUndo = ref(false)
 const canRedo = ref(false)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
-// The 4 MC colour sources, same roles the MC-text palette uses (0=bg, 1/2=shared,
-// 3=free). One GLOBAL palette for this first slice — the per-cell budget is later.
-const bg = computed(() => palette.colorOf('background'))
-const s1 = computed(() => palette.colorOf('shared1'))
-const s2 = computed(() => palette.colorOf('shared2'))
-const free = C64_PALETTE[1]
+// View transform — the MC pixel is tiny at fit, so the wheel zooms TOWARDS the
+// cursor and middle-drag pans, the way pixel editors work. The canvas keeps its
+// device size; the stage is scaled/translated in CSS (getBoundingClientRect stays
+// truthful, so cellFromEvent needs no zoom maths). `base*` is the fit size.
+const viewportRef = ref<HTMLDivElement | null>(null)
+const zoom = ref(1)
+const panX = ref(0)
+const panY = ref(0)
+const baseW = ref(0)
+const baseH = ref(0)
+const ASPECT = 8 / 5
+const MIN_ZOOM = 1
+const MAX_ZOOM = 40
 
-const pens = computed<{ index: PixelIndex; label: string; color: string }[]>(() => [
-  { index: 0, label: t('image.pen.bg'), color: bg.value.hex },
-  { index: 1, label: t('image.pen.s1'), color: s1.value.hex },
-  { index: 2, label: t('image.pen.s2'), color: s2.value.hex },
-  { index: 3, label: t('image.pen.free'), color: free.hex }
-])
-const leftIndex = ref<PixelIndex>(3)
-const rightIndex: PixelIndex = 0 // background = DPaint erase
+const stageStyle = computed(() => ({
+  width: `${baseW.value}px`,
+  height: `${baseH.value}px`,
+  transform: `translate(${panX.value}px, ${panY.value}px) scale(${zoom.value})`
+}))
 
-/** The 4 palette hexes as [r,g,b] triples, in index order, for the renderer. */
-const rgbPalette = computed<[number, number, number][]>(() => [
-  hexToRgb(bg.value.hex),
-  hexToRgb(s1.value.hex),
-  hexToRgb(s2.value.hex),
-  hexToRgb(free.hex)
-])
+/** Painting mode — FREE (all 16, no limit) or C64-TRUE (per-cell budget enforced). */
+type PaintMode = 'free' | 'c64'
+const mode = ref<PaintMode>('free')
+const showGrid = ref(true)
+
+/** The colour the left button paints (0–15). Right button always paints background. */
+const activeColor = ref(1) // white — a visible default on the black start canvas
+
+/** The ONE global background colour (shared, $D021) — the 4th, budget-free colour. */
+const bgValue = computed(() => palette.background)
+
+/** The 16 fixed C64 colours as [r,g,b], for the renderer + nearest-colour reconcile. */
+const PAL_RGB = C64_PALETTE.map((c) => hexToRgb(c.hex))
 
 function hexToRgb(hex: string): [number, number, number] {
   let h = hex.replace('#', '')
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('')
+  if (h.length === 3)
+    h = h
+      .split('')
+      .map((c) => c + c)
+      .join('')
   const n = parseInt(h, 16)
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
 }
+
+// A revision counter so the hover budget readout recomputes after the (non-reactive)
+// Uint8Array grid mutates or the hovered cell changes.
+const rev = ref(0)
+const hoverCell = ref<Cell | null>(null)
+const hoverPixel = ref<{ x: number; y: number } | null>(null)
+const clashCount = ref(0)
+
+/**
+ * A preview of the exact logical pixel the next click would paint, in the active
+ * colour, so you can aim precisely. Positioned in VIEWPORT space (pan + zoom) so its
+ * ring stays a crisp 1px at any zoom, instead of being magnified inside the stage.
+ */
+const cursorStyle = computed(() => {
+  const p = hoverPixel.value
+  if (!p || !baseW.value) return null
+  const pw = (baseW.value / W) * zoom.value
+  const ph = (baseH.value / H) * zoom.value
+  return {
+    left: `${panX.value + p.x * pw}px`,
+    top: `${panY.value + p.y * ph}px`,
+    width: `${pw}px`,
+    height: `${ph}px`,
+    background: C64_PALETTE[activeColor.value].hex
+  }
+})
+
+/** The hovered cell's colour spend + whether it exceeds the C64 budget. */
+const hoverBudget = computed(() => {
+  void rev.value
+  const h = hoverCell.value
+  if (!h) return null
+  const used = cellColors(engine.grid.snapshot(), W, h.col, h.row, bgValue.value)
+  return { col: h.col, row: h.row, count: used.length, over: used.length > MAX_CELL_COLORS }
+})
 
 /** Paint the engine's current grid into the canvas (each logical pixel = 2 columns). */
 function render(): void {
@@ -91,12 +159,11 @@ function render(): void {
   const ctx = cv?.getContext('2d')
   if (!cv || !ctx) return
   const snap = engine.grid.snapshot()
-  const pal = rgbPalette.value
   const img = ctx.createImageData(DISP_W, DISP_H)
   const data = img.data
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const [r, g, b] = pal[snap[y * W + x]] ?? pal[0]
+      const [r, g, b] = PAL_RGB[snap[y * W + x]] ?? PAL_RGB[0]
       for (let dx = 0; dx < 2; dx++) {
         const o = (y * DISP_W + x * 2 + dx) * 4
         data[o] = r
@@ -119,60 +186,216 @@ function cellFromEvent(ev: PointerEvent): { x: number; y: number } | null {
   return { x, y }
 }
 
+// Values are C64 colours (0–15); the grid is index-agnostic so we hand them through
+// the engine's PixelIndex-typed API unchanged (documented cast, breadcraft-pixel-engine).
 function penFor(button: number): PixelIndex {
-  return button === 2 ? rightIndex : leftIndex.value
+  return (button === 2 ? bgValue.value : activeColor.value) as PixelIndex
 }
 
 let painting = false
+let panning = false
+let panStartX = 0
+let panStartY = 0
+let panOriginX = 0
+let panOriginY = 0
+// Pixel bounding box of the in-progress stroke → the cells C64-true mode reconciles.
+let sMinX = 0
+let sMinY = 0
+let sMaxX = 0
+let sMaxY = 0
+
+function trackBounds(x: number, y: number, reset = false): void {
+  if (reset) {
+    sMinX = sMaxX = x
+    sMinY = sMaxY = y
+    return
+  }
+  if (x < sMinX) sMinX = x
+  else if (x > sMaxX) sMaxX = x
+  if (y < sMinY) sMinY = y
+  else if (y > sMaxY) sMaxY = y
+}
+
+function updateHover(cell: { x: number; y: number } | null): void {
+  hoverPixel.value = cell // the exact pixel for the cursor preview (updates every move)
+  const c = cell ? cellOf(cell.x, cell.y) : null
+  const cur = hoverCell.value
+  if (c && cur && c.col === cur.col && c.row === cur.row) return
+  if (!c && !cur) return
+  hoverCell.value = c
+}
 
 function onPointerDown(ev: PointerEvent): void {
+  // Middle button pans, regardless of what's under the cursor.
+  if (ev.button === 1) {
+    ev.preventDefault()
+    panning = true
+    panStartX = ev.clientX
+    panStartY = ev.clientY
+    panOriginX = panX.value
+    panOriginY = panY.value
+    viewportRef.value?.setPointerCapture(ev.pointerId)
+    return
+  }
   const cell = cellFromEvent(ev)
   if (!cell) return
   ev.preventDefault()
-  canvasRef.value?.setPointerCapture(ev.pointerId)
+  viewportRef.value?.setPointerCapture(ev.pointerId)
   painting = true
+  trackBounds(cell.x, cell.y, true)
   engine.begin(activeTool.value, cell.x, cell.y, penFor(ev.button))
   render()
 }
 
 function onPointerMove(ev: PointerEvent): void {
-  if (!painting) return
+  if (panning) {
+    panX.value = panOriginX + (ev.clientX - panStartX)
+    panY.value = panOriginY + (ev.clientY - panStartY)
+    clampPan()
+    return
+  }
   const cell = cellFromEvent(ev)
-  if (!cell) return
+  updateHover(cell)
+  if (!painting || !cell) return
+  trackBounds(cell.x, cell.y)
   engine.move(activeTool.value, cell.x, cell.y, penFor(ev.buttons & 2 ? 2 : 0))
   render()
 }
 
 function onPointerUp(): void {
+  if (panning) {
+    panning = false
+    return
+  }
   if (!painting) return
   painting = false
+  // C64-true: fold the per-cell reconcile into the SAME stroke so paint + fix are
+  // one undo step. FREE mode commits the raw colours untouched.
+  if (mode.value === 'c64') {
+    const snap = engine.grid.snapshot()
+    const cells = cellsInBox(sMinX, sMinY, sMaxX, sMaxY, W, H)
+    engine.amend(reconcileCells(snap, W, cells, bgValue.value, PAL_RGB))
+  }
   engine.end()
-  syncHistory()
+  afterMutation()
 }
 
-function syncHistory(): void {
+/** Wheel zooms towards the cursor: the image point under the pointer stays put. */
+function onWheel(ev: WheelEvent): void {
+  const vp = viewportRef.value
+  if (!vp) return
+  const rect = vp.getBoundingClientRect()
+  const cx = ev.clientX - rect.left
+  const cy = ev.clientY - rect.top
+  const z0 = zoom.value
+  const z1 = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z0 * (ev.deltaY < 0 ? 1.2 : 1 / 1.2)))
+  if (z1 === z0) return
+  const k = z1 / z0
+  panX.value = cx - (cx - panX.value) * k
+  panY.value = cy - (cy - panY.value) * k
+  zoom.value = z1
+  clampPan()
+}
+
+/** Recompute the fit (zoom = 1) size from the viewport, keeping the 8:5 shape. */
+function fitToViewport(): void {
+  const vp = viewportRef.value
+  if (!vp) return
+  const w = vp.clientWidth
+  const h = vp.clientHeight
+  if (!w || !h) return
+  if (w / h > ASPECT) {
+    baseH.value = h
+    baseW.value = h * ASPECT
+  } else {
+    baseW.value = w
+    baseH.value = w / ASPECT
+  }
+  clampPan()
+}
+
+/** Keep the content from drifting away: centre it when smaller than the viewport,
+ *  otherwise clamp so an edge never floats inside the frame. */
+function clampPan(): void {
+  const vp = viewportRef.value
+  if (!vp) return
+  const w = vp.clientWidth
+  const h = vp.clientHeight
+  const cw = baseW.value * zoom.value
+  const ch = baseH.value * zoom.value
+  panX.value = cw <= w ? (w - cw) / 2 : Math.min(0, Math.max(w - cw, panX.value))
+  panY.value = ch <= h ? (h - ch) / 2 : Math.min(0, Math.max(h - ch, panY.value))
+}
+
+function resetZoom(): void {
+  zoom.value = 1
+  fitToViewport()
+}
+
+function afterMutation(): void {
+  render()
   canUndo.value = engine.canUndo
   canRedo.value = engine.canRedo
+  clashCount.value = countClashCells(engine.grid.snapshot(), W, H, bgValue.value)
+  rev.value++
 }
 
 function undo(): void {
   engine.undo()
-  render()
-  syncHistory()
+  afterMutation()
 }
 function redo(): void {
   engine.redo()
-  render()
-  syncHistory()
+  afterMutation()
+}
+
+/** Switch mode; entering C64-true reconciles the WHOLE image legal in one undo step. */
+function setMode(m: PaintMode): void {
+  if (m === mode.value) return
+  mode.value = m
+  if (m !== 'c64') return
+  const snap = engine.grid.snapshot()
+  const all = cellsInBox(0, 0, W - 1, H - 1, W, H)
+  const writes = reconcileCells(snap, W, all, bgValue.value, PAL_RGB)
+  if (!writes.length) return
+  engine.begin('draw', writes[0].x, writes[0].y, writes[0].value as PixelIndex)
+  engine.amend(writes.slice(1))
+  engine.end()
+  afterMutation()
+}
+
+function pickColor(index: number): void {
+  activeColor.value = index
 }
 
 function resetLayout(): void {
   panels.reset(SCOPE)
 }
 
-// Re-render when the project palette changes (the colours are live).
-watch(rgbPalette, render, { deep: true })
-onMounted(render)
+// Re-render / re-count when the project background changes (it's the budget's 4th
+// colour and the erase colour). Existing painted pixels keep their own colours.
+watch(bgValue, () => {
+  clashCount.value = countClashCells(engine.grid.snapshot(), W, H, bgValue.value)
+  rev.value++
+})
+
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  // Start on a blank canvas filled with the project background (honest: index-0
+  // background is a real colour, not "unset"). Resets history to a clean slate.
+  engine.load(new Uint8Array(W * H).fill(bgValue.value))
+  afterMutation()
+  fitToViewport()
+  if (viewportRef.value) {
+    resizeObserver = new ResizeObserver(() => fitToViewport())
+    resizeObserver.observe(viewportRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+})
 </script>
 
 <template>
@@ -182,8 +405,50 @@ onMounted(render)
 
     <div class="img-bar">
       <span class="bc-label">{{ t('view.image.title') }}</span>
-      <span class="img-note">{{ t('image.preview') }}</span>
+
+      <!-- Painting mode: newbie-first FREE default, C64-true one click away. -->
+      <div class="img-seg" role="group" :aria-label="t('image.mode.label')">
+        <button
+          class="img-seg-btn"
+          :class="{ 'is-on': mode === 'free' }"
+          :title="t('image.mode.freeHint')"
+          @click="setMode('free')"
+        >
+          {{ t('image.mode.free') }}
+        </button>
+        <button
+          class="img-seg-btn"
+          :class="{ 'is-on': mode === 'c64' }"
+          :title="t('image.mode.c64Hint')"
+          @click="setMode('c64')"
+        >
+          {{ t('image.mode.c64') }}
+        </button>
+      </div>
+
+      <button
+        class="img-toggle"
+        :class="{ 'is-on': showGrid }"
+        :title="t('image.grid.hint')"
+        @click="showGrid = !showGrid"
+      >
+        <svg class="ico" viewBox="0 0 24 24">
+          <path d="M3 3h18v18H3z" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+        </svg>
+        {{ t('image.grid.show') }}
+      </button>
+
+      <!-- Honest per-cell readout: hovered cell's colour spend + global clash count. -->
+      <span v-if="hoverBudget" class="img-budget" :class="{ 'is-clash': hoverBudget.over }">
+        {{ t('image.budget.cell', { col: hoverBudget.col, row: hoverBudget.row }) }} ·
+        {{ t('image.budget.colors', { n: hoverBudget.count, max: MAX_CELL_COLORS }) }}
+      </span>
+      <span class="img-clash" :class="{ 'is-clash': clashCount > 0 }">
+        {{ clashCount > 0 ? t('image.clash.some', { n: clashCount }) : t('image.clash.none') }}
+      </span>
+
       <div class="img-bar-spacer" />
+      <span class="img-note">{{ t('image.preview') }}</span>
       <button class="img-reset" :title="t('tileset.resetLayoutTitle')" @click="resetLayout">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
         {{ t('tileset.resetLayout') }}
@@ -191,19 +456,36 @@ onMounted(render)
     </div>
 
     <div class="img-surface">
-      <!-- Leinwand 160×200 (canvas renderer) -->
+      <!-- Leinwand 160×200 (canvas renderer) + 8×8 cell overlay -->
       <FloatPanel :scope="SCOPE" id="canvas" :title="t('image.panel.canvas')" :min-width="280" :min-height="220">
-        <div class="img-canvas-wrap">
-          <canvas
-            ref="canvasRef"
-            class="img-canvas-host"
-            :width="DISP_W"
-            :height="DISP_H"
-            @pointerdown="onPointerDown"
-            @pointermove="onPointerMove"
-            @pointerup="onPointerUp"
-            @contextmenu.prevent
-          />
+        <div
+          class="img-canvas-wrap"
+          ref="viewportRef"
+          :class="{ 'is-panning': panning }"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointerleave="updateHover(null)"
+          @wheel.prevent="onWheel"
+          @contextmenu.prevent
+        >
+          <div class="img-stage" :style="stageStyle">
+            <canvas ref="canvasRef" class="img-canvas-host" :width="DISP_W" :height="DISP_H" />
+            <svg
+              v-if="showGrid"
+              class="img-grid"
+              :viewBox="`0 0 ${CELLS_X} ${CELLS_Y}`"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <line v-for="c in CELLS_X - 1" :key="'v' + c" :x1="c" :y1="0" :x2="c" :y2="CELLS_Y" />
+              <line v-for="r in CELLS_Y - 1" :key="'h' + r" :x1="0" :y1="r" :x2="CELLS_X" :y2="r" />
+            </svg>
+          </div>
+          <div v-if="cursorStyle" class="img-cursor" :style="cursorStyle" aria-hidden="true" />
+          <button class="img-zoom" :title="t('image.zoom.reset')" @click="resetZoom">
+            {{ Math.round(zoom * 100) }}%
+          </button>
         </div>
       </FloatPanel>
 
@@ -218,20 +500,23 @@ onMounted(render)
         />
       </FloatPanel>
 
-      <!-- Farben -->
-      <FloatPanel :scope="SCOPE" id="colors" :title="t('image.panel.colors')" :min-width="160" :min-height="150">
+      <!-- Farben — the full 16-colour C64 picker + the shared background swatch -->
+      <FloatPanel :scope="SCOPE" id="colors" :title="t('image.panel.colors')" :min-width="180" :min-height="200">
         <p class="img-pen-hint">{{ t('image.penHint') }}</p>
-        <div class="img-pens">
+        <div class="img-board">
           <button
-            v-for="pen in pens"
-            :key="pen.index"
-            class="img-pen"
-            :class="{ 'is-active': leftIndex === pen.index }"
-            @click="leftIndex = pen.index"
-          >
-            <span class="img-pen-chip" :style="{ background: pen.color }" />
-            <span class="img-pen-label">{{ pen.label }}</span>
-          </button>
+            v-for="color in C64_PALETTE"
+            :key="color.index"
+            class="img-swatch"
+            :class="{ 'is-active': activeColor === color.index }"
+            :style="{ background: color.hex }"
+            :title="`${color.index} · ${t(color.i18nKey)}`"
+            @click="pickColor(color.index)"
+          />
+        </div>
+        <div class="img-bg-row">
+          <span class="img-swatch is-bg" :style="{ background: C64_PALETTE[bgValue].hex }" />
+          <span class="img-bg-label">{{ t('image.color.bg') }} · {{ t(C64_PALETTE[bgValue].i18nKey) }}</span>
         </div>
       </FloatPanel>
     </div>
@@ -288,6 +573,78 @@ onMounted(render)
 .img-bar-spacer {
   flex: 1;
 }
+
+/* Free / C64-true segmented toggle */
+.img-seg {
+  display: inline-flex;
+  border: 1px solid var(--bc-border-copper);
+  border-radius: var(--bc-radius-pill);
+  overflow: hidden;
+}
+.img-seg-btn {
+  padding: 4px 12px;
+  font: 600 11px/1 var(--bc-font-sans);
+  letter-spacing: 0.02em;
+  color: var(--bc-text-300);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.img-seg-btn.is-on {
+  color: var(--bc-ink-900, #06121f);
+  background: var(--bc-copper-300);
+}
+.img-seg-btn:not(.is-on):hover {
+  color: var(--bc-text-100);
+}
+
+.img-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font: 600 11px/1 var(--bc-font-sans);
+  color: var(--bc-text-300);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--bc-border);
+  border-radius: var(--bc-radius-pill);
+  cursor: pointer;
+  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.img-toggle.is-on {
+  color: var(--bc-text-100);
+  border-color: var(--bc-arc-400);
+  box-shadow: var(--bc-glow-arc);
+}
+.img-toggle .ico {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.img-budget {
+  font: 600 11px/1 var(--bc-font-mono);
+  color: var(--bc-text-300);
+  padding: 4px 8px;
+  border-radius: var(--bc-radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+.img-budget.is-clash {
+  color: #ffd7c2;
+  background: rgba(220, 90, 40, 0.22);
+}
+.img-clash {
+  font: 600 11px/1 var(--bc-font-sans);
+  color: var(--bc-text-400);
+}
+.img-clash.is-clash {
+  color: #ff9d6f;
+}
+
 .img-reset {
   display: inline-flex;
   align-items: center;
@@ -326,28 +683,77 @@ onMounted(render)
   overflow: hidden;
 }
 
+/* The viewport clips the (zoomable, pannable) stage. Wheel zooms to the cursor,
+   middle-drag pans — so the tiny MC pixel becomes reachable. */
 .img-canvas-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
-}
-/* The bitmap's true shape is 320×200 device pixels (8:5). Keep that aspect, scale to
-   the smaller axis, and render pixelated so the C64 pixel never blurs. */
-.img-canvas-host {
-  aspect-ratio: 8 / 5;
-  height: 100%;
-  width: auto;
-  max-width: 100%;
-  max-height: 100%;
-  image-rendering: pixelated;
+  overflow: hidden;
   background: #000;
   border-radius: var(--bc-radius-sm);
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.7);
   cursor: crosshair;
   touch-action: none;
+}
+.img-canvas-wrap.is-panning {
+  cursor: grabbing;
+}
+/* The stage holds canvas + grid overlay in one box (JS sets size + transform) so
+   the 8×8 lines sit exactly on the C64 cell boundaries at any zoom. */
+.img-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.img-canvas-host {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  background: #000;
+}
+/* Live preview of the pixel the next click paints, in the active colour. The double
+   ring (dark inset + light outer) keeps it legible on any of the 16 colours. */
+.img-cursor {
+  position: absolute;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+
+.img-zoom {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 9px;
+  font: 600 11px/1 var(--bc-font-mono);
+  color: var(--bc-text-200);
+  background: rgba(6, 18, 31, 0.72);
+  border: 1px solid var(--bc-border-copper);
+  border-radius: var(--bc-radius-pill);
+  cursor: pointer;
+  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.img-zoom:hover {
+  color: var(--bc-text-100);
+  border-color: var(--bc-copper-300);
+}
+.img-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.img-grid line {
+  stroke: rgba(120, 200, 255, 0.22);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .img-pen-hint {
@@ -355,40 +761,43 @@ onMounted(render)
   font-size: 11px;
   color: var(--bc-text-400);
 }
-.img-pens {
-  display: flex;
-  flex-direction: column;
-  gap: var(--bc-space-2);
+.img-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
 }
-.img-pen {
-  display: flex;
-  align-items: center;
-  gap: var(--bc-space-3);
-  padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--bc-border);
-  border-radius: var(--bc-radius-md);
+.img-swatch {
+  aspect-ratio: 1;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  border-radius: var(--bc-radius-sm);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   cursor: pointer;
-  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  padding: 0;
+  transition: transform 90ms ease;
 }
-.img-pen:hover {
-  border-color: var(--bc-border-strong);
+.img-swatch:hover {
+  transform: scale(1.08);
 }
-.img-pen.is-active {
-  border-color: var(--bc-arc-400);
+.img-swatch.is-active {
+  outline: 2px solid var(--bc-arc-400);
+  outline-offset: 1px;
   box-shadow: var(--bc-glow-arc);
 }
-.img-pen-chip {
-  flex: none;
+.img-bg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--bc-space-2);
+  margin-top: var(--bc-space-3);
+}
+.img-swatch.is-bg {
   width: 22px;
   height: 22px;
-  border-radius: var(--bc-radius-sm);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
-    inset 0 0 0 2px rgba(0, 0, 0, 0.35);
+  aspect-ratio: auto;
+  flex: none;
+  cursor: default;
 }
-.img-pen-label {
-  font: 500 12.5px/1 var(--bc-font-sans);
-  color: var(--bc-text-200);
+.img-bg-label {
+  font: 500 11px/1.2 var(--bc-font-sans);
+  color: var(--bc-text-300);
 }
 </style>

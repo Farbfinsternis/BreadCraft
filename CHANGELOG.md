@@ -7,6 +7,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Bild-Editor: das ehrliche Pro-Zell-Farbmodell (BRONZE B2.T2a).** Der globale 4-Farben-Platzhalter
+  weicht dem **vollen 16-Farben-C64-Picker**. Zwei Mal-Modi (Nutzer-Entscheidung 2026-06-28, Newbie-first):
+  **Frei** (Default — male mit allen 16 Farben ohne Zell-Grenze, fühlt sich an wie DPaint) und
+  **C64-echt** einen Klick entfernt (jede 8×8-Zelle bleibt legal: geteilter Hintergrund + 3 zell-eigene
+  Farben; eine 4. Farbe rastet auf die nächstgelegene, die die Zelle sich noch leisten kann — pro Strich
+  in **einem** Undo-Schritt verrechnet). Dazu ein **8×8-Zellraster-Overlay** und ein **ehrlicher
+  Zähler**: die überfahrene Zelle zeigt live „x/3 Farben", eine Kopfzeile meldet „N Zellen über dem
+  C64-Limit" bzw. „C64-legal ✓". Die Clash-Logik liegt als reine, Vitest-getestete Einheit
+  (`imageCells.ts`).
+- **Bild-Editor: Mausrad-Zoom zum Cursor + Verschieben.** Der C64-Pixel ist bei „Ganze Ansicht" winzig —
+  jetzt zoomt das **Mausrad zur Cursor-Position** (der Bildpunkt unter dem Zeiger bleibt stehen) und
+  **Mittelklick-Ziehen** verschiebt, sodass man gezielt einzelne Pixel setzen kann. Ein Zoom-Abzeichen
+  unten links zeigt die Stufe und setzt per Klick auf „Ganze Ansicht" zurück. **Noch offen:** Speichern
+  (Bild-Format B2.T1), Live-Nachbar-Umfärben im C64-Modus, 1:1-Übersichtsfenster.
+
 ## [0.2.13] - 2026-07-13
 
 ### Hinzugefügt
