@@ -23,6 +23,15 @@ import {
   bytesToIndicesSpriteMC,
   pixelsPerSprite
 } from '@renderer/pixel-engine/spriteBytes'
+import {
+  bufferToC64,
+  c64ToBuffer,
+  IMG_W,
+  IMG_H,
+  IMG_BITMAP_BYTES,
+  IMG_SCREEN_BYTES,
+  IMG_COLOR_BYTES
+} from '@renderer/pixel-engine/imageBytes'
 import type { GraphicsMode } from '@shared/ipc'
 import * as fmt from '@shared/asset-formats'
 
@@ -31,6 +40,7 @@ export const PALETTE_FILE = 'project.palette'
 export const CHARSET_FILE = 'main.petscii'
 export const TILEMAP_FILE = 'main.tilemap'
 export const SPRITE_FILE = 'main.sprite'
+export const IMAGE_FILE = 'main.image'
 
 const CHAR_COUNT = fmt.CHAR_COUNT
 
@@ -278,4 +288,55 @@ export function parseSprite(text: string, mode: GraphicsMode): SpriteData | null
   if (frames.length === 0) frames.push(new Uint8Array(expected))
   // `color` is optional — old files (pre-individual-colour) default to white.
   return { frames, color: clampColorIndex(raw.color) }
+}
+
+/** The image editor's canvas: one MC-bitmap screen as a flat 16-colour-per-pixel
+ *  buffer (160×200, values 0–15) plus the shared background colour ($D021). */
+export interface ImageData {
+  pixels: Uint8Array
+  background: number
+}
+
+export const IMAGE_W = IMG_W
+export const IMAGE_H = IMG_H
+
+/**
+ * Serialize the image canvas to the `.image` JSON. Packs the 16-colour buffer down
+ * to the C64's three byte planes (bitmap/screen/color) via bufferToC64 — the caller
+ * has already reconciled any per-cell clash, so packing is lossless for a legal
+ * canvas. The shared background is stored so a reload maps pattern %00 back correctly.
+ */
+export function serializeImage(data: ImageData): string {
+  const bg = clampColorIndex(data.background)
+  const { bitmap, screen, color } = bufferToC64(data.pixels, bg)
+  return fmt.serializeImage(Array.from(bitmap), Array.from(screen), Array.from(color), bg)
+}
+
+/**
+ * Parse a `.image` file into the editor's canvas buffer. Reads the three C64 planes
+ * and unpacks them back to 16-colour-per-pixel. Returns null if malformed (wrong
+ * format / wrong section sizes) so the editor loads a blank canvas rather than crash.
+ */
+export function parseImage(text: string): ImageData | null {
+  let raw: fmt.ImageRaw
+  try {
+    raw = fmt.parseImage(text)
+  } catch {
+    return null
+  }
+  if (
+    raw.bitmap.length !== IMG_BITMAP_BYTES ||
+    raw.screen.length !== IMG_SCREEN_BYTES ||
+    raw.color.length !== IMG_COLOR_BYTES
+  ) {
+    return null
+  }
+  const background = clampColorIndex(raw.background)
+  const pixels = c64ToBuffer(
+    Uint8Array.from(raw.bitmap),
+    Uint8Array.from(raw.screen),
+    Uint8Array.from(raw.color),
+    background
+  )
+  return { pixels, background }
 }

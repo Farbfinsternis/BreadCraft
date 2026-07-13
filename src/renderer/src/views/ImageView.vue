@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePaletteStore, C64_PALETTE } from '../stores/palette'
 import { usePanelsStore } from '../stores/panels'
+import { useImageStore } from '../stores/image'
 import { PixelEngine, type PixelIndex, type ToolId } from '../pixel-engine'
 import {
   MAX_CELL_COLORS,
@@ -38,6 +39,7 @@ const { t } = useI18n()
 
 const palette = usePaletteStore()
 const panels = usePanelsStore()
+const image = useImageStore()
 
 const SCOPE = 'image'
 
@@ -277,7 +279,7 @@ function onPointerUp(): void {
     engine.amend(reconcileCells(snap, W, cells, bgValue.value, PAL_RGB))
   }
   engine.end()
-  afterMutation()
+  commitEdit()
 }
 
 /** Wheel zooms towards the cursor: the image point under the pointer stays put. */
@@ -340,13 +342,24 @@ function afterMutation(): void {
   rev.value++
 }
 
+/** A user edit: refresh the view AND push the new canvas into the image store (marks
+ *  it dirty, so Save / the build flush pick it up). Not used for the initial load. */
+function commitEdit(): void {
+  afterMutation()
+  image.setPixels(engine.grid.snapshot())
+}
+
 function undo(): void {
   engine.undo()
-  afterMutation()
+  commitEdit()
 }
 function redo(): void {
   engine.redo()
-  afterMutation()
+  commitEdit()
+}
+
+function save(): void {
+  void image.save()
 }
 
 /** Switch mode; entering C64-true reconciles the WHOLE image legal in one undo step. */
@@ -361,7 +374,7 @@ function setMode(m: PaintMode): void {
   engine.begin('draw', writes[0].x, writes[0].y, writes[0].value as PixelIndex)
   engine.amend(writes.slice(1))
   engine.end()
-  afterMutation()
+  commitEdit()
 }
 
 function pickColor(index: number): void {
@@ -381,20 +394,29 @@ watch(bgValue, () => {
 
 let resizeObserver: ResizeObserver | null = null
 
+function onKeydown(e: KeyboardEvent): void {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    save()
+  }
+}
+
 onMounted(() => {
-  // Start on a blank canvas filled with the project background (honest: index-0
-  // background is a real colour, not "unset"). Resets history to a clean slate.
-  engine.load(new Uint8Array(W * H).fill(bgValue.value))
+  // Load the project's image (loadProjectAssets filled the store on open; a blank
+  // canvas is the project background). engine.load resets history to a clean slate.
+  engine.load(image.pixels.slice())
   afterMutation()
   fitToViewport()
   if (viewportRef.value) {
     resizeObserver = new ResizeObserver(() => fitToViewport())
     resizeObserver.observe(viewportRef.value)
   }
+  window.addEventListener('keydown', onKeydown)
 })
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -452,6 +474,15 @@ onBeforeUnmount(() => {
       <button class="img-reset" :title="t('tileset.resetLayoutTitle')" @click="resetLayout">
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
         {{ t('tileset.resetLayout') }}
+      </button>
+      <button
+        class="img-save"
+        :disabled="!image.dirty"
+        :title="image.dirty ? t('asset.unsaved') : t('asset.saved')"
+        @click="save"
+      >
+        <span class="img-save-dot" :class="{ 'is-dirty': image.dirty }" />
+        {{ t('asset.save') }}
       </button>
     </div>
 
@@ -673,6 +704,42 @@ onBeforeUnmount(() => {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.img-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  font: 600 11px/1 var(--bc-font-sans);
+  letter-spacing: 0.02em;
+  color: var(--bc-text-300);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--bc-border);
+  border-radius: var(--bc-radius-pill);
+  cursor: pointer;
+  transition: all 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.img-save:hover:not(:disabled) {
+  color: var(--bc-text-100);
+  border-color: var(--bc-arc-400);
+  box-shadow: var(--bc-glow-arc);
+}
+.img-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.img-save-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.img-save-dot.is-dirty {
+  background: var(--bc-filament);
+  box-shadow: 0 0 6px var(--bc-filament);
 }
 
 .img-surface {

@@ -21,12 +21,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   jetzt zoomt das **Mausrad zur Cursor-Position** (der Bildpunkt unter dem Zeiger bleibt stehen) und
   **Mittelklick-Ziehen** verschiebt, sodass man gezielt einzelne Pixel setzen kann. Ein Zoom-Abzeichen
   unten links zeigt die Stufe und setzt per Klick auf „Ganze Ansicht" zurück.
-- **Bild-Speicherformat als Grundlage (BRONZE B2.T1, unsichtbar).** Ein `.image`-Dateiformat (8000 Bytes
-  Bitmap + 1000 Screen + 1000 Color + 1 Byte Hintergrund = ein C64-Multicolor-Bitmap-Schirm) mit
-  strukturellem Codec und strengem Build-Resolver (`resolveImage`), plus Manifest-Anbindung (`.image`
-  als Asset-Art). **Noch nichts davon sichtbar:** das Anbinden ans Speichern/Öffnen im Editor folgt als
-  nächster Block; hier ist nur das Fundament gelegt (Round-Trip- + Resolver-Tests grün). **Weiter offen:**
-  Live-Nachbar-Umfärben im C64-Modus, 1:1-Übersichtsfenster.
+- **Bilder speichern & wieder öffnen (BRONZE B2.T1 + T2).** Der Bild-Editor kann sein Werk jetzt
+  behalten: **Speichern** (Knopf oder Strg+S, mit Ungespeichert-Punkt) schreibt eine `.image`-Datei
+  (8000 Bytes Bitmap + 1000 Screen + 1000 Color + 1 Byte Hintergrund = ein C64-Multicolor-Schirm), und
+  beim Projekt-Öffnen lädt sie automatisch wieder — Pixel und Farben intakt. Die 16-Farben-Leinwand wird
+  dafür verlustfrei in die drei C64-Byte-Ebenen gepackt; ein Frei-Modus-Bild mit Farb-Clash rastet
+  beim Speichern auf die nächste C64-legale Farbe (die gemalte Ansicht bleibt unangetastet). Unterbau:
+  geteilter Format-Codec, strenger Build-Resolver (`resolveImage`) und Puffer⇄C64-Bytes-Packer, alle
+  mit Round-Trip-Tests. **Weiter offen:** Bild im Programm anzeigen (`UseImage`/`DrawImage`, B2.T3/T4),
+  Mehr-Datei-Verwaltung im Explorer, Live-Nachbar-Umfärben im C64-Modus.
 
 ## [0.2.13] - 2026-07-13
 

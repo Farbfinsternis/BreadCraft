@@ -190,14 +190,17 @@ export const useProjectStore = defineStore('project', () => {
     const { useCharsetStore } = await import('./charset')
     const { useTilemapStore } = await import('./tilemap')
     const { useSpriteStore } = await import('./sprite')
+    const { useImageStore } = await import('./image')
     const palette = usePaletteStore()
     const charset = useCharsetStore()
     const tilemap = useTilemapStore()
     const sprite = useSpriteStore()
+    const image = useImageStore()
     await palette.loadForProject(project.dir, project.assets.palette)
     await charset.loadForProject(project.dir, project.assets.charsets[0] ?? null)
     await tilemap.loadForProject(project.dir, project.assets.tilemaps[0] ?? null)
     await sprite.loadForProject(project.dir, project.assets.sprites[0] ?? null)
+    await image.loadForProject(project.dir, project.assets.images[0] ?? null)
   }
 
   function setActiveTab(rel: string): void {
@@ -249,9 +252,26 @@ export const useProjectStore = defineStore('project', () => {
    */
   async function saveDirtyAssets(): Promise<void> {
     if (!dir.value) return
-    const [{ usePaletteStore }, { useCharsetStore }, { useTilemapStore }, { useSpriteStore }] =
-      await Promise.all([import('./palette'), import('./charset'), import('./tilemap'), import('./sprite')])
-    const stores = [usePaletteStore(), useCharsetStore(), useTilemapStore(), useSpriteStore()]
+    const [
+      { usePaletteStore },
+      { useCharsetStore },
+      { useTilemapStore },
+      { useSpriteStore },
+      { useImageStore }
+    ] = await Promise.all([
+      import('./palette'),
+      import('./charset'),
+      import('./tilemap'),
+      import('./sprite'),
+      import('./image')
+    ])
+    const stores = [
+      usePaletteStore(),
+      useCharsetStore(),
+      useTilemapStore(),
+      useSpriteStore(),
+      useImageStore()
+    ]
     for (const s of stores) if (s.dirty) await s.save()
   }
 
