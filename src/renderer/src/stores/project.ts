@@ -236,6 +236,19 @@ export const useProjectStore = defineStore('project', () => {
     dirty[rel] = false
   }
 
+  /**
+   * Flush any unsaved asset editor (sprite/charset/tilemap/palette) to disk. The build
+   * reads assets from DISK (not from the editor stores), so an un-saved pixel/colour edit
+   * would otherwise compile against the stale on-disk file (B-9). Called before every build.
+   */
+  async function saveDirtyAssets(): Promise<void> {
+    if (!dir.value) return
+    const [{ usePaletteStore }, { useCharsetStore }, { useTilemapStore }, { useSpriteStore }] =
+      await Promise.all([import('./palette'), import('./charset'), import('./tilemap'), import('./sprite')])
+    const stores = [usePaletteStore(), useCharsetStore(), useTilemapStore(), useSpriteStore()]
+    for (const s of stores) if (s.dirty) await s.save()
+  }
+
   function toggleDebug(): void {
     debugMode.value = !debugMode.value
   }
@@ -261,6 +274,7 @@ export const useProjectStore = defineStore('project', () => {
     openCrumb,
     addFile,
     saveActive,
+    saveDirtyAssets,
     toggleDebug,
     refreshAssets,
     assetsOf,

@@ -41,7 +41,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
  */
 async function runBuild(runAfterBuild: boolean): Promise<void> {
   if (output.busy) return
-  const rel = project.activeRel
+  // Build the project's ENTRY crumb — the program — not whatever file happens to be
+  // active (B-9): the active tab might be a helper crumb, an asset, or unrelated.
+  const rel = project.entry || project.activeRel
   if (!project.dir || !rel) {
     output.clear()
     output.append({ level: 'error', text: t('build.noActiveFile') })
@@ -60,8 +62,16 @@ async function runBuild(runAfterBuild: boolean): Promise<void> {
   if (ui.collapsed.console) ui.expand('console')
   output.append({ level: 'info', text: t(runAfterBuild ? 'build.start' : 'build.startBuild', { rel }) })
   try {
-    await project.saveActive() // build from the on-disk truth
-    const source = project.contents[rel] ?? ''
+    await project.saveActive() // flush the open code edit to disk
+    await project.saveDirtyAssets() // flush unsaved sprite/charset/tilemap/palette (B-9)
+    // Multi-crumb projects aren't linked yet — only the entry compiles. Warn so a
+    // second crumb's code isn't silently missing from the build (B-9).
+    const crumbCount = project.openFiles.filter((r) => r.toLowerCase().endsWith('.crumb')).length
+    if (crumbCount > 1) output.append({ level: 'warn', text: t('build.multiCrumb', { entry: rel }) })
+    // Build the entry's live editor content (the truth the user sees); fall back to
+    // disk for an entry that isn't currently open as a tab.
+    const source =
+      project.contents[rel] ?? (await window.breadcraft.assets.read(project.dir, rel)) ?? ''
     const result = await window.breadcraft.build.run(source, project.dir, runAfterBuild)
     output.appendMany(result.log)
     output.ram = result.ram ?? null // feed the RAM health-bar (STAHL S1c)
@@ -92,7 +102,8 @@ const editors = computed(() => [
   { label: t('toolbar.editor.tileset'), route: 'tileset' },
   { label: t('toolbar.editor.tilemap'), route: 'tilemap' },
   { label: t('toolbar.editor.sprite'), route: 'sprite' },
-  { label: t('toolbar.editor.sound'), route: 'sound' }
+  { label: t('toolbar.editor.sound'), route: 'sound' },
+  { label: t('toolbar.editor.image'), route: 'image' }
 ])
 
 // Zen mode (full-width) is offered in the graphics editors and the docs reader —

@@ -258,6 +258,22 @@ describe('codegen: expressions', () => {
     expect(gen('x = $FF').code).toContain('0xFF')
     expect(gen('x = %1010').code).toContain('0b1010')
   })
+
+  it('B-5: renames variables that collide with C keywords / main (no cryptic cc65 error)', () => {
+    const { code, errors } = gen('int = 1\nchar = 2\nmain = 3')
+    expect(errors).toEqual([])
+    // None of the reserved words may leak as a bare C identifier.
+    expect(code).toContain('unsigned char int_ = 0;')
+    expect(code).toContain('unsigned char char_ = 0;')
+    expect(code).toContain('unsigned char main_ = 0;')
+    expect(code).not.toMatch(/unsigned char (int|char|main) =/)
+  })
+
+  it('B-5: lifts a variable out of the compiler bc_/BC_ namespace', () => {
+    const { code } = gen('bc_pen = 1')
+    expect(code).toContain('unsigned char v_bc_pen = 0;')
+    expect(code).not.toMatch(/unsigned char bc_pen =/)
+  })
 })
 
 describe('codegen: type system (Sprachdef §C)', () => {

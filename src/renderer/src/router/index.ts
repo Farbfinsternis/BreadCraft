@@ -25,6 +25,15 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@renderer/views/SpriteView.vue')
   },
   {
+    // Bitmap image editor (BRONZE B2.T2a). First slice: a paintable MC-bitmap
+    // canvas, deliberately useless still — no save (that's B2.T1) and no per-cell
+    // colour-clash guard yet. Reachable from the toolbar editor menu so it can be
+    // seen today.
+    path: '/editor/image',
+    name: 'image',
+    component: () => import('@renderer/views/ImageView.vue')
+  },
+  {
     path: '/editor/palette',
     name: 'palette',
     component: () => import('@renderer/views/PaletteView.vue')
@@ -48,7 +57,7 @@ const routes: RouteRecordRaw[] = [
 /** Route names of the graphics editors — the views where Zen mode (full-width,
  *  panels hidden) is offered and takes effect. Shared so the toolbar toggle and
  *  App.vue agree on "is this an editor route?" (one list, no drift). */
-export const EDITOR_ROUTE_NAMES = ['palette', 'tileset', 'tilemap', 'sprite', 'sound'] as const
+export const EDITOR_ROUTE_NAMES = ['palette', 'tileset', 'tilemap', 'sprite', 'sound', 'image'] as const
 
 /** Routes that OFFER the user-toggled Zen mode (full-width, side panels hidden):
  *  the graphics editors plus the docs reader. Zen here is opt-in and reversible —

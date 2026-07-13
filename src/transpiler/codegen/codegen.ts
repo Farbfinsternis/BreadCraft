@@ -2461,9 +2461,30 @@ function isConstOne(e: Expr): boolean {
 }
 
 /** Map a BreadCraft identifier to a safe C identifier (drop suffix punctuation). */
+/** C89/C99 reserved words + cc65/stdbool commons + the entry symbol `main`. A CRUMB
+ *  variable or function named after any of these (e.g. `main`, `int`, `char`) would
+ *  otherwise emit a raw C keyword and break the build with a cryptic cc65 error the
+ *  target audience (no C) can't read — so cName() lifts them out of the way (B-5). */
+const RESERVED_C_NAMES = new Set<string>([
+  'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do', 'double',
+  'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
+  'register', 'restrict', 'return', 'short', 'signed', 'sizeof', 'static', 'struct',
+  'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while',
+  '_Bool', '_Complex', '_Imaginary', 'asm',
+  'bool', 'true', 'false', 'NULL', 'main'
+])
+
 function cName(name: string): string {
   // Suffix punctuation ($, .) is part of the written variable, not the C name.
-  return name.replace(/[$]/g, '_str').replace(/[.]/g, '_')
+  let base = name.replace(/[$]/g, '_str').replace(/[.]/g, '_')
+  // A user name landing in the compiler's own `bc_`/`BC_` namespace would silently
+  // clobber a generated global/macro → lift it into user space with a `v_` prefix.
+  if (/^(bc_|BC_)/.test(base)) base = 'v_' + base
+  // A user name equal to a C reserved word or `main` → invalid C / cryptic cc65 error.
+  // A trailing underscore is enough (no keyword ends in one) and keeps the base readable
+  // in the C view. Loop guards the (astronomically unlikely) crafted-collision case.
+  while (RESERVED_C_NAMES.has(base)) base += '_'
+  return base
 }
 
 /** A C hex literal, uppercase, zero-padded to `digits` (default 4) — e.g. hx(0x7f8) → "0x07F8". */

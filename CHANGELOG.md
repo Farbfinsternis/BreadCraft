@@ -7,6 +7,29 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-07-13
+
+### Hinzugefügt
+- **Erster Blick auf den Bild-Editor (BRONZE B2.T2a, Vorschau).** Über das Editor-Menü der Werkzeugleiste
+  erreichbar: eine bemalbare C64-Multicolor-Bitmap-Leinwand (160×200) mit Stift/Linie/Rechteck/Füllung +
+  Undo/Redo (über die geteilte Pixel-Engine). **Bewusst noch nutzlos:** kein Speichern (das Bild-Format
+  folgt als B2.T1) und noch keine Zell-Farb-Prüfung — die vier Farben sind vorerst eine globale Palette,
+  nicht das ehrliche Pro-8×8-Zell-Budget. Technischer Befund unterwegs: die DOM-Raster-`PixelCanvas`
+  skaliert nicht auf einen Vollbild-Schirm (32 000 Zellen) → der Bild-Editor rendert auf einen echten
+  `<canvas>`.
+
+### Behoben
+- **Variablen mit C-Schlüsselwort-Namen brechen den Build nicht mehr (Härtung B-5).** Eine CRUMB-Variable
+  oder -Funktion namens `int`, `char`, `main` … wurde bisher 1:1 als C-Bezeichner ausgegeben und ließ den
+  Build mit einem kryptischen cc65-Fehler scheitern. Solche Namen (alle C-Schlüsselwörter, `main` und der
+  interne `bc_`/`BC_`-Namensraum) werden jetzt deterministisch umbenannt — der gewohnte Name bleibt im
+  C-View lesbar. *(Echt durch cc65 bewiesen.)*
+- **Build & Run baut jetzt zuverlässig das Programm (Härtung B-9).** Gebaut wird ab sofort der
+  **Entry-Crumb** des Projekts statt der gerade offenen Datei. Ungespeicherte Asset-Editoren
+  (Sprite/Charset/Tilemap/Palette) werden vor dem Build automatisch gesichert, damit nicht ein veralteter
+  Plattenstand mitkompiliert. Liegen mehrere Crumbs im Projekt, warnt die Konsole, dass nur der Entry
+  gebaut wird (Zusammenführung mehrerer Crumbs folgt später).
+
 ## [0.2.12] - 2026-06-28
 
 ### Hinzugefügt
