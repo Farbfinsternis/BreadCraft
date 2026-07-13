@@ -147,3 +147,29 @@ describe('asset-formats: sprite (.sprite)', () => {
     expect(() => fmt.parseSprite('{"format":"x"}')).toThrowError(/hat keine 'frames'-Daten/)
   })
 })
+
+describe('asset-formats: image (.image)', () => {
+  const bitmap = Array.from({ length: fmt.IMAGE_BITMAP_BYTES }, (_, i) => i % 256)
+  const screen = Array.from({ length: fmt.IMAGE_SCREEN_BYTES }, (_, i) => (i * 7) % 256)
+  const color = Array.from({ length: fmt.IMAGE_COLOR_BYTES }, (_, i) => (i * 3) % 16)
+
+  it('round-trips the four pieces structurally identically', () => {
+    const json = fmt.serializeImage(bitmap, screen, color, 6)
+    expect(JSON.parse(json).format).toBe('breadcraft.image')
+    const back = fmt.parseImage(json)
+    expect(back.bitmap).toEqual(bitmap)
+    expect(back.screen).toEqual(screen)
+    expect(back.color).toEqual(color)
+    expect(back.background).toBe(6)
+  })
+
+  it('reports a missing background as undefined (caller defaults it)', () => {
+    const back = fmt.parseImage(JSON.stringify({ bitmap: [], screen: [], color: [] }))
+    expect(back.background).toBeUndefined()
+  })
+
+  it('throws on broken JSON and on a missing section', () => {
+    expect(() => fmt.parseImage('{ nope')).toThrowError(/ist kein gültiges \.image/)
+    expect(() => fmt.parseImage('{"bitmap":[],"screen":[]}')).toThrowError(/hat keine 'color'-Daten/)
+  })
+})

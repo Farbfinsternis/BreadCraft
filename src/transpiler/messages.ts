@@ -133,6 +133,7 @@ export interface ResolverMessages {
   labelMap: string
   labelSprite: string
   labelPalette: string
+  labelImage: string
   /** The "project knows: (none)" filler when no asset of a kind exists. */
   noneKnown: string
   unknownTileset(id: string, hint: string): string
@@ -149,6 +150,11 @@ export interface ResolverMessages {
   spriteFrameLenWrong(rel: string, frame: number, bytes: number): string
   spriteByteBad(rel: string, frame: number, byteIndex: number): string
   paletteIndexBad(rel: string, field: string): string
+  unknownImage(id: string, hint: string): string
+  imageFileMissing(rel: string): string
+  imageSectionLenWrong(rel: string, section: string, bytes: number): string
+  imageByteBad(rel: string, section: string, index: number): string
+  imageBackgroundBad(rel: string): string
 }
 
 export interface Catalog {
@@ -451,6 +457,7 @@ const DE_RESOLVER: ResolverMessages = {
   labelMap: 'Karte',
   labelSprite: 'Sprite',
   labelPalette: 'Palette',
+  labelImage: 'Bild',
   noneKnown: '(keine)',
   unknownTileset: (id, hint) => `unbekanntes Tileset '${id}' — Projekt kennt: ${hint}`,
   tilesetFileMissing: (rel) => `Tileset-Datei fehlt: ${rel}`,
@@ -467,7 +474,13 @@ const DE_RESOLVER: ResolverMessages = {
   spriteFrameLenWrong: (rel, frame, bytes) => `Sprite '${rel}', Frame ${frame}: erwartet ${bytes} Bytes`,
   spriteByteBad: (rel, frame, byteIndex) =>
     `Sprite '${rel}', Frame ${frame}, Byte ${byteIndex}: kein gültiger Bytewert (0–255)`,
-  paletteIndexBad: (rel, field) => `Palette '${rel}', ${field}: kein gültiger Farb-Index (0–15)`
+  paletteIndexBad: (rel, field) => `Palette '${rel}', ${field}: kein gültiger Farb-Index (0–15)`,
+  unknownImage: (id, hint) => `unbekanntes Bild '${id}' — Projekt kennt: ${hint}`,
+  imageFileMissing: (rel) => `Bild-Datei fehlt: ${rel}`,
+  imageSectionLenWrong: (rel, section, bytes) => `Bild '${rel}', ${section}: erwartet ${bytes} Bytes`,
+  imageByteBad: (rel, section, index) =>
+    `Bild '${rel}', ${section}, Byte ${index}: kein gültiger Bytewert (0–255)`,
+  imageBackgroundBad: (rel) => `Bild '${rel}', Hintergrund: kein gültiger Farb-Index (0–15)`
 }
 
 // English asset-resolver diagnostics — additive.
@@ -476,6 +489,7 @@ const EN_RESOLVER: ResolverMessages = {
   labelMap: 'map',
   labelSprite: 'sprite',
   labelPalette: 'palette',
+  labelImage: 'image',
   noneKnown: '(none)',
   unknownTileset: (id, hint) => `unknown tileset '${id}' — project knows: ${hint}`,
   tilesetFileMissing: (rel) => `tileset file missing: ${rel}`,
@@ -492,7 +506,13 @@ const EN_RESOLVER: ResolverMessages = {
   spriteFrameLenWrong: (rel, frame, bytes) => `sprite '${rel}', frame ${frame}: expected ${bytes} bytes`,
   spriteByteBad: (rel, frame, byteIndex) =>
     `sprite '${rel}', frame ${frame}, byte ${byteIndex}: not a valid byte value (0–255)`,
-  paletteIndexBad: (rel, field) => `palette '${rel}', ${field}: not a valid colour index (0–15)`
+  paletteIndexBad: (rel, field) => `palette '${rel}', ${field}: not a valid colour index (0–15)`,
+  unknownImage: (id, hint) => `unknown image '${id}' — project knows: ${hint}`,
+  imageFileMissing: (rel) => `image file missing: ${rel}`,
+  imageSectionLenWrong: (rel, section, bytes) => `image '${rel}', ${section}: expected ${bytes} bytes`,
+  imageByteBad: (rel, section, index) =>
+    `image '${rel}', ${section}, byte ${index}: not a valid byte value (0–255)`,
+  imageBackgroundBad: (rel) => `image '${rel}', background: not a valid colour index (0–15)`
 }
 
 const DE: Catalog = { lexer: DE_LEXER, parser: DE_PARSER, codegen: DE_CODEGEN, resolver: DE_RESOLVER }

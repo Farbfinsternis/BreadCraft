@@ -39,3 +39,14 @@ export {
   parseSprite,
   type SpriteRaw
 } from './sprite'
+
+export {
+  IMAGE_FORMAT,
+  IMAGE_BITMAP_BYTES,
+  IMAGE_SCREEN_BYTES,
+  IMAGE_COLOR_BYTES,
+  DEFAULT_IMAGE_BACKGROUND,
+  serializeImage,
+  parseImage,
+  type ImageRaw
+} from './image'

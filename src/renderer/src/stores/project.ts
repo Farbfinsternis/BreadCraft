@@ -6,7 +6,13 @@ import { DEFAULT_GRAPHICS_MODE } from '@shared/ipc'
 /** Asset kinds the explorer can list/open/create (P2.T0). */
 export type AssetEditorKind = 'sprite' | 'charset' | 'tilemap' | 'palette'
 
-const EMPTY_MANIFEST: BreadAssets = { palette: null, charsets: [], tilemaps: [], sprites: [] }
+const EMPTY_MANIFEST: BreadAssets = {
+  palette: null,
+  charsets: [],
+  tilemaps: [],
+  sprites: [],
+  images: []
+}
 
 const STORAGE_KEY = 'breadcraft.project.ui'
 

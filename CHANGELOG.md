@@ -20,8 +20,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 - **Bild-Editor: Mausrad-Zoom zum Cursor + Verschieben.** Der C64-Pixel ist bei „Ganze Ansicht" winzig —
   jetzt zoomt das **Mausrad zur Cursor-Position** (der Bildpunkt unter dem Zeiger bleibt stehen) und
   **Mittelklick-Ziehen** verschiebt, sodass man gezielt einzelne Pixel setzen kann. Ein Zoom-Abzeichen
-  unten links zeigt die Stufe und setzt per Klick auf „Ganze Ansicht" zurück. **Noch offen:** Speichern
-  (Bild-Format B2.T1), Live-Nachbar-Umfärben im C64-Modus, 1:1-Übersichtsfenster.
+  unten links zeigt die Stufe und setzt per Klick auf „Ganze Ansicht" zurück.
+- **Bild-Speicherformat als Grundlage (BRONZE B2.T1, unsichtbar).** Ein `.image`-Dateiformat (8000 Bytes
+  Bitmap + 1000 Screen + 1000 Color + 1 Byte Hintergrund = ein C64-Multicolor-Bitmap-Schirm) mit
+  strukturellem Codec und strengem Build-Resolver (`resolveImage`), plus Manifest-Anbindung (`.image`
+  als Asset-Art). **Noch nichts davon sichtbar:** das Anbinden ans Speichern/Öffnen im Editor folgt als
+  nächster Block; hier ist nur das Fundament gelegt (Round-Trip- + Resolver-Tests grün). **Weiter offen:**
+  Live-Nachbar-Umfärben im C64-Modus, 1:1-Übersichtsfenster.
 
 ## [0.2.13] - 2026-07-13
 

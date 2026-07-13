@@ -3,6 +3,7 @@ import {
   resolveCharset,
   resolveTilemap,
   resolveSprite,
+  resolveImage,
   AssetResolveError,
   type AssetManifest,
   type AssetReader
@@ -33,12 +34,14 @@ const manifest = (
   charsets: string[],
   tilemaps: string[] = [],
   sprites: string[] = [],
-  palette: string | null = null
+  palette: string | null = null,
+  images: string[] = []
 ): AssetManifest => ({
   palette,
   charsets,
   tilemaps,
-  sprites
+  sprites,
+  images
 })
 
 const SPRITE_BYTES = 63
@@ -358,6 +361,100 @@ describe('asset-resolver: resolveSprite (strict, eager errors)', () => {
   it('raises AssetResolveError specifically', () => {
     try {
       resolveSprite('ghost', manifest([], [], []), reader({}))
+      throw new Error('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(AssetResolveError)
+    }
+  })
+})
+
+// ---- resolveImage ----
+
+const IMG_BITMAP = 8000
+const IMG_SCREEN = 1000
+const IMG_COLOR = 1000
+
+/** A valid `.image` JSON, with optional overrides to break one field per test. */
+function imageFile(over: Partial<{ bitmap: number[]; screen: number[]; color: number[]; background: unknown }> = {}): string {
+  return JSON.stringify({
+    format: 'breadcraft.image',
+    version: 1,
+    background: 'background' in over ? over.background : 6,
+    bitmap: over.bitmap ?? new Array(IMG_BITMAP).fill(0),
+    screen: over.screen ?? new Array(IMG_SCREEN).fill(0),
+    color: over.color ?? new Array(IMG_COLOR).fill(0)
+  })
+}
+
+const imgManifest = (images: string[]): AssetManifest => manifest([], [], [], null, images)
+
+describe('asset-resolver: resolveImage (happy path)', () => {
+  it('resolves the four pieces to typed byte arrays + background', () => {
+    const bitmap = new Array(IMG_BITMAP).fill(0)
+    bitmap[0] = 0b11100100
+    const screen = new Array(IMG_SCREEN).fill(0)
+    screen[0] = 0x1a
+    const color = new Array(IMG_COLOR).fill(0)
+    color[0] = 5
+    const r = resolveImage('title', imgManifest(['title.image']), reader({ 'title.image': imageFile({ bitmap, screen, color }) }))
+    expect(r.kind).toBe('image')
+    expect(r.bitmap.length).toBe(IMG_BITMAP)
+    expect(r.screen.length).toBe(IMG_SCREEN)
+    expect(r.color.length).toBe(IMG_COLOR)
+    expect(r.bitmap[0]).toBe(0b11100100)
+    expect(r.screen[0]).toBe(0x1a)
+    expect(r.color[0]).toBe(5)
+    expect(r.background).toBe(6)
+  })
+
+  it('defaults a missing background to black (0)', () => {
+    const r = resolveImage('title', imgManifest(['title.image']), reader({ 'title.image': imageFile({ background: undefined }) }))
+    expect(r.background).toBe(0)
+  })
+})
+
+describe('asset-resolver: resolveImage (strict, eager errors)', () => {
+  it('throws on an unknown id, listing what the project knows', () => {
+    expect(() => resolveImage('ghost', imgManifest(['title.image']), reader({}))).toThrowError(
+      /unbekanntes Bild 'ghost'.*title/
+    )
+  })
+
+  it('throws when the file is missing on disk', () => {
+    expect(() => resolveImage('title', imgManifest(['title.image']), reader({}))).toThrowError(
+      /Bild-Datei fehlt/
+    )
+  })
+
+  it('throws on broken JSON', () => {
+    expect(() =>
+      resolveImage('title', imgManifest(['title.image']), reader({ 'title.image': '{ nope' }))
+    ).toThrowError(/kein gültiges \.image/)
+  })
+
+  it('throws on a wrong-length section', () => {
+    expect(() =>
+      resolveImage('title', imgManifest(['title.image']), reader({ 'title.image': imageFile({ bitmap: [0, 1, 2] }) }))
+    ).toThrowError(/bitmap: erwartet 8000 Bytes/)
+  })
+
+  it('throws on an out-of-range byte value', () => {
+    const bitmap = new Array(IMG_BITMAP).fill(0)
+    bitmap[0] = 300
+    expect(() =>
+      resolveImage('title', imgManifest(['title.image']), reader({ 'title.image': imageFile({ bitmap }) }))
+    ).toThrowError(/bitmap, Byte 0/)
+  })
+
+  it('throws on an out-of-range background index', () => {
+    expect(() =>
+      resolveImage('title', imgManifest(['title.image']), reader({ 'title.image': imageFile({ background: 99 }) }))
+    ).toThrowError(/Hintergrund: kein gültiger Farb-Index/)
+  })
+
+  it('raises AssetResolveError specifically', () => {
+    try {
+      resolveImage('ghost', imgManifest([]), reader({}))
       throw new Error('should have thrown')
     } catch (e) {
       expect(e).toBeInstanceOf(AssetResolveError)

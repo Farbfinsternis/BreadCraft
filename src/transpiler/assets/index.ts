@@ -4,6 +4,7 @@ export {
   resolveTilemap,
   resolveSprite,
   resolvePalette,
+  resolveImage,
   DEFAULT_PALETTE,
   AssetResolveError
 } from './asset-resolver'
@@ -13,5 +14,6 @@ export type {
   ResolvedCharset,
   ResolvedTilemap,
   ResolvedSprite,
-  ResolvedPalette
+  ResolvedPalette,
+  ResolvedImage
 } from './asset-resolver'

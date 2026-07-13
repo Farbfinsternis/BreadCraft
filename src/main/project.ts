@@ -60,7 +60,13 @@ export interface BreadProjectFile {
   assets: BreadAssets
 }
 
-const EMPTY_ASSETS: BreadAssets = { palette: null, charsets: [], tilemaps: [], sprites: [] }
+const EMPTY_ASSETS: BreadAssets = {
+  palette: null,
+  charsets: [],
+  tilemaps: [],
+  sprites: [],
+  images: []
+}
 
 const GRAPHICS_MODES: readonly GraphicsMode[] = ['TEXT_HIRES', 'TEXT_MULTICOLOR', 'BITMAP_MULTICOLOR']
 
@@ -92,7 +98,8 @@ function normalizeAssets(raw: unknown): BreadAssets {
     palette: typeof a.palette === 'string' ? a.palette : null,
     charsets: Array.isArray(a.charsets) ? a.charsets.filter((s) => typeof s === 'string') : [],
     tilemaps: Array.isArray(a.tilemaps) ? a.tilemaps.filter((s) => typeof s === 'string') : [],
-    sprites: Array.isArray(a.sprites) ? a.sprites.filter((s) => typeof s === 'string') : []
+    sprites: Array.isArray(a.sprites) ? a.sprites.filter((s) => typeof s === 'string') : [],
+    images: Array.isArray(a.images) ? a.images.filter((s) => typeof s === 'string') : []
   }
 }
 
@@ -369,6 +376,8 @@ export function writeAsset(dir: string, kind: AssetKind, rel: string, content: s
     if (!bread.assets.charsets.includes(rel)) bread.assets.charsets.push(rel)
   } else if (kind === 'sprite') {
     if (!bread.assets.sprites.includes(rel)) bread.assets.sprites.push(rel)
+  } else if (kind === 'image') {
+    if (!bread.assets.images.includes(rel)) bread.assets.images.push(rel)
   } else {
     if (!bread.assets.tilemaps.includes(rel)) bread.assets.tilemaps.push(rel)
   }

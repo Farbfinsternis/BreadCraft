@@ -96,7 +96,7 @@ export interface ProjectFile {
 }
 
 /** Asset kinds with project-bound disk IO (ASSET_IO.md). */
-export type AssetKind = 'palette' | 'charset' | 'tilemap' | 'sprite'
+export type AssetKind = 'palette' | 'charset' | 'tilemap' | 'sprite' | 'image'
 
 /**
  * The project-wide graphics mode — the root SSOT chosen at project creation that
@@ -124,6 +124,7 @@ export interface BreadAssets {
   charsets: string[]
   tilemaps: string[]
   sprites: string[]
+  images: string[]
 }
 
 /** A node in the project's file tree (P2.T0b explorer). Paths are project-relative,

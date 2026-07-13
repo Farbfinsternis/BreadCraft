@@ -34,6 +34,7 @@ export interface AssetManifest {
   charsets: string[]
   tilemaps: string[]
   sprites: string[]
+  images: string[]
 }
 
 /** Reads an asset file's text content by its manifest-relative path; null if
@@ -86,6 +87,9 @@ const MAP_W = fmt.MAP_W
 const MAP_H = fmt.MAP_H
 const MAP_CELLS = fmt.MAP_CELLS
 const SPRITE_BYTES = fmt.SPRITE_BYTES
+const IMAGE_BITMAP_BYTES = fmt.IMAGE_BITMAP_BYTES
+const IMAGE_SCREEN_BYTES = fmt.IMAGE_SCREEN_BYTES
+const IMAGE_COLOR_BYTES = fmt.IMAGE_COLOR_BYTES
 
 /** A successfully resolved tilemap: 1000 tile numbers PLUS the parallel per-cell
  *  Color-RAM colours, ready to bake into C. */
@@ -369,6 +373,99 @@ export function resolveSprite(
 
   const { frames, color } = parseSpriteData(rel, text, locale)
   return { kind: 'sprite', id, rel, frames, color }
+}
+
+/** A successfully resolved image: one MC-bitmap screen's four raw pieces, ready for
+ *  `UseImage`/`DrawImage` (B2.T3/T4) to bake and copy into the VIC's bitmap + Screen
+ *  + Color RAM, with the shared background poked into $D021. C64 truth, exactly as the
+ *  `.image` stores it (the editor packed its canvas to this legal shape on save). */
+export interface ResolvedImage {
+  kind: 'image'
+  id: string
+  rel: string
+  /** 8000 bytes: 1000 cells × 8 rows, 2 bits per double-wide MC pixel. */
+  bitmap: Uint8Array
+  /** 1000 bytes: per cell the %01 colour (hi nibble) + %10 colour (lo nibble). */
+  screen: Uint8Array
+  /** 1000 bytes: per cell the %11 colour (lo nibble) — the free 4th colour. */
+  color: Uint8Array
+  /** The shared background colour ($D021, pattern %00) as a C64 index 0–15. */
+  background: number
+}
+
+/**
+ * Resolve an image id (`"title"`) to its raw C64 bitmap bytes. Same strict, eager
+ * contract as resolveCharset/resolveSprite: unknown id / missing file / wrong format
+ * all throw AssetResolveError at resolve time. Reads the `.image`'s four pieces — the
+ * editor's serializeImage truth.
+ */
+export function resolveImage(
+  id: string,
+  manifest: AssetManifest,
+  readFile: AssetReader,
+  locale: Locale = DEFAULT_LOCALE
+): ResolvedImage {
+  const M = messages(locale).resolver
+  const rel = manifest.images.find((s) => relMatches(s, id))
+  if (!rel) {
+    const known = manifest.images.map(idOf)
+    const hint = known.length ? known.join(', ') : M.noneKnown
+    throw new AssetResolveError(M.unknownImage(id, hint))
+  }
+
+  const text = readFile(rel)
+  if (text === null) {
+    throw new AssetResolveError(M.imageFileMissing(rel))
+  }
+
+  return parseImageData(id, rel, text, locale)
+}
+
+/**
+ * Parse the `.image` JSON into three flat byte sections + the background index, from
+ * ONE structural parse (the shared codec). Strict: a wrong-length section, a bad byte,
+ * or an out-of-range background is a hard error (the bake must not poke garbage into
+ * bitmap/Screen/Color RAM). The background defaults to black only when the field is
+ * absent (pre-background files); a present-but-bad value still throws.
+ */
+function parseImageData(id: string, rel: string, text: string, locale: Locale): ResolvedImage {
+  const M = messages(locale).resolver
+  const raw = withFormatError(M.labelImage, rel, () => fmt.parseImage(text, locale))
+
+  const section = (src: number[], expected: number, name: string): Uint8Array => {
+    if (src.length !== expected) {
+      throw new AssetResolveError(M.imageSectionLenWrong(rel, name, expected))
+    }
+    const bytes = new Uint8Array(expected)
+    for (let i = 0; i < expected; i++) {
+      const b = src[i]
+      if (typeof b !== 'number' || b < 0 || b > 255 || !Number.isInteger(b)) {
+        throw new AssetResolveError(M.imageByteBad(rel, name, i))
+      }
+      bytes[i] = b
+    }
+    return bytes
+  }
+
+  const bg = raw.background
+  let background: number
+  if (bg === undefined) {
+    background = fmt.DEFAULT_IMAGE_BACKGROUND
+  } else if (typeof bg === 'number' && Number.isInteger(bg) && bg >= 0 && bg <= 15) {
+    background = bg
+  } else {
+    throw new AssetResolveError(M.imageBackgroundBad(rel))
+  }
+
+  return {
+    kind: 'image',
+    id,
+    rel,
+    bitmap: section(raw.bitmap, IMAGE_BITMAP_BYTES, 'bitmap'),
+    screen: section(raw.screen, IMAGE_SCREEN_BYTES, 'screen'),
+    color: section(raw.color, IMAGE_COLOR_BYTES, 'color'),
+    background
+  }
 }
 
 /**

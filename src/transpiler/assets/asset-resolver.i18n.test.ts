@@ -17,7 +17,8 @@ const manifest = (charsets: string[]): AssetManifest => ({
   palette: null,
   charsets,
   tilemaps: [],
-  sprites: []
+  sprites: [],
+  images: []
 })
 
 describe('asset-resolver diagnostics: localization (S5b part 3)', () => {

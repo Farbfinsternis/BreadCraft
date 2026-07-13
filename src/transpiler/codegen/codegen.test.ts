@@ -64,7 +64,8 @@ function fakeAssets(): AssetContext {
       palette: null,
       charsets: ['main.petscii'],
       tilemaps: ['level1.tilemap'],
-      sprites: ['player.sprite']
+      sprites: ['player.sprite'],
+      images: []
     },
     readFile: (rel: string) => (rel in files ? files[rel] : null)
   }
@@ -1068,7 +1069,7 @@ describe('codegen: UseSprite block allocator (SA2) — honest island ceiling', (
     })
     const files: Record<string, string> = { 'main.petscii': charset, 'player.sprite': sprite }
     return {
-      manifest: { palette: null, charsets: ['main.petscii'], tilemaps: [], sprites: ['player.sprite'] },
+      manifest: { palette: null, charsets: ['main.petscii'], tilemaps: [], sprites: ['player.sprite'], images: [] },
       readFile: (rel) => (rel in files ? files[rel] : null)
     }
   }
@@ -1099,7 +1100,7 @@ describe('codegen: UseSprite block allocator (SA2) — honest island ceiling', (
 
   it('without a charset the island is bigger (bank 0, 32 blocks): 20 frames fit', () => {
     const noCharset: AssetContext = {
-      manifest: { palette: null, charsets: [], tilemaps: [], sprites: ['player.sprite'] },
+      manifest: { palette: null, charsets: [], tilemaps: [], sprites: ['player.sprite'], images: [] },
       readFile: (rel) =>
         rel === 'player.sprite'
           ? JSON.stringify({
@@ -1230,7 +1231,7 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       solid: [1, 5]
     })
     const assets: AssetContext = {
-      manifest: { palette: null, charsets: ['main.petscii'], tilemaps: [], sprites: [] },
+      manifest: { palette: null, charsets: ['main.petscii'], tilemaps: [], sprites: [], images: [] },
       readFile: (rel) => (rel === 'main.petscii' ? charset : null)
     }
     const { code, errors } = gen('UseTileset "main"\nblocked.b = TileSolid(120, 100)', assets)
