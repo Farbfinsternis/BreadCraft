@@ -16,6 +16,7 @@ import {
   cellsInBox,
   type Cell
 } from '../pixel-engine/imageCells'
+import { importImage, IMPORT_W, IMPORT_H } from '../pixel-engine/imageImport'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
 
@@ -388,6 +389,93 @@ async function newImage(): Promise<void> {
   image.newBlank()
 }
 
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+/** Kick off "Import picture": ask before discarding unsaved edits, then open the OS
+ *  file picker. The actual conversion happens in onFilePicked when a file arrives. */
+async function importPicture(): Promise<void> {
+  if (image.dirty) {
+    const ok = await ui.confirm({
+      title: t('image.import'),
+      message: t('image.importDiscardWarn'),
+      confirmLabel: t('image.importDiscardConfirm')
+    })
+    if (!ok) return
+  }
+  fileInputRef.value?.click()
+}
+
+/**
+ * Decode a picked photo/PNG and convert it to a real C64 picture. The IMPURE part
+ * lives here: the file is decoded and cover-crop-resized to 160×200 on an offscreen
+ * <canvas>; the pure importImage() then does the perceptual C64 colour work. The
+ * chosen background becomes the project's shared $D021 (setSlot) so the editor and
+ * the saved bytes agree — every cell is then C64-legal, no clash.
+ */
+async function onFilePicked(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // let the same file be re-picked later
+  if (!file) return
+  try {
+    const rgba = await decodeToRgba(file)
+    const { pixels, background } = importImage(rgba, PAL_RGB, { dither: true })
+    palette.setSlot('background', background) // adopt the picture's shared colour
+    engine.load(pixels.slice())
+    afterMutation()
+    image.setPixels(pixels)
+    // Show the whole imported picture centred, not a leftover zoomed/panned view.
+    // Reset pan explicitly and re-fit on the next frame (after layout has settled).
+    zoom.value = 1
+    panX.value = 0
+    panY.value = 0
+    requestAnimationFrame(() => fitToViewport())
+  } catch {
+    await ui.notify({ title: t('image.import'), message: t('image.importFailed') })
+  }
+}
+
+/**
+ * Decode the picked file, cover-crop it to 8:5, resize to 160×200, return RGBA.
+ * Uses `createImageBitmap` (decodes the Blob straight from memory) rather than an
+ * `<img src=blob:>` — the app's CSP allows `img-src 'self' data:` but not `blob:`,
+ * and createImageBitmap sidesteps img-src entirely so the CSP stays tight.
+ */
+async function decodeToRgba(file: File): Promise<Uint8ClampedArray> {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const cv = document.createElement('canvas')
+    cv.width = IMPORT_W
+    cv.height = IMPORT_H
+    const ctx = cv.getContext('2d')
+    if (!ctx) throw new Error('no 2d context')
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    // Cover-crop the source to the C64 DISPLAY aspect, then squeeze it into the buffer.
+    // The MC bitmap buffer is 160×200, but it's shown 320×200 (pixels are double-wide),
+    // so we frame the source to 8:5 = 1.6 — NOT the 160/200 = 0.8 buffer ratio — and
+    // draw it into 160×200 (the editor doubles the width back on screen).
+    const target = (IMPORT_W * 2) / IMPORT_H // 320/200 = 1.6
+    const w = bitmap.width
+    const h = bitmap.height
+    let sx = 0
+    let sy = 0
+    let sw = w
+    let sh = h
+    if (w / h > target) {
+      sw = Math.round(h * target)
+      sx = Math.round((w - sw) / 2)
+    } else {
+      sh = Math.round(w / target)
+      sy = Math.round((h - sh) / 2)
+    }
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, IMPORT_W, IMPORT_H)
+    return ctx.getImageData(0, 0, IMPORT_W, IMPORT_H).data
+  } finally {
+    bitmap.close()
+  }
+}
+
 /** Save-As: pick folder + name in the project (`.image`), write the current canvas
  *  there and bind to it — the way you make a second, third, … room image. */
 function saveAs(): void {
@@ -514,6 +602,17 @@ onBeforeUnmount(() => {
         <svg class="ico" viewBox="0 0 24 24"><path d="M14 3v5h5M14 3l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M12 11v6M9 14h6" /></svg>
         {{ t('image.new') }}
       </button>
+      <button class="img-reset" :title="t('image.importTitle')" @click="importPicture">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M21 15l-5-5L5 21" /><path d="M21 3H3v18h18V3z" /><circle cx="8.5" cy="8.5" r="1.5" /></svg>
+        {{ t('image.import') }}
+      </button>
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept="image/*"
+        class="img-file-input"
+        @change="onFilePicked"
+      />
       <button class="img-reset" :title="t('saveas.title.image')" @click="saveAs">
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
         {{ t('saveas.save') }}
@@ -646,6 +745,9 @@ onBeforeUnmount(() => {
 }
 .img-bar-spacer {
   flex: 1;
+}
+.img-file-input {
+  display: none;
 }
 
 /* Free / C64-true segmented toggle */

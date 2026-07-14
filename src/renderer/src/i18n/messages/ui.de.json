@@ -245,6 +245,11 @@
   "image.newTitle": "Eine frische, leere Leinwand beginnen — nichts wird gespeichert, bis du auf Speichern unter tippst",
   "image.newDiscardWarn": "Das aktuelle Bild hat ungespeicherte Änderungen. Ein neues beginnen und sie verwerfen?",
   "image.newDiscardConfirm": "Verwerfen & neu beginnen",
+  "image.import": "Importieren",
+  "image.importTitle": "Ein Foto oder PNG importieren und in ein echtes C64-Bild verwandeln (Hintergrund, Dithering und Zell-Farben werden automatisch gewählt)",
+  "image.importDiscardWarn": "Das aktuelle Bild hat ungespeicherte Änderungen. Ein Bild importieren und sie verwerfen?",
+  "image.importDiscardConfirm": "Verwerfen & importieren",
+  "image.importFailed": "Diese Datei konnte nicht als Bild gelesen werden.",
 
   "welcome.newProject": "Neues Projekt",
   "welcome.openProject": "Projekt laden",

@@ -245,6 +245,11 @@
   "image.newTitle": "Start a fresh, empty canvas — nothing is saved until you choose Save as",
   "image.newDiscardWarn": "The current image has unsaved changes. Start a new one and discard them?",
   "image.newDiscardConfirm": "Discard & start new",
+  "image.import": "Import",
+  "image.importTitle": "Import a photo or PNG and convert it into a real C64 picture (background, dither and per-cell colours are chosen for you)",
+  "image.importDiscardWarn": "The current image has unsaved changes. Import a picture and discard them?",
+  "image.importDiscardConfirm": "Discard & import",
+  "image.importFailed": "That file could not be read as an image.",
 
   "welcome.newProject": "New project",
   "welcome.openProject": "Open project",
