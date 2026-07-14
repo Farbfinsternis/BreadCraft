@@ -11,13 +11,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 - **Bild-Editor: Fremdbild importieren (Foto / PNG / KI-Bild → echtes C64-Bild) (BRONZE B2.T2f).**
   Ein neuer **Importieren**-Knopf verwandelt ein beliebiges Bild in ein *echtes*, C64-legales
   Multicolor-Bild: die Datei wird auf 160×200 zugeschnitten/skaliert, im wahrnehmungsnahen
-  **CIELAB**-Raum auf die 16 festen C64-Farben abgebildet, ein globaler Hintergrund gewählt und
-  **jede 8×8-Zelle auf Hintergrund + 3 Farben** gezwungen (die besten drei per Clustering), mit
-  **Floyd–Steinberg-Dithering** für Verläufe. Der gewählte Hintergrund wird zur geteilten
-  Projektfarbe ($D021), sodass das Ergebnis garantiert clash-frei ist. Ehrlich: das Ergebnis ist
-  C64-*ähnlich*, nicht pixelidentisch — feiner Detail-/Verlaufsverlust ist physikalisch. Die
-  Konverter-Pipeline liegt als reine, Vitest-getestete Einheit (`imageImport.ts`, 10 Tests; die
-  Kern-Garantie: **jede Zelle C64-legal**, verlustfreier Round-Trip durch die `.image`-Byte-Ebenen).
+  **CIELAB**-Raum auf die 16 festen C64-Farben abgebildet, **global gedithert** (Standard
+  **Atkinson**, dazu Floyd–Steinberg wählbar) und **erst danach** jede 8×8-Zelle auf Hintergrund
+  + 3 Farben reduziert — global-zuerst vermeidet Zell-Nähte („herausbrechende" Zellen). Der
+  Hintergrund ($D021) wird **inhaltsadaptiv** gewählt (die Farbe mit dem geringsten Reduktions-
+  Schaden) und zur Projektfarbe übernommen, sodass das Ergebnis garantiert clash-frei ist. Ein
+  **Import-Dialog mit Live-Vorschau** lässt Helligkeit / Kontrast / Sättigung + Dither-Kernel vor
+  der Übernahme einstellen. Ehrlich: das Ergebnis ist C64-*ähnlich*, nicht pixelidentisch — feiner
+  Detail-/Verlaufsverlust ist physikalisch. Die Konverter-Pipeline liegt als reine, Vitest-getestete
+  Einheit (`imageImport.ts`, 15 Tests; Kern-Garantie: **jede Zelle C64-legal**, verlustfreier
+  Round-Trip durch die `.image`-Byte-Ebenen).
 - **Bild-Editor: das ehrliche Pro-Zell-Farbmodell (BRONZE B2.T2a).** Der globale 4-Farben-Platzhalter
   weicht dem **vollen 16-Farben-C64-Picker**. Zwei Mal-Modi (Nutzer-Entscheidung 2026-06-28, Newbie-first):
   **Frei** (Default — male mit allen 16 Farben ohne Zell-Grenze, fühlt sich an wie DPaint) und

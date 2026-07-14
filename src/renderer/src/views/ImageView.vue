@@ -16,7 +16,8 @@ import {
   cellsInBox,
   type Cell
 } from '../pixel-engine/imageCells'
-import { importImage, IMPORT_W, IMPORT_H } from '../pixel-engine/imageImport'
+import { IMPORT_W, IMPORT_H } from '../pixel-engine/imageImport'
+import ImageImportModal from '../components/ImageImportModal.vue'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
 
@@ -390,6 +391,9 @@ async function newImage(): Promise<void> {
 }
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
+// The decoded 160×200 RGBA waiting in the knobs modal (null = modal closed).
+const pendingRgba = ref<Uint8ClampedArray | null>(null)
+const showImportModal = ref(false)
 
 /** Kick off "Import picture": ask before discarding unsaved edits, then open the OS
  *  file picker. The actual conversion happens in onFilePicked when a file arrives. */
@@ -406,11 +410,9 @@ async function importPicture(): Promise<void> {
 }
 
 /**
- * Decode a picked photo/PNG and convert it to a real C64 picture. The IMPURE part
- * lives here: the file is decoded and cover-crop-resized to 160×200 on an offscreen
- * <canvas>; the pure importImage() then does the perceptual C64 colour work. The
- * chosen background becomes the project's shared $D021 (setSlot) so the editor and
- * the saved bytes agree — every cell is then C64-legal, no clash.
+ * Decode a picked photo/PNG to a 160×200 RGBA buffer (the IMPURE part: cover-crop +
+ * resize on an offscreen <canvas>), then open the knobs modal for a live C64 preview.
+ * The pure conversion + apply happen in ImageImportModal / applyImport.
  */
 async function onFilePicked(ev: Event): Promise<void> {
   const input = ev.target as HTMLInputElement
@@ -418,21 +420,32 @@ async function onFilePicked(ev: Event): Promise<void> {
   input.value = '' // let the same file be re-picked later
   if (!file) return
   try {
-    const rgba = await decodeToRgba(file)
-    const { pixels, background } = importImage(rgba, PAL_RGB, { dither: true })
-    palette.setSlot('background', background) // adopt the picture's shared colour
-    engine.load(pixels.slice())
-    afterMutation()
-    image.setPixels(pixels)
-    // Show the whole imported picture centred, not a leftover zoomed/panned view.
-    // Reset pan explicitly and re-fit on the next frame (after layout has settled).
-    zoom.value = 1
-    panX.value = 0
-    panY.value = 0
-    requestAnimationFrame(() => fitToViewport())
+    pendingRgba.value = await decodeToRgba(file)
+    showImportModal.value = true
   } catch {
     await ui.notify({ title: t('image.import'), message: t('image.importFailed') })
   }
+}
+
+/** Apply the modal's converted result: adopt its background as the project $D021 (so the
+ *  editor and the saved bytes agree — every cell stays C64-legal), load it, centre the view. */
+function applyImport(result: { pixels: Uint8Array; background: number }): void {
+  showImportModal.value = false
+  pendingRgba.value = null
+  palette.setSlot('background', result.background)
+  engine.load(result.pixels.slice())
+  afterMutation()
+  image.setPixels(result.pixels)
+  // Show the whole imported picture centred, not a leftover zoomed/panned view.
+  zoom.value = 1
+  panX.value = 0
+  panY.value = 0
+  requestAnimationFrame(() => fitToViewport())
+}
+
+function cancelImport(): void {
+  showImportModal.value = false
+  pendingRgba.value = null
 }
 
 /**
@@ -693,6 +706,14 @@ onBeforeUnmount(() => {
         </div>
       </FloatPanel>
     </div>
+
+    <ImageImportModal
+      v-if="showImportModal && pendingRgba"
+      :rgba="pendingRgba"
+      :pal-rgb="PAL_RGB"
+      @apply="applyImport"
+      @cancel="cancelImport"
+    />
   </div>
 </template>
 
