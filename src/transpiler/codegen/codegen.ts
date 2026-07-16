@@ -27,12 +27,14 @@ import {
   resolveTilemap,
   resolveSprite,
   resolvePalette,
+  resolveImage,
   AssetResolveError,
   type AssetManifest,
   type AssetReader,
-  type ResolvedPalette
+  type ResolvedPalette,
+  type ResolvedImage
 } from '../assets'
-import { planMemory, vicD018 } from './memory-map'
+import { planMemory, type MemoryMap } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
 import { seedFontRegion } from '@shared/font-slots'
 import type { Locale } from '@shared/ipc'
@@ -328,6 +330,22 @@ class Generator {
   /** True once a charset has been baked → the $D018/VIC.addr + memory-map #defines
    *  are needed in the header and a tileset is "active" for DrawMap. */
   private activeTileset: string | undefined
+  /** The picture baked by `UseImage` (B2.T3), or undefined. Phase 1 shows ONE picture: it
+   *  is linked straight into the bank's bitmap area, and there is exactly one such area —
+   *  so a second, different `UseImage` is an honest error rather than a silent overwrite. */
+  private activeImage: string | undefined
+  /** The baked picture's id from the UP-FRONT pre-scan (B2.T4). DrawImage validates against
+   *  THIS rather than `activeImage`, so it works inside a function — functions are emitted
+   *  before the top-level, where the UseImage usually sits (the DrawMap trap). */
+  private bakedImageId: string | undefined
+  /** The baked picture's own background colour ($D021), kept for DrawImage to poke. */
+  private imageBackground: number | undefined
+  /** The memory plan, computed UP FRONT (before the walk) from a pre-scan of the program.
+   *  $D018 is emitted mid-walk by UseTileset/UseImage, but the addresses it encodes depend
+   *  on whether the program bakes a picture (the bitmap pushes the charset/screen down) —
+   *  which may be declared later in the file. Planning first keeps ONE truth for the
+   *  addresses the C bakes and the cfg reserves (the two-truths class, Befund 23). */
+  private gfxMap!: MemoryMap
 
   // ---- tile world (M3.T1): SetTile / GetTile / TileAt / TileSolid ----
   /** Any tile-world primitive used → emit the screen memory-map + geometry defines. */
@@ -507,11 +525,50 @@ class Generator {
    *  this budget at the FIRST UseSprite, which may be parsed before UseTileset — so it's
    *  pre-scanned up front, the same shape as programDrawsText. */
   private programUsesCharset(program: Program): boolean {
+    return this.programUsesCommand(program, 'usetileset')
+  }
+
+  /** Does the program bake a picture? The bitmap owns the bank's top half, pushing the
+   *  charset/screen/sprites down (B2.T3) — so the addresses UseTileset bakes depend on a
+   *  UseImage that may appear later in the file. Pre-scanned up front, like the charset. */
+  private programUsesImage(program: Program): boolean {
+    return this.programImageId(program) !== undefined
+  }
+
+  /** The id of the picture this program bakes (`UseImage "titel"`), or undefined.
+   *
+   *  Pre-scanned up front so `DrawImage` works ANYWHERE — including inside a function.
+   *  Functions are emitted before the top-level, so a walk-order check would see no baked
+   *  image yet and reject the very shape this split exists for (a game's GoTitle() showing
+   *  the title again). That's the DrawMap-in-a-function trap; images sidestep it. */
+  private programImageId(program: Program): string | undefined {
+    let id: string | undefined
+    const visit = (node: unknown): void => {
+      if (id !== undefined || node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === 'useimage') {
+        const args = rec.args as Expr[] | undefined
+        const first = args?.[0]
+        if (first && first.kind === 'StringLit') id = first.value
+        return
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+    return id
+  }
+
+  /** Is `name` (lower-case) used as a command anywhere in the program? */
+  private programUsesCommand(program: Program, name: string): boolean {
     let found = false
     const visit = (node: unknown): void => {
       if (found || node === null || typeof node !== 'object') return
       const rec = node as Record<string, unknown>
-      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === 'usetileset') {
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === name) {
         found = true
         return
       }
@@ -562,12 +619,23 @@ class Generator {
     // Whole-program text detection up front (before the walk), so UseTileset can decide
     // whether to seed the Hires font region (F2). DrawText/Color may appear after UseTileset.
     this.willDrawText = this.programDrawsText(program)
-    // Sprite-island block budget up front (SA2): the bank (and so the island size) is fixed
-    // by whether a charset is baked, which may be declared after the first UseSprite.
-    this.spriteBlockBudget = planMemory({
+    // The memory plan up front, from a pre-scan: the walk needs its addresses before the
+    // declarations that shape it are all seen. UseTileset/UseImage emit $D018 mid-walk, and
+    // the sprite-block allocator (SA2) needs the island budget at the FIRST UseSprite —
+    // which may be parsed before the UseTileset/UseImage that decides the layout.
+    // `usesSprites: true` is deliberate: sprites shift no address here (they sit BELOW the
+    // charset in both bank-1 layouts), they only add the island — so asking for it up front
+    // yields the same addresses while giving the allocator a budget to check against. The
+    // final plan below re-asks with what the walk actually found (that one drives the cfg).
+    // Which picture the program bakes, up front: DrawImage checks against this, so it may
+    // sit inside a function that the codegen emits before it ever reaches the UseImage.
+    this.bakedImageId = this.programImageId(program)
+    this.gfxMap = planMemory({
       usesCharset: this.programUsesCharset(program),
-      usesSprites: true
-    }).spriteBlocksAvail
+      usesSprites: true,
+      usesImage: this.bakedImageId !== undefined
+    })
+    this.spriteBlockBudget = this.gfxMap.spriteBlocksAvail
     // Slot → frame count, for the best-effort out-of-range warn on `Sprite n,x,y,frame` (SA4).
     this.collectSpriteFrameCounts(program)
 
@@ -595,7 +663,8 @@ class Generator {
     // config, so the cfg's reserved regions and the C's pointers can never drift.
     const map = planMemory({
       usesCharset: !!this.activeTileset,
-      usesSprites: this.usesSpriteData
+      usesSprites: this.usesSpriteData,
+      usesImage: !!this.activeImage
     })
 
     const header = [
@@ -612,10 +681,19 @@ class Generator {
     if (this.activeTileset) {
       header.push(`#define BC_CHARSET ((unsigned char*)${hx(map.charsetAddr!)}) /* charset copy target */`)
     }
-    // BC_SCREEN is needed for the tile grid AND for DrawText (which writes screen codes
-    // straight into it). The geometry defines below are only the tile-collision origin.
-    if (this.activeTileset || this.usesTileWorld || this.usesDrawText) {
+    // BC_SCREEN is needed for the tile grid, for DrawText (which writes screen codes
+    // straight into it) AND for a picture (in BITMAP mode the same page holds two of the
+    // three cell colours). The geometry defines below are only the tile-collision origin.
+    if (this.activeTileset || this.usesTileWorld || this.usesDrawText || this.activeImage) {
       header.push(`#define BC_SCREEN  ((unsigned char*)${hx(map.screenAddr)}) /* 40x25 screen RAM */`)
+    }
+    // A picture's third cell colour lives in Color-RAM, which is I/O at a FIXED address —
+    // it moves with neither the VIC bank nor the memory plan (B2.T3).
+    if (this.activeImage) {
+      header.push(
+        `#define BC_BITMAP  ((unsigned char*)${hx(map.bitmapAddr!)}) /* MC bitmap matrix (linked, not copied) */`,
+        '#define BC_COLOR_RAM ((unsigned char*)0xD800) /* Color RAM — I/O, fixed */'
+      )
     }
     if (this.activeTileset || this.usesTileWorld) {
       header.push(
@@ -1411,6 +1489,12 @@ class Generator {
       case 'usetileset':
         this.genUseTileset(s)
         break
+      case 'useimage':
+        this.genUseImage(s)
+        break
+      case 'drawimage':
+        this.genDrawImage(s)
+        break
       case 'drawmap':
         this.genDrawMap(s)
         break
@@ -1582,25 +1666,34 @@ class Generator {
     // use so a tile on an empty low slot never gains a stray letter.
     if (this.willDrawText) bytes = seedFontRegion(bytes)
 
-    // B1.T4: the charset lives in bank 1 ($7000). It's copied there at runtime from a const
-    // in RODATA — direct-linking into the bank would force the .prg to pad up from $0801 to
-    // $7000 (huge); copying keeps the const contiguous with the code, so the .prg stays
-    // compact. The low RAM that holds the const is now plentiful (bank 1 freed it), so the
-    // copy's ~2KB source costs little. Phase 1 has one charset (single activeTileset).
+    // B1.T4: the charset lives at the top of bank 1. It's copied there at runtime from a
+    // const in RODATA — direct-linking into the bank would force the .prg to pad up from
+    // $0801 to the charset (huge); copying keeps the const contiguous with the code, so the
+    // .prg stays compact. The low RAM that holds the const is now plentiful (bank 1 freed
+    // it), so the copy's ~2KB source costs little. Phase 1 has one charset (activeTileset).
+    //
+    // Bake ONCE per id, but emit the copy + $D018 on EVERY call: a program that switches
+    // modes (a bitmap title screen, then back to the tile game) calls UseTileset again to
+    // point the VIC back at text — re-baking would emit a second identical `const` and cc65
+    // would reject the redefinition. Same shape as genUseImage.
     const dataName = `tileset_${safeAssetName(id)}`
-    this.bakedData.push(
-      `static const unsigned char ${dataName}[${bytes.length}] = {`,
-      byteRows(bytes),
-      '};'
-    )
+    if (this.activeTileset !== id) {
+      this.bakedData.push(
+        `static const unsigned char ${dataName}[${bytes.length}] = {`,
+        byteRows(bytes),
+        '};'
+      )
+    }
     this.activeTileset = id
 
     this.emit(`/* UseTileset "${id}" */`)
     this.emit(`{ unsigned int _i; for (_i = 0; _i < ${bytes.length}; ++_i) BC_CHARSET[_i] = ${dataName}[_i]; }`)
     // Point the VIC at the screen + charset positions within the bank (the CIA2 bank switch
-    // itself runs once in the setup block). The value comes from the same layout the memory
-    // plan uses (vicD018), so $D018 and the copy target agree.
-    this.emit(`VIC.addr = ${hx(vicD018(), 2)};`)
+    // itself runs once in the setup block). The value comes from the memory plan, so $D018
+    // and the copy target can't disagree. In a program that also shows a picture this is
+    // the TEXT-mode value — UseImage writes the bitmap one, and whichever ran last wins,
+    // which is exactly the mode the program is in.
+    this.emit(`VIC.addr = ${hx(this.gfxMap.d018, 2)};`)
     // MC-text shared colours from the project palette (the "00/01/10" pairs; the
     // "11" pair is per-cell Color-RAM). Same registers the sprites share — one
     // project-wide truth (memory breadcraft-project-palette).
@@ -1608,6 +1701,121 @@ class Generator {
     this.emit(`VIC.bgcolor[0] = ${colorConst(pal.background)};`)
     this.emit(`VIC.bgcolor[1] = ${colorConst(pal.shared1)};`)
     this.emit(`VIC.bgcolor[2] = ${colorConst(pal.shared2)};`)
+  }
+
+  /**
+   * `UseImage "id"` → bake a painted Multicolor picture INTO the program (B2.T3/T4).
+   *
+   * The BAKE half of the Use/Draw pair the language already uses everywhere (UseTileset →
+   * DrawMap, UseSprite → Sprite): UseImage makes the picture part of the program, DrawImage
+   * puts it on the screen. The split isn't cosmetic — it falls exactly on the real work.
+   * This emits NO runtime code (the linker does the placing), which is why the SSOT calls
+   * it `cheap`; DrawImage carries the copying and is `expensive`.
+   *
+   * Unlike the charset (B1.T4), the 8000-byte bitmap matrix is LINKED STRAIGHT INTO the
+   * bank at $6000 instead of being copied from a const: a const source would cost the
+   * picture a SECOND time in low RAM (~10KB of ~18.5KB — half the pool for one image),
+   * and the bitmap has exactly one legal home per bank anyway. The linker puts it there
+   * via the BC_BITMAP segment (memory-map's IMAGE cfg) and the VIC reads it where it
+   * lies — no C code ever touches it. The `const` exists purely to carry the bytes into
+   * the .prg; NON-static, because external linkage is what makes cc65 emit an array that
+   * nothing references (the B1.T2 lesson).
+   *
+   * The two 1000-byte colour planes DO travel as consts, for DrawImage to copy: Color-RAM
+   * is I/O ($D800), which a .prg can't be loaded into, and the screen page must be
+   * re-writable because a tile game overwrites it.
+   */
+  private genUseImage(s: CommandStmt): void {
+    const id = this.stringArg(s.args[0])
+    if (!id) {
+      this.err(this.M.useImageName(), s)
+      return
+    }
+    if (!this.assets) {
+      this.err(this.M.useImageNoProject(id), s)
+      return
+    }
+    // One bitmap area per bank → one picture per program. A second, DIFFERENT picture would
+    // silently overwrite the first, so say so instead. (Streaming more pictures from disk is
+    // the honest answer and a decided SILBER block.) The same id again is fine and useful:
+    // it re-shows the picture.
+    if (this.activeImage && this.activeImage !== id) {
+      this.err(this.M.useImageTwice(this.activeImage, id), s)
+      return
+    }
+    let img: ResolvedImage
+    try {
+      img = resolveImage(id, this.assets.manifest, this.assets.readFile, this.locale)
+    } catch (e) {
+      this.err(e instanceof AssetResolveError ? e.message : String(e), s)
+      return
+    }
+
+    const base = safeAssetName(id)
+    if (!this.activeImage) {
+      this.bakedData.push(
+        '#pragma rodata-name (push, "BC_BITMAP")',
+        `const unsigned char img_${base}[${img.bitmap.length}] = {`,
+        byteRows(img.bitmap),
+        '};',
+        '#pragma rodata-name (pop)',
+        `static const unsigned char imgscr_${base}[${img.screen.length}] = {`,
+        byteRows(img.screen),
+        '};',
+        `static const unsigned char imgcol_${base}[${img.color.length}] = {`,
+        byteRows(img.color),
+        '};'
+      )
+      // The picture's own background (pattern %00) — the import chose it to make every cell
+      // legal, so it is the picture's truth, not the project palette's. DrawImage pokes it.
+      this.imageBackground = img.background
+    }
+    this.activeImage = id
+    // A pure build-time act: the bytes are in the .prg and the linker placed them. There is
+    // nothing to run — which is exactly why the SSOT calls UseImage `cheap`. The comment
+    // marks the spot in the C view; DrawImage does the visible work.
+    this.emit(`/* UseImage "${id}" — baked, linked at ${hx(this.gfxMap.bitmapAddr!)}; DrawImage shows it */`)
+  }
+
+  /**
+   * `DrawImage "id"` → show the baked picture (B2.T4).
+   *
+   * The whole runtime cost of a picture lives here: point the VIC at the bitmap + screen
+   * page ($D018 — the piece `Graphics` deliberately leaves out, exactly like UseTileset's),
+   * set the shared background ($D021), and copy the two 1000-byte colour planes into the
+   * screen page and Color-RAM. `expensive` in the SSOT, and honestly so — ~2000 bytes moved.
+   *
+   * The 8000-byte matrix is NOT copied; UseImage linked it into place. That's why showing
+   * the picture AGAIN is cheap: a game returning to its title screen only restores the
+   * colours the tile world overwrote — the bitmap itself was never touched.
+   *
+   * Needs a baked picture, else an honest error (exactly like DrawMap without UseTileset).
+   * The check runs against the PRE-SCANNED id rather than walk-order state, so DrawImage
+   * also works inside a function — where a game's GoTitle() naturally puts it.
+   */
+  private genDrawImage(s: CommandStmt): void {
+    const id = this.stringArg(s.args[0])
+    if (!id) {
+      this.err(this.M.drawImageName(), s)
+      return
+    }
+    if (!this.bakedImageId) {
+      this.err(this.M.drawImageNoImage(id), s)
+      return
+    }
+    if (this.bakedImageId !== id) {
+      this.err(this.M.drawImageOther(this.bakedImageId, id), s)
+      return
+    }
+
+    const base = safeAssetName(id)
+    this.emit(`/* DrawImage "${id}" */`)
+    this.emit(`VIC.addr = ${hx(this.gfxMap.d018Bitmap!, 2)};`)
+    this.emit(`VIC.bgcolor[0] = ${colorConst(this.imageBackground ?? 0)};`)
+    this.emit(
+      `{ unsigned int _i; for (_i = 0; _i < 1000; ++_i) { ` +
+        `BC_SCREEN[_i] = imgscr_${base}[_i]; BC_COLOR_RAM[_i] = imgcol_${base}[_i]; } }`
+    )
   }
 
   /**

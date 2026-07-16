@@ -38,7 +38,7 @@
   "param.usesprite.id": "Name of the sprite graphic from your project.",
   "cmd.usetileset": "Loads a character set as your tile palette — 256 tiles of 8×8 pixels to build your world from.",
   "param.usetileset.id": "Name of the tileset from your project.",
-  "cmd.useimage": "Makes a full-screen image ready (bitmap mode).",
+  "cmd.useimage": "Shows a painted full-screen image (bitmap mode). A program can show ONE image — the C64 has exactly one bitmap slot per graphics bank.",
   "param.useimage.id": "Name of the image from your project.",
   "cmd.drawimage": "Paints a whole image to the screen — expensive, so for setup, not every frame.",
   "param.drawimage.id": "Name of the image from your project.",

@@ -7,6 +7,40 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Ein gemaltes Bild im Programm zeigen: `UseImage` + `DrawImage` (BRONZE B2.T3+T4).** Der
+  Bild-Editor konnte bisher nur malen — jetzt bringt `Graphics BITMAP, MULTICOLOR` +
+  `UseImage "titel"` + `DrawImage "titel"` das Bild auf den echten C64-Schirm. Die zwei Wörter
+  folgen dem Paar, das die Sprache überall benutzt: **`UseImage` backt das Bild ins Programm**
+  (wie `UseTileset`), **`DrawImage` zeigt es** (wie `DrawMap`). Das ist nicht Kosmetik, sondern
+  fällt genau auf die echte Arbeit: `UseImage` erzeugt **keinen einzigen Laufzeit-Befehl** —
+  der Linker legt das Bild hin — während `DrawImage` die ~2000 Byte Farbe kopiert. Das Bild
+  wird nämlich **direkt an seinen Platz geladen** statt kopiert und liegt so nur **einmal** im
+  Speicher (eine Kopie hätte es ein zweites Mal gekostet — ~10 KB, die Hälfte des Code-Platzes,
+  für ein einziges Bild). Darum ist erneutes Anzeigen billig: kehrt ein Spiel zum Titelbild
+  zurück, stellt `DrawImage` nur die Farben wieder her, die die Kachel-Welt überschrieben hat —
+  die Bitmap selbst hat unangetastet überlebt. `DrawImage` ohne `UseImage` ist ein ehrlicher
+  Fehler, genau wie `DrawMap` ohne `UseTileset`.
+- **Ehrlicher Preis, ehrlich sichtbar.** Eine Multicolor-Bitmap darf pro Grafik-Bank nur an
+  einem von zwei Plätzen liegen; BreadCraft legt sie in die obere Bank-Hälfte und schiebt
+  Zeichensatz, Sprites und Screen darunter. Folge: der Code-Platz sinkt in einem Bild-Projekt
+  von ~26 KB auf ~18,5 KB — die RAM-Bar misst gegen die neue, tiefere Decke, sagt also von
+  selbst die Wahrheit. Und weil es pro Bank genau **einen** Bitmap-Platz gibt, ist ein
+  zweites, anderes Bild ein **ehrlicher Fehler** statt eines stillen Überschreibens; der Text
+  nennt den echten Ausweg (Nachladen von Diskette). Verifiziert nicht nur per Vitest, sondern
+  am echten Link: die 8000 Bitmap-Bytes landen byte-genau auf `$6000` (die Falle aus B1.T2,
+  wo der Linker ein Asset still 3 KB zu tief legte), und ITD linkt byte-identisch weiter.
+- **Weiter offen:** das Freischalten des Bitmap-Projektmodus (B2.T6) und eine Koordinaten-Anzeige
+  im Bild-Editor (Bildschirm-Koordinaten statt Editor-Koordinaten).
+
+### Behoben
+- **`UseTileset` zweimal aufzurufen zerbrach den Build.** Der Zeichensatz wurde bei jedem
+  Aufruf erneut eingebacken — zwei gleichnamige Konstanten, die cc65 als Doppeldefinition
+  ablehnt. Jetzt wird pro Zeichensatz **einmal** gebacken und bei jedem Aufruf nur noch
+  kopiert und der VIC umgestellt. Das braucht jedes Programm, das die Betriebsart wechselt:
+  wer von einem Bitmap-Titelbild zurück ins Kachel-Spiel geht, ruft `UseTileset` erneut auf,
+  um den VIC wieder auf den Zeichensatz zu richten.
+
 ## [0.2.14] - 2026-07-16
 
 ### Hinzugefügt

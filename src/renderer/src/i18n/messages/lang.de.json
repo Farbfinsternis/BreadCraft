@@ -38,7 +38,7 @@
   "param.usesprite.id": "Name der Sprite-Grafik aus Deinem Projekt.",
   "cmd.usetileset": "Lädt einen Zeichensatz als Tile-Palette — 256 Kacheln à 8×8 Pixel, aus denen Deine Welt gebaut wird.",
   "param.usetileset.id": "Name des Tilesets aus Deinem Projekt.",
-  "cmd.useimage": "Legt ein Vollbild bereit (Bitmap-Modus).",
+  "cmd.useimage": "Zeigt ein gemaltes Vollbild (Bitmap-Modus). Ein Programm kann EIN Bild zeigen — der C64 hat pro Grafik-Bank genau einen Bitmap-Platz.",
   "param.useimage.id": "Name des Bildes aus Deinem Projekt.",
   "cmd.drawimage": "Malt ein ganzes Bild auf den Schirm — teuer, also fürs Setup, nicht für jeden Frame.",
   "param.drawimage.id": "Name des Bildes aus Deinem Projekt.",

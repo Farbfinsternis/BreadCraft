@@ -6,7 +6,7 @@ import { planMemory, ramInfo, parseMapSegments, ramInfoFromMap, ramInfoOverflow 
 
 describe('memory-map planner (STAHL S1a)', () => {
   it('a graphics-less project keeps the full RAM (no reserved island, no cap)', () => {
-    const m = planMemory({ usesCharset: false, usesSprites: false })
+    const m = planMemory({ usesCharset: false, usesSprites: false, usesImage: false })
     expect(m.charsetAddr).toBeNull()
     expect(m.spritesAddr).toBeNull()
     // MAIN runs to HIMEM, BSS is the stock after-image region — nothing carved out.
@@ -17,7 +17,7 @@ describe('memory-map planner (STAHL S1a)', () => {
   })
 
   it('a tileset takes the bank-1 layout: charset $7000, MAIN to $7000, BSS at $8000 (B1.T4)', () => {
-    const m = planMemory({ usesCharset: true, usesSprites: false })
+    const m = planMemory({ usesCharset: true, usesSprites: false, usesImage: false })
     expect(m.bank).toBe(1)
     expect(m.charsetAddr).toBe(0x7000)
     expect(m.spritesAddr).toBeNull()
@@ -31,7 +31,7 @@ describe('memory-map planner (STAHL S1a)', () => {
   })
 
   it('sprites-only stays in bank 0: reserves $3800 and caps MAIN there (no charset)', () => {
-    const m = planMemory({ usesCharset: false, usesSprites: true })
+    const m = planMemory({ usesCharset: false, usesSprites: true, usesImage: false })
     expect(m.bank).toBe(0)
     expect(m.charsetAddr).toBeNull()
     expect(m.spritesAddr).toBe(0x3800)
@@ -42,7 +42,7 @@ describe('memory-map planner (STAHL S1a)', () => {
   })
 
   it('charset + sprites: bank 1, charset $7000 caps MAIN, sprites $7C00 above it', () => {
-    const m = planMemory({ usesCharset: true, usesSprites: true })
+    const m = planMemory({ usesCharset: true, usesSprites: true, usesImage: false })
     expect(m.bank).toBe(1)
     expect(m.charsetAddr).toBe(0x7000)
     expect(m.spritesAddr).toBe(0x7c00)
@@ -52,14 +52,14 @@ describe('memory-map planner (STAHL S1a)', () => {
   })
 
   it('exposes the layout (bank/screen/sprite-ptr/$D018) from one plan (B1.T3/T4)', () => {
-    const m = planMemory({ usesCharset: true, usesSprites: true })
+    const m = planMemory({ usesCharset: true, usesSprites: true, usesImage: false })
     expect(m.bank).toBe(1)
     expect(m.ciaBankBits).toBe(0b10) // CIA2 bank bits, inverted: bank 1 → %10
     expect(m.screenAddr).toBe(0x7800)
     expect(m.spritePtrAddr).toBe(0x7bf8) // screen page + $3F8
     expect(m.d018).toBe(0xec) // screen $7800 (bits 4-7) + charset $7000 (bits 1-3) within bank 1
     // A graphics-less program stays in bank 0 with the KERNAL screen, no bank switch.
-    const none = planMemory({ usesCharset: false, usesSprites: false })
+    const none = planMemory({ usesCharset: false, usesSprites: false, usesImage: false })
     expect(none.bank).toBe(0)
     expect(none.screenAddr).toBe(0x0400)
     expect(none.charsetAddr).toBeNull()
@@ -67,18 +67,71 @@ describe('memory-map planner (STAHL S1a)', () => {
 
   it('spriteBlocksAvail: bank 1 → 16 blocks, bank 0 → 32, no sprites → 0 (pointer-swap pool, SA1)', () => {
     // Bank 1 (charset): the island is $7C00 up to the bank top $8000 → 16 blocks of 64 B.
-    expect(planMemory({ usesCharset: true, usesSprites: true }).spriteBlocksAvail).toBe(16)
+    expect(planMemory({ usesCharset: true, usesSprites: true, usesImage: false }).spriteBlocksAvail).toBe(16)
     // Bank 0 (sprites-only): the reserved 2KB region → 32 blocks.
-    expect(planMemory({ usesCharset: false, usesSprites: true }).spriteBlocksAvail).toBe(32)
+    expect(planMemory({ usesCharset: false, usesSprites: true, usesImage: false }).spriteBlocksAvail).toBe(32)
     // No sprites → no island, no blocks (neither layout).
-    expect(planMemory({ usesCharset: true, usesSprites: false }).spriteBlocksAvail).toBe(0)
-    expect(planMemory({ usesCharset: false, usesSprites: false }).spriteBlocksAvail).toBe(0)
+    expect(planMemory({ usesCharset: true, usesSprites: false, usesImage: false }).spriteBlocksAvail).toBe(0)
+    expect(planMemory({ usesCharset: false, usesSprites: false, usesImage: false }).spriteBlocksAvail).toBe(0)
   })
 
   it('mainCeiling: charset → $7000 (bank 1), sprites-only → $3800, graphics-less → $D000', () => {
-    expect(planMemory({ usesCharset: true, usesSprites: true }).mainCeiling).toBe(0x7000)
-    expect(planMemory({ usesCharset: false, usesSprites: true }).mainCeiling).toBe(0x3800)
-    expect(planMemory({ usesCharset: false, usesSprites: false }).mainCeiling).toBe(0xd000)
+    expect(planMemory({ usesCharset: true, usesSprites: true, usesImage: false }).mainCeiling).toBe(0x7000)
+    expect(planMemory({ usesCharset: false, usesSprites: true, usesImage: false }).mainCeiling).toBe(0x3800)
+    expect(planMemory({ usesCharset: false, usesSprites: false, usesImage: false }).mainCeiling).toBe(0xd000)
+  })
+})
+
+describe('memory-map: the IMAGE layout (BRONZE B2.T3)', () => {
+  it("a picture owns the bank's top half; charset/sprites/screen move below it", () => {
+    const m = planMemory({ usesCharset: true, usesSprites: true, usesImage: true })
+    expect(m.bank).toBe(1)
+    expect(m.bitmapAddr).toBe(0x6000) // the bank's middle — one of only two legal spots
+    expect(m.charsetAddr).toBe(0x5000) // pushed down out of the bitmap's way (was $7000)
+    expect(m.spritesAddr).toBe(0x5800)
+    expect(m.screenAddr).toBe(0x5c00)
+    // Nothing below the bitmap may reach into it, and the matrix ends at the bank's top.
+    expect(m.screenAddr + 1000).toBeLessThanOrEqual(m.bitmapAddr!)
+    expect(m.bitmapAddr! + 8000).toBeLessThanOrEqual(0x8000)
+  })
+
+  it('the honest price: MAIN caps under the lowest graphics, 8KB below a picture-less project', () => {
+    const withImage = planMemory({ usesCharset: true, usesSprites: true, usesImage: true })
+    const without = planMemory({ usesCharset: true, usesSprites: true, usesImage: false })
+    expect(withImage.mainCeiling).toBe(0x5000) // the charset caps MAIN
+    expect(without.mainCeiling).toBe(0x7000)
+    expect(without.mainCeiling - withImage.mainCeiling).toBe(0x2000) // 8KB of code space, gone
+    // A picture with no tiles keeps more: only the screen page is in the way.
+    expect(planMemory({ usesCharset: false, usesSprites: false, usesImage: true }).mainCeiling).toBe(0x5c00)
+    expect(planMemory({ usesCharset: false, usesSprites: true, usesImage: true }).mainCeiling).toBe(0x5800)
+  })
+
+  it('$D018: one register, two modes — text points at the charset, bitmap at the matrix', () => {
+    const m = planMemory({ usesCharset: true, usesSprites: false, usesImage: true })
+    // Screen $5C00 = page 7 → bits 4-7 = 7 in both values.
+    expect(m.d018).toBe(0x74) // + charset $5000 (offset $1000 → bits 1-3 = %010)
+    expect(m.d018Bitmap).toBe(0x78) // + bit 3 alone = bitmap at bank + $2000
+    // No picture → no bitmap value to write.
+    expect(planMemory({ usesCharset: true, usesSprites: false, usesImage: false }).d018Bitmap).toBeNull()
+  })
+
+  it('the cfg fills every byte up to the bitmap — ld65 pads no address gaps (the B1.T2 lesson)', () => {
+    const m = planMemory({ usesCharset: true, usesSprites: true, usesImage: true })
+    expect(m.cfg).toContain(
+      'MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = $5000 - __HEADER_LAST__, fill = yes;'
+    )
+    // The filler spans the charset/sprite/screen area: $5000 → $6000.
+    expect(m.cfg).toContain('GFXGAP:   file = %O,               start = $5000,           size = $1000, fill = yes;')
+    expect(m.cfg).toContain('BITMAP:   file = %O, define = yes, start = $6000,           size = $1F40;')
+    expect(m.cfg).toContain('BC_BITMAP: load = BITMAP,   type = ro;')
+    expect(m.cfg).toContain('HIGH:     file = "", define = yes, start = $8000,') // big arrays still high
+  })
+
+  it('sprite blocks shrink honestly: the island now runs $5800–$5C00 (16 blocks)', () => {
+    const m = planMemory({ usesCharset: true, usesSprites: true, usesImage: true })
+    expect(m.spriteBlocksAvail).toBe(16)
+    expect(m.spriteBlock0).toBe((0x5800 - 0x4000) / 64) // bank-relative block = 96
+    expect(m.spritePtrAddr).toBe(0x5c00 + 0x3f8)
   })
 })
 
@@ -306,19 +359,19 @@ describe('ramInfoOverflow (B1.T5)', () => {
 
 describe('planMemory: high-pool exposure (B1.T5)', () => {
   it('bank-1 charset → high pool at $8000–$C800', () => {
-    const m = planMemory({ usesCharset: true, usesSprites: false })
+    const m = planMemory({ usesCharset: true, usesSprites: false, usesImage: false })
     expect(m.highBase).toBe(0x8000)
     expect(m.highCeiling).toBe(0xc800)
   })
 
   it('bank-0 sprites-only → high pool at $4000 (above the sprite island)', () => {
-    const m = planMemory({ usesCharset: false, usesSprites: true })
+    const m = planMemory({ usesCharset: false, usesSprites: true, usesImage: false })
     expect(m.highBase).toBe(0x4000)
     expect(m.highCeiling).toBe(0xc800)
   })
 
   it('graphics-less → no high pool (BSS is contiguous with code, one bar)', () => {
-    const m = planMemory({ usesCharset: false, usesSprites: false })
+    const m = planMemory({ usesCharset: false, usesSprites: false, usesImage: false })
     expect(m.highBase).toBeNull()
   })
 })

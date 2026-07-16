@@ -40,6 +40,27 @@ const B1_SCREEN = B1_BASE + 0x3800 // $7800
 const B1_SPRITES = B1_BASE + 0x3c00 // $7C00
 const B1_BSS = 0x8000 // BSS (big arrays) above the $4000–$7FFF graphics bank
 
+// Bank-1 IMAGE layout (B2.T3). A Multicolor BITMAP can only sit at the bank's START or its
+// MIDDLE — the VIC offers exactly two positions ($D018 bit 3), nothing else. We take the
+// MIDDLE ($6000), so the 8000-byte matrix ends at the bank's top ($7F3F) and leaves the
+// bank's lower half for the char-mode graphics a game still needs (a title picture usually
+// sits in FRONT of a tile game). Consequence: charset/sprites/screen move DOWN out of the
+// bitmap's way, and MAIN caps under them (~18.5KB instead of ~26KB) — the honest price of
+// a picture, shown on the RAM bar.
+//
+// The bitmap is LINKED STRAIGHT INTO the bank (not copied from a const like the charset,
+// B1.T4). At 8000 bytes a const source would cost the picture a SECOND time in low RAM
+// (~10KB of ~18.5KB — half the pool, for one image). Linking it in place costs zero RAM;
+// the price is .prg padding (file size only, see the GFXGAP filler below). Only the 2000
+// bytes of colour data still travel as consts — Color-RAM is I/O ($D800) and can't be
+// loaded into, and the screen nibbles must survive a tile game overwriting the page.
+const B1_BITMAP = B1_BASE + 0x2000 // $6000 — the bank's middle; 8000 B up to $7F3F
+const B1_IMG_CHARSET = B1_BASE + 0x1000 // $5000 — 2KB, $0800-aligned, clear of the bitmap
+const B1_IMG_SPRITES = B1_BASE + 0x1800 // $5800 — 16 blocks up to the screen page
+const B1_IMG_SCREEN = B1_BASE + 0x1c00 // $5C00 — 1000 B, $0400-aligned
+/** The MC bitmap matrix: 320×200 bits = 1000 cells × 8 rows. */
+const BITMAP_BYTES = 8000
+
 // Bank-0 layout (no custom charset). KERNAL screen + ROM font; a sprites-only program
 // reserves a copy-target island just under $4000.
 const B0_SCREEN = 0x0400
@@ -52,11 +73,13 @@ function d018For(screenAddr: number, charsetAddr: number, bankBase: number): num
   return (((screenAddr - bankBase) / 0x0400) << 4) | (((charsetAddr - bankBase) / 0x0800) << 1)
 }
 
-/** The VIC.addr value for a charset program. A custom charset always uses the bank-1
- *  layout (B1.T4), so this single value is what genUseTileset emits; it equals the plan's
- *  `d018` field. Bank 1, screen $7800, charset $7000 → $EC. */
-export function vicD018(): number {
-  return d018For(B1_SCREEN, B1_CHARSET, B1_BASE)
+/** The $D018 value for BITMAP mode: screen position (bits 4–7, as in text mode) + the
+ *  bitmap base (bit 3 alone — 0 = bank start, 1 = bank + $2000). The charset bits 1–2 are
+ *  don't-care while the VIC draws a bitmap, so one register serves both modes at different
+ *  times: `UseTileset` writes the text value, `UseImage` the bitmap one. */
+function d018BitmapFor(screenAddr: number, bitmapAddr: number, bankBase: number): number {
+  const screenBits = ((screenAddr - bankBase) / 0x0400) << 4
+  return screenBits | (bitmapAddr - bankBase === 0x2000 ? 0x08 : 0x00)
 }
 
 export interface MemoryUse {
@@ -64,6 +87,9 @@ export interface MemoryUse {
   usesCharset: boolean
   /** Sprite shapes are baked → they need a 64-byte-aligned copy-target block. */
   usesSprites: boolean
+  /** A picture is baked (`UseImage`) → the bank makes room for the 8000-byte bitmap
+   *  matrix, and everything else moves below it (B2.T3). */
+  usesImage: boolean
 }
 
 export interface MemoryMap {
@@ -83,12 +109,18 @@ export interface MemoryMap {
    *  sprites. Pointer-swap shares this pool across ALL sprites (one block per FRAME), so a
    *  6-frame walk cycle draws 6 blocks — an honest build error replaces a runtime corruption. */
   spriteBlocksAvail: number
-  /** The $D018 / VIC.addr value placing screen + charset within the bank. */
+  /** The $D018 / VIC.addr value placing screen + charset within the bank (TEXT mode). */
   d018: number
+  /** The $D018 value placing screen + bitmap within the bank (BITMAP mode), or null if
+   *  the project bakes no picture. Written by `UseImage`, where `d018` is text-mode's. */
+  d018Bitmap: number | null
   /** The charset's runtime copy-target address, or null if the project uses none. */
   charsetAddr: number | null
   /** The sprite-data block base address, or null if the project uses none. */
   spritesAddr: number | null
+  /** The bitmap matrix's address — the picture is LINKED here, not copied — or null if
+   *  the project bakes no picture. */
+  bitmapAddr: number | null
   /** The address the loaded program image must stay below (the RAM health-bar measures
    *  fullness against this, STAHL S1c): the charset ($7000, bank 1), the sprite island
    *  ($3800, bank 0 sprites-only), or the top of RAM ($D000, graphics-less). */
@@ -103,10 +135,41 @@ export interface MemoryMap {
   cfg: string
 }
 
-/** Plan the C64 memory map for a project from what it actually uses. A custom charset
- *  takes the bank-1 layout (the big-RAM move, B1.T4); otherwise bank 0. */
+/** Plan the C64 memory map for a project from what it actually uses. A picture takes the
+ *  bank-1 IMAGE layout (the bitmap owns the bank's top half, B2.T3); a custom charset alone
+ *  takes the plain bank-1 layout (the big-RAM move, B1.T4); otherwise bank 0. */
 export function planMemory(use: MemoryUse): MemoryMap {
+  if (use.usesImage) return planBank1Image(use)
   return use.usesCharset ? planBank1(use) : planBank0(use)
+}
+
+/** Bank-1 with a picture: bitmap $6000–$7F3F (linked in place), everything else pushed
+ *  below it. MAIN caps under the LOWEST thing the bank holds — charset, else sprites,
+ *  else the screen page. */
+function planBank1Image(use: MemoryUse): MemoryMap {
+  const charsetAddr = use.usesCharset ? B1_IMG_CHARSET : null
+  const spritesAddr = use.usesSprites ? B1_IMG_SPRITES : null
+  const ceiling = charsetAddr ?? spritesAddr ?? B1_IMG_SCREEN
+  return {
+    bank: B1_BANK,
+    ciaBankBits: B1_BANK ^ 0b11,
+    screenAddr: B1_IMG_SCREEN,
+    spritePtrAddr: B1_IMG_SCREEN + SPRITE_PTR_OFFSET,
+    spriteBlock0: spritesAddr !== null ? (spritesAddr - B1_BASE) / SPRITE_BLOCK : null,
+    // The island runs from the sprite base up to the screen page ($5800–$5C00 = 16 blocks).
+    spriteBlocksAvail: spritesAddr !== null ? (B1_IMG_SCREEN - B1_IMG_SPRITES) / SPRITE_BLOCK : 0,
+    // Text-mode $D018 still needs a charset position even with no charset baked (the value
+    // is then never written) — B1_IMG_CHARSET keeps it inside the bank.
+    d018: d018For(B1_IMG_SCREEN, charsetAddr ?? B1_IMG_CHARSET, B1_BASE),
+    d018Bitmap: d018BitmapFor(B1_IMG_SCREEN, B1_BITMAP, B1_BASE),
+    charsetAddr,
+    spritesAddr,
+    bitmapAddr: B1_BITMAP,
+    mainCeiling: ceiling,
+    highBase: B1_BSS,
+    highCeiling: HIGH_CEILING,
+    cfg: buildCfgBank1Image(ceiling)
+  }
 }
 
 /** Bank-1: graphics at the top of $4000–$7FFF, program gets the low RAM + $8000+. */
@@ -122,8 +185,10 @@ function planBank1(use: MemoryUse): MemoryMap {
     // The island runs from the sprite base to the top of the bank ($8000 = B1_BSS).
     spriteBlocksAvail: spritesAddr !== null ? (B1_BSS - B1_SPRITES) / SPRITE_BLOCK : 0,
     d018: d018For(B1_SCREEN, charsetAddr, B1_BASE),
+    d018Bitmap: null,
     charsetAddr,
     spritesAddr,
+    bitmapAddr: null,
     mainCeiling: charsetAddr, // the charset is the lowest graphics → MAIN stops here
     highBase: B1_BSS, // big arrays live in the high pool above the $4000–$7FFF bank
     highCeiling: HIGH_CEILING,
@@ -143,8 +208,10 @@ function planBank0(use: MemoryUse): MemoryMap {
     // The bank-0 sprite island is the reserved 2KB region ($3800 + REGION_SIZE).
     spriteBlocksAvail: spritesAddr !== null ? REGION_SIZE / SPRITE_BLOCK : 0,
     d018: d018For(B0_SCREEN, B0_SPRITES, 0), // unused (no charset → no VIC.addr write)
+    d018Bitmap: null,
     charsetAddr: null,
     spritesAddr,
+    bitmapAddr: null,
     mainCeiling: spritesAddr ?? HIMEM,
     // Sprites-only also splits RAM: MAIN caps under the $3800 island, BSS goes high ($4000).
     // Graphics-less keeps BSS contiguous with code below $D000 → one pool, no high bar.
@@ -314,6 +381,34 @@ function buildCfgBank1(charsetAddr: number): string {
     '}'
   ]
   const segments = ['SEGMENTS {', ...CFG_SEGMENTS_MAIN, '    BSS:      load = HIGH,     type = bss, define = yes;', '}']
+  return [...CFG_TAIL.slice(0, 9), ...memory, ...segments, ...CFG_TAIL.slice(9), ''].join('\n')
+}
+
+/** Bank-1 IMAGE cfg (B2.T3): MAIN below the bank's char-mode graphics, a FILLER across
+ *  them, then the bitmap linked at its fixed $6000.
+ *
+ *  The filler is the load-bearing bit. A .prg is ONE contiguous image from $0801, and ld65
+ *  concatenates regions in FILE order WITHOUT padding address gaps — the B1.T2 lesson,
+ *  where a charset silently landed ~3KB below its address. So every byte from the end of
+ *  the code up to the bitmap must exist in the file: MAIN's `fill` covers its own tail, and
+ *  GFXGAP covers the charset/sprite/screen area (runtime RAM, no segments of its own). Both
+ *  cost file size only — never RAM. */
+function buildCfgBank1Image(ceilingAddr: number): string {
+  const memory = [
+    ...CFG_HEAD,
+    `    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = ${hex(ceilingAddr)} - __HEADER_LAST__, fill = yes;`,
+    `    GFXGAP:   file = %O,               start = ${hex(ceilingAddr)},           size = ${hex(B1_BITMAP - ceilingAddr)}, fill = yes;`,
+    `    BITMAP:   file = %O, define = yes, start = ${hex(B1_BITMAP)},           size = ${hex(BITMAP_BYTES)};`,
+    `    HIGH:     file = "", define = yes, start = ${hex(B1_BSS)},           size = __HIMEM__ - __STACKSIZE__ - ${hex(B1_BSS)};`,
+    '}'
+  ]
+  const segments = [
+    'SEGMENTS {',
+    ...CFG_SEGMENTS_MAIN,
+    '    BC_BITMAP: load = BITMAP,   type = ro;',
+    '    BSS:      load = HIGH,     type = bss, define = yes;',
+    '}'
+  ]
   return [...CFG_TAIL.slice(0, 9), ...memory, ...segments, ...CFG_TAIL.slice(9), ''].join('\n')
 }
 

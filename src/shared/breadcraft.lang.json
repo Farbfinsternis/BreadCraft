@@ -804,8 +804,10 @@
       "i18nKey": "cmd.useimage",
       "frameSafe": false,
       "cost": "cheap",
-      "since": "later",
-      "proven": false,
+      "since": "phase1",
+      "proven": true,
+      "transpile": "Bitmap-Matrix (8000 B) direkt in die VIC-Bank gelinkt ($6000), Screen-/Color-Ebenen als const daneben. Emittiert KEINEN Laufzeit-Code — der Linker legt das Bild hin.",
+      "$note": "Backt das Bild ins Programm; DrawImage zeigt es (wie UseTileset/DrawMap). Braucht selbst KEINEN Bitmap-Modus — das Backen ist ein Bau-Zeit-Akt und kostet zur Laufzeit nichts (daher cheap). Das Bild wird an seinen Platz GELADEN, nicht kopiert — es liegt nur einmal im RAM. Pro VIC-Bank gibt es genau einen Bitmap-Platz → ein Bild pro Programm; mehrere brauchen Nachladen von Diskette.",
       "params": [
         {
           "name": "id",
@@ -844,9 +846,11 @@
       "i18nKey": "cmd.drawimage",
       "frameSafe": false,
       "cost": "expensive",
-      "since": "later",
+      "since": "phase1",
       "proven": false,
       "requiresMode": "BITMAP,MULTICOLOR",
+      "transpile": "$D018 (Bitmap-Basis + Screen-Seite) + $D021 setzen, die zwei 1000-B-Farb-Ebenen nach Screen-RAM und $D800 kopieren",
+      "$note": "Zeigt das mit UseImage eingebackene Bild. Die 8000 B Bitmap werden NICHT kopiert (der Linker hat sie hingelegt) — teuer sind die ~2000 B Farb-Ebenen. Darum ist erneutes Anzeigen billig: ein Kachel-Spiel überschreibt nur die Farben, die Bitmap überlebt. Ohne UseImage = ehrlicher Fehler (wie DrawMap ohne UseTileset).",
       "params": [
         {
           "name": "id",

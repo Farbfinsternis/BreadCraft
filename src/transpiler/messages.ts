@@ -84,6 +84,12 @@ export interface CodegenMessages {
   graphicsBitmapHires(): string
   useTilesetName(): string
   useTilesetNoProject(id: string): string
+  useImageName(): string
+  useImageNoProject(id: string): string
+  useImageTwice(active: string, other: string): string
+  drawImageName(): string
+  drawImageNoImage(id: string): string
+  drawImageOther(baked: string, id: string): string
   drawMapName(): string
   drawMapNoProject(id: string): string
   drawMapNoTileset(id: string): string
@@ -297,6 +303,16 @@ const DE_CODEGEN: CodegenMessages = {
     `UseTileset erwartet einen Tileset-Namen in Anführungszeichen, z. B. UseTileset "main"`,
   useTilesetNoProject: (id) =>
     `UseTileset "${id}": kein Projekt-Kontext — Assets können nur in einem Projekt aufgelöst werden`,
+  useImageName: () => `UseImage erwartet einen Bild-Namen in Anführungszeichen, z. B. UseImage "titel"`,
+  useImageNoProject: (id) =>
+    `UseImage "${id}": kein Projekt-Kontext — Bilder können nur in einem Projekt aufgelöst werden`,
+  useImageTwice: (active, other) =>
+    `UseImage "${other}": das Programm backt schon "${active}" ein — ein Programm kann heute nur EIN Bild zeigen ` +
+    `(der C64 hat pro VIC-Bank genau einen Bitmap-Platz; mehrere Bilder brauchen Nachladen von Diskette)`,
+  drawImageName: () => `DrawImage erwartet einen Bild-Namen in Anführungszeichen, z. B. DrawImage "titel"`,
+  drawImageNoImage: (id) => `DrawImage "${id}": kein Bild eingebacken — vorher UseImage "${id}" aufrufen`,
+  drawImageOther: (baked, id) =>
+    `DrawImage "${id}": das Programm backt "${baked}" ein, nicht "${id}" — ein Programm kann heute nur EIN Bild zeigen`,
   drawMapName: () => `DrawMap erwartet einen Karten-Namen in Anführungszeichen, z. B. DrawMap "level1"`,
   drawMapNoProject: (id) =>
     `DrawMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`,
@@ -388,6 +404,16 @@ const EN_CODEGEN: CodegenMessages = {
   useTilesetName: () => `UseTileset expects a tileset name in quotes, e.g. UseTileset "main"`,
   useTilesetNoProject: (id) =>
     `UseTileset "${id}": no project context — assets can only be resolved inside a project`,
+  useImageName: () => `UseImage expects an image name in quotes, e.g. UseImage "title"`,
+  useImageNoProject: (id) =>
+    `UseImage "${id}": no project context — images can only be resolved inside a project`,
+  useImageTwice: (active, other) =>
+    `UseImage "${other}": the program already bakes "${active}" — a program can show only ONE image today ` +
+    `(the C64 has exactly one bitmap slot per VIC bank; more images need loading from disk)`,
+  drawImageName: () => `DrawImage expects an image name in quotes, e.g. DrawImage "title"`,
+  drawImageNoImage: (id) => `DrawImage "${id}": no image baked — call UseImage "${id}" first`,
+  drawImageOther: (baked, id) =>
+    `DrawImage "${id}": the program bakes "${baked}", not "${id}" — a program can show only ONE image today`,
   drawMapName: () => `DrawMap expects a map name in quotes, e.g. DrawMap "level1"`,
   drawMapNoProject: (id) =>
     `DrawMap "${id}": no project context — maps can only be resolved inside a project`,

@@ -54,10 +54,23 @@ function fakeAssets(): AssetContext {
       Array.from({ length: 63 }, () => 0x99)
     ]
   })
+  // Two pictures, so a test can confirm the honest one-picture-per-program error (B2.T3).
+  // Position-coded first bytes make a misplaced bake visible.
+  const image = (first: number, bg: number): string =>
+    JSON.stringify({
+      format: 'breadcraft.image',
+      version: 1,
+      background: bg,
+      bitmap: Array.from({ length: 8000 }, (_, i) => (i === 0 ? first : 0)),
+      screen: Array.from({ length: 1000 }, (_, i) => (i === 0 ? 0x12 : 0)),
+      color: Array.from({ length: 1000 }, (_, i) => (i === 0 ? 0x03 : 0))
+    })
   const files: Record<string, string> = {
     'main.petscii': charset,
     'level1.tilemap': tilemap,
-    'player.sprite': sprite
+    'player.sprite': sprite,
+    'titel.image': image(0xaa, 6),
+    'raum2.image': image(0xbb, 0)
   }
   return {
     manifest: {
@@ -65,7 +78,7 @@ function fakeAssets(): AssetContext {
       charsets: ['main.petscii'],
       tilemaps: ['level1.tilemap'],
       sprites: ['player.sprite'],
-      images: []
+      images: ['titel.image', 'raum2.image']
     },
     readFile: (rel: string) => (rel in files ? files[rel] : null)
   }
@@ -485,11 +498,12 @@ describe('codegen: Graphics mode + VWait (Stufe 2, §E/§F)', () => {
 
 describe('codegen: honest failure (no crash)', () => {
   it('reports a command without a C mapping yet, leaves a TODO marker', () => {
-    // DrawImage isn't mapped yet (bitmap mode, a later layer) — the generic
-    // "no C-mapping" path still reports honestly and leaves a TODO marker.
-    const { code, errors } = gen('DrawImage "title"')
-    expect(errors.some((e) => /DrawImage/.test(e))).toBe(true)
-    expect(code).toContain('/* TODO: DrawImage')
+    // SetMetaTile isn't mapped yet (still `since: later` in the SSOT) — the generic
+    // "no C-mapping" path reports honestly and leaves a TODO marker.
+    // (This used to use DrawImage, which B2.T4 built.)
+    const { code, errors } = gen('SetMetaTile 1, 2, 3')
+    expect(errors.some((e) => /SetMetaTile/.test(e))).toBe(true)
+    expect(code).toContain('/* TODO: SetMetaTile')
   })
 })
 
@@ -1328,5 +1342,117 @@ describe('codegen: AnimateTile (animated-charset trick)', () => {
     const { warnings } = gen(`UseTileset "main"\n${calls}`, fakeAssets())
     const overflow = warnings.filter((w) => /mehr als 32/.test(w))
     expect(overflow.length).toBe(1)
+  })
+})
+
+describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture on the screen', () => {
+  // The Use/Draw pair the language uses everywhere (UseTileset→DrawMap, UseSprite→Sprite):
+  // UseImage bakes, DrawImage shows.
+  const SRC = 'Graphics BITMAP, MULTICOLOR\nUseImage "titel"\nDrawImage "titel"\n'
+
+  it('links the bitmap into the bank instead of copying it (the RAM-halving decision)', () => {
+    const { code, errors } = gen(SRC, fakeAssets())
+    expect(errors).toEqual([])
+    // The 8000-byte matrix goes into its own linker segment, NON-static so cc65 emits an
+    // array nothing references. No copy loop for it — that's the whole point: a const
+    // source would cost the picture a second time in low RAM.
+    expect(code).toContain('#pragma rodata-name (push, "BC_BITMAP")')
+    expect(code).toContain('const unsigned char img_titel[8000] = {')
+    expect(code).not.toContain('static const unsigned char img_titel')
+    expect(code).toContain('#pragma rodata-name (pop)')
+    expect(code).not.toMatch(/BC_BITMAP\[_i\]\s*=/) // never copied
+    expect(code).toContain('  170, 0,') // the picture's position-coded first byte reached the bake
+  })
+
+  it('copies only the two colour planes — Color-RAM is I/O, the screen page gets overwritten', () => {
+    const { code } = gen(SRC, fakeAssets())
+    expect(code).toContain('#define BC_COLOR_RAM ((unsigned char*)0xD800)')
+    expect(code).toContain('static const unsigned char imgscr_titel[1000] = {')
+    expect(code).toContain('static const unsigned char imgcol_titel[1000] = {')
+    expect(code).toContain('BC_SCREEN[_i] = imgscr_titel[_i]; BC_COLOR_RAM[_i] = imgcol_titel[_i];')
+  })
+
+  it('points the VIC at screen $5C00 + bitmap $6000 and takes the background from the picture', () => {
+    const { code } = gen(SRC, fakeAssets())
+    // $D018 = screen page 7 (bits 4-7) | bit 3 = bitmap at bank+$2000 ($6000).
+    expect(code).toContain('VIC.addr = 0x78;')
+    expect(code).toContain('#define BC_SCREEN  ((unsigned char*)0x5C00)')
+    expect(code).toContain('#define BC_BITMAP  ((unsigned char*)0x6000)')
+    // The picture's own background (6 = blue), not the project palette's.
+    expect(code).toContain('VIC.bgcolor[0] = COLOR_BLUE;')
+  })
+
+  it('a picture + a tile game: the charset moves out of the bitmap\'s way, each mode gets its own $D018', () => {
+    const { code, errors } = gen(`${SRC}Graphics TEXT, MULTICOLOR\nUseTileset "main"\n`, fakeAssets())
+    expect(errors).toEqual([])
+    // The charset drops from its usual $7000 to $5000 — the bitmap owns the bank's top.
+    expect(code).toContain('#define BC_CHARSET ((unsigned char*)0x5000)')
+    expect(code).toContain('VIC.addr = 0x78;') // bitmap mode (DrawImage)
+    expect(code).toContain('VIC.addr = 0x74;') // text mode: screen page 7 | charset $5000
+  })
+
+  it('UseImage emits NO runtime code — the bake is the linker\'s job, hence `cheap`', () => {
+    const { code } = gen('Graphics BITMAP, MULTICOLOR\nUseImage "titel"\n', fakeAssets())
+    // The bytes are there…
+    expect(code).toContain('const unsigned char img_titel[8000] = {')
+    // …but nothing runs: no VIC pokes, no copy. All of that belongs to DrawImage.
+    expect(code).not.toContain('VIC.addr = 0x78;')
+    expect(code).not.toContain('BC_SCREEN[_i] = imgscr_titel[_i]')
+  })
+
+  it('showing the picture again is cheap: bakes once, copies only the colours each time', () => {
+    const { code, errors } = gen(`${SRC}DrawImage "titel"\n`, fakeAssets())
+    expect(errors).toEqual([])
+    expect(code.match(/const unsigned char img_titel\[8000\]/g)?.length).toBe(1) // baked once
+    expect(code.match(/\/\* DrawImage "titel" \*\//g)?.length).toBe(2) // shown twice
+    // The 8000-byte matrix is never copied — only the 2×1000 colour planes are.
+    expect(code.match(/BC_SCREEN\[_i\] = imgscr_titel\[_i\]/g)?.length).toBe(2)
+  })
+
+  it('DrawImage works INSIDE a function — functions are emitted before the top-level UseImage', () => {
+    // The shape a real game wants: the bake sits in the setup, GoTitle() shows the picture.
+    // A walk-order check would reject this (the DrawMap trap); the pre-scan doesn't.
+    const { code, errors } = gen(
+      'Function GoTitle()\n  Graphics BITMAP, MULTICOLOR\n  DrawImage "titel"\nEnd Function\nUseImage "titel"\nGoTitle\n',
+      fakeAssets()
+    )
+    expect(errors).toEqual([])
+    expect(code).toContain('/* DrawImage "titel" */')
+  })
+
+  it('a SECOND, different picture is an honest error, not a silent overwrite', () => {
+    const { errors } = gen(`${SRC}UseImage "raum2"\n`, fakeAssets())
+    expect(errors.length).toBe(1)
+    expect(errors[0]).toMatch(/nur EIN Bild/)
+    expect(errors[0]).toMatch(/Diskette/) // names the real way out (SILBER)
+  })
+
+  it('DrawImage without UseImage is an honest error — like DrawMap without UseTileset', () => {
+    const { errors } = gen('Graphics BITMAP, MULTICOLOR\nDrawImage "titel"\n', fakeAssets())
+    expect(errors.length).toBe(1)
+    expect(errors[0]).toMatch(/kein Bild eingebacken/)
+    expect(errors[0]).toMatch(/UseImage "titel"/) // says exactly what to do
+  })
+
+  it('DrawImage of a picture the program never baked names both sides', () => {
+    const { errors } = gen(`${SRC}DrawImage "raum2"\n`, fakeAssets())
+    expect(errors.length).toBe(1)
+    expect(errors[0]).toMatch(/backt "titel" ein, nicht "raum2"/)
+  })
+
+  it('names the missing pieces honestly: no name, unknown picture', () => {
+    expect(gen('UseImage\n', fakeAssets()).errors[0]).toMatch(/erwartet einen Bild-Namen/)
+    expect(gen('UseImage "geist"\n', fakeAssets()).errors[0]).toMatch(/geist/)
+    expect(gen('UseImage "titel"\nDrawImage\n', fakeAssets()).errors[0]).toMatch(/erwartet einen Bild-Namen/)
+  })
+
+  it('UseTileset is re-callable: baked once, copied on every call (mode switching, B2.T3)', () => {
+    // A bitmap title screen switches the VIC to BITMAP; going back to the tile game calls
+    // UseTileset again to point $D018 at text. Re-baking would emit a SECOND identical
+    // `const` and cc65 rejects the redefinition — the build died before this guard.
+    const { code, errors } = gen('UseTileset "main"\nUseTileset "main"\n', fakeAssets())
+    expect(errors).toEqual([])
+    expect(code.match(/const unsigned char tileset_main\[2048\]/g)?.length).toBe(1)
+    expect(code.match(/BC_CHARSET\[_i\] = tileset_main\[_i\]/g)?.length).toBe(2)
   })
 })
