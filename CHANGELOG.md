@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-07-16
+
 ### Hinzugefügt
 - **Ein gemaltes Bild im Programm zeigen: `UseImage` + `DrawImage` (BRONZE B2.T3+T4).** Der
   Bild-Editor konnte bisher nur malen — jetzt bringt `Graphics BITMAP, MULTICOLOR` +
