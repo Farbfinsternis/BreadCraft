@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-07-16
+
 ### Hinzugefügt
 - **Bild-Editor: Fremdbild importieren (Foto / PNG / KI-Bild → echtes C64-Bild) (BRONZE B2.T2f).**
   Ein neuer **Importieren**-Knopf verwandelt ein beliebiges Bild in ein *echtes*, C64-legales
