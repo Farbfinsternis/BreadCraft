@@ -1,6 +1,6 @@
 {
   "name": "breadcraft",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "BreadCraft — Advanced Retro-Tech C64 game IDE",
   "main": "./out/main/index.js",
   "author": "Farbfinsternis",

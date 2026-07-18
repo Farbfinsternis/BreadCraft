@@ -19,6 +19,10 @@ const props = defineProps<{
   tool: ToolId
   canUndo: boolean
   canRedo: boolean
+  /** Show the image-editor-only tools: rectangular SELECT (marquee) + the dithered
+   *  GRADIENT (needs a secondary colour). Opt-in — today the image editor; the sprite/
+   *  charset editors don't wire selection or a secondary colour yet. */
+  showGradient?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -43,7 +47,7 @@ interface ToolDef {
 
 const RECT_PATH = 'M4 5h16v14H4z'
 
-const toolDefs: ToolDef[] = [
+const baseToolDefs: ToolDef[] = [
   {
     id: 'draw',
     variants: [
@@ -73,6 +77,30 @@ const toolDefs: ToolDef[] = [
     ]
   }
 ]
+
+// Image-editor-only tools, appended after the base tools so slot order stays stable.
+// SELECT: four corner brackets (the classic marquee icon). GRADIENT: box + diagonal
+// hatch (a dithered fill).
+const SELECT_DEF: ToolDef = {
+  id: 'select',
+  variants: [
+    {
+      key: 'select',
+      labelKey: 'tileset.tool.select',
+      path: 'M4 8V6a2 2 0 0 1 2-2h2 M16 4h2a2 2 0 0 1 2 2v2 M20 16v2a2 2 0 0 1-2 2h-2 M8 20H6a2 2 0 0 1-2-2v-2'
+    }
+  ]
+}
+const GRADIENT_DEF: ToolDef = {
+  id: 'gradient',
+  variants: [
+    { key: 'gradient', labelKey: 'tileset.tool.gradient', path: 'M4 5h16v14H4z M8 19l11-11 M12 19l7-7 M4 15l7-7' }
+  ]
+}
+
+const toolDefs = computed<ToolDef[]>(() =>
+  props.showGradient ? [...baseToolDefs, SELECT_DEF, GRADIENT_DEF] : baseToolDefs
+)
 
 // Remembered variant per multi-variant slot (Aseprite: the button keeps your last
 // choice). Keyed by slot id; defaults to the first variant.

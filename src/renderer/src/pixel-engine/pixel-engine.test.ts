@@ -77,6 +77,7 @@ describe('tools', () => {
     const g = new PixelGrid(4, 4)
     expect(fill(g, 0, 0, 0)).toHaveLength(0)
   })
+
 })
 
 describe('History', () => {

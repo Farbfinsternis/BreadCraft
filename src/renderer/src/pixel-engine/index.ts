@@ -11,7 +11,10 @@ import { PixelGrid, type CellChange, type PixelIndex } from './grid'
 import { History } from './history'
 import { drawPixel, fill, line, rect } from './tools'
 
-export type ToolId = 'draw' | 'line' | 'rect' | 'rectFill' | 'fill'
+// 'gradient' and 'select' are VIEW-driven tools (the image editor handles their line/
+// marquee drags itself — they don't mutate the grid cell-by-cell), so the engine treats
+// them as no-ops here; they exist in the union only so the shared toolbar can select them.
+export type ToolId = 'draw' | 'line' | 'rect' | 'rectFill' | 'fill' | 'gradient' | 'select'
 
 export { PixelGrid } from './grid'
 export type { CellChange, PixelIndex } from './grid'

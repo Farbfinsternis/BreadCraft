@@ -7,7 +7,30 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-07-18
+
 ### Hinzugefügt
+- **Bild-Editor: gedithertes Verlaufs-Werkzeug, Auswahl-Rahmen + zwei Malfarben (BRONZE B2.T2b).**
+  Der eine Hebel, der aus „16 harte Farben" die weichen Übergänge macht, die C64-Bilder überhaupt
+  reich aussehen lassen. Der C64 kann keine echten Zwischentöne — also **fälscht** man sie: zwei
+  erlaubte Farben in einem feinen **Bayer-Schachbrett**, dessen Dichte über die Fläche wandert,
+  liest das Auge als Verlauf. Neu:
+  - **Zwei Malfarben à la DPaint.** Linke Maustaste malt die **primäre**, rechte die **sekundäre**
+    Farbe; Rechtsklick auf ein Palettenfeld wählt die Sekundärfarbe. Beide sind oben im Farben-
+    Panel als Paar sichtbar. (Vorher malte Rechts fix den Hintergrund.)
+  - **Auswahl-Werkzeug (Rahmen).** Einen rechteckigen Rahmen aufziehen — Werkzeuge wirken dann
+    **nur darin**; ohne Auswahl aufs ganze Bild. **Strg+D** hebt die Auswahl wieder auf (DPaints
+    Kürzel). Das ist das Fundament, auf dem später Custom-Brush & Stencil aufsetzen (B2.T2c/e).
+  - **Verlaufs-Werkzeug als Linie.** Eine **Linie ziehen** gibt Richtung UND Länge des Verlaufs
+    vor (beliebiger Winkel) — unabhängig von der gefüllten Fläche: primäre Farbe am Linien-Start,
+    sekundäre am Ende, davor/dahinter reine Farbe. Gefüllt wird die Auswahl (oder das ganze Bild).
+    Links-Ziehen läuft primär→sekundär, Rechts-Ziehen sekundär→primär — die Maustaste wählt also
+    auch die Richtung. Der klassische C64-„Glow" (eine Farbe, die ins Schwarze ausblendet) ist so
+    ein Zug, jetzt in **jeder** Richtung statt nur Ecke-zu-Ecke.
+  - **In der geteilten Pixel-Engine** gebaut (rein + Vitest-getestet: Bayer-Matrix + `planGradient`
+    als reiner Planer, als ein Undo-Schritt angewandt). Auswahl + Verlauf sind vorerst **nur im
+    Bild-Editor** freigeschaltet; Sprite-/PETSCII-Editor bekommen sie später bewusst. Der
+    C64-echt-Modus reconcilt einen geditherten Verlauf wie jeden anderen Strich.
 - **Bitmap-Modus ist wählbar: „Neues Projekt → Bitmap, Multicolor" (BRONZE B2.T6).** Der
   Weg, den B2 die ganze Zeit gebaut hat, ist jetzt für einen Fremden begehbar: der dritte
   Grafik-Modus im Neu-Projekt-Dialog trägt nicht mehr das graue „(kommt später)", sondern

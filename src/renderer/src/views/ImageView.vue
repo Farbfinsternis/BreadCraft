@@ -17,6 +17,7 @@ import {
   type Cell
 } from '../pixel-engine/imageCells'
 import { IMPORT_W, IMPORT_H } from '../pixel-engine/imageImport'
+import { planGradient, type Region } from '../pixel-engine/gradient'
 import ImageImportModal from '../components/ImageImportModal.vue'
 import FloatPanel from '../components/FloatPanel.vue'
 import PixelToolbar from '../components/PixelToolbar.vue'
@@ -112,8 +113,37 @@ const showGrid = ref(true)
  *  never touches the live buffer (breadcraft-ux-railing, breadcraft-imageeditor-color-clash). */
 const previewC64 = ref(false)
 
-/** The colour the left button paints (0–15). Right button always paints background. */
-const activeColor = ref(1) // white — a visible default on the black start canvas
+/** The two paint colours (0–15), DPaint-style: left button paints the PRIMARY, right
+ *  button the SECONDARY. The gradient tool dithers between them (primary → secondary in
+ *  drag direction). Left/right click on a palette swatch sets primary/secondary. */
+const activeColor = ref(1) // primary: white — a visible default on the black start canvas
+const secondaryColor = ref(0) // secondary: black — the usual background, so right = "erase"
+
+/** A rectangular pixel selection (inclusive, normalised). Tools that support it act ONLY
+ *  inside it; with none set they act on the whole image. Cleared with Ctrl+D. */
+interface Rect {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+const selection = ref<Rect | null>(null)
+/** Live marquee while dragging the select tool (before it commits to `selection`). */
+const selPreview = ref<Rect | null>(null)
+/** Live gradient line while dragging the gradient tool (start → current), with its colours. */
+const gradLine = ref<{ x0: number; y0: number; x1: number; y1: number; from: number; to: number } | null>(null)
+
+/** The rectangle to outline: the live marquee while dragging, else the committed selection.
+ *  In pixel space (inclusive bounds → +1 on width/height). */
+const selectionBox = computed(() => {
+  const s = selPreview.value ?? selection.value
+  if (!s) return null
+  const x0 = Math.min(s.x0, s.x1)
+  const x1 = Math.max(s.x0, s.x1)
+  const y0 = Math.min(s.y0, s.y1)
+  const y1 = Math.max(s.y0, s.y1)
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }
+})
 
 /** The ONE global background colour (shared, $D021) — the 4th, budget-free colour. */
 const bgValue = computed(() => palette.background)
@@ -217,8 +247,15 @@ function cellFromEvent(ev: PointerEvent): { x: number; y: number } | null {
 
 // Values are C64 colours (0–15); the grid is index-agnostic so we hand them through
 // the engine's PixelIndex-typed API unchanged (documented cast, breadcraft-pixel-engine).
+// Left button (0) paints the primary colour, right button (2) the secondary.
 function penFor(button: number): PixelIndex {
-  return (button === 2 ? bgValue.value : activeColor.value) as PixelIndex
+  return (button === 2 ? secondaryColor.value : activeColor.value) as PixelIndex
+}
+
+// The OTHER colour — the gradient's far end. Left-drag runs primary → secondary, right-
+// drag runs secondary → primary, so the button also picks the gradient's direction.
+function otherPen(button: number): PixelIndex {
+  return (button === 2 ? activeColor.value : secondaryColor.value) as PixelIndex
 }
 
 let painting = false
@@ -232,6 +269,10 @@ let sMinX = 0
 let sMinY = 0
 let sMaxX = 0
 let sMaxY = 0
+// Where a select/gradient drag began + which button started it (gradient direction).
+let gestureX = 0
+let gestureY = 0
+let gestureButton = 0
 
 function trackBounds(x: number, y: number, reset = false): void {
   if (reset) {
@@ -271,6 +312,29 @@ function onPointerDown(ev: PointerEvent): void {
   ev.preventDefault()
   viewportRef.value?.setPointerCapture(ev.pointerId)
   painting = true
+
+  // View-driven tools: the marquee and the gradient line are overlays, not grid strokes.
+  if (activeTool.value === 'select') {
+    gestureX = cell.x
+    gestureY = cell.y
+    selPreview.value = { x0: cell.x, y0: cell.y, x1: cell.x, y1: cell.y }
+    return
+  }
+  if (activeTool.value === 'gradient') {
+    gestureX = cell.x
+    gestureY = cell.y
+    gestureButton = ev.button === 2 ? 2 : 0
+    gradLine.value = {
+      x0: cell.x,
+      y0: cell.y,
+      x1: cell.x,
+      y1: cell.y,
+      from: penFor(gestureButton),
+      to: otherPen(gestureButton)
+    }
+    return
+  }
+
   trackBounds(cell.x, cell.y, true)
   engine.begin(activeTool.value, cell.x, cell.y, penFor(ev.button))
   render()
@@ -286,6 +350,16 @@ function onPointerMove(ev: PointerEvent): void {
   const cell = cellFromEvent(ev)
   updateHover(cell)
   if (!painting || !cell) return
+
+  if (activeTool.value === 'select') {
+    selPreview.value = { x0: gestureX, y0: gestureY, x1: cell.x, y1: cell.y }
+    return
+  }
+  if (activeTool.value === 'gradient') {
+    if (gradLine.value) gradLine.value = { ...gradLine.value, x1: cell.x, y1: cell.y }
+    return
+  }
+
   trackBounds(cell.x, cell.y)
   engine.move(activeTool.value, cell.x, cell.y, penFor(ev.buttons & 2 ? 2 : 0))
   render()
@@ -298,6 +372,10 @@ function onPointerUp(): void {
   }
   if (!painting) return
   painting = false
+
+  if (activeTool.value === 'select') return commitSelection()
+  if (activeTool.value === 'gradient') return applyGradient()
+
   // C64-true: fold the per-cell reconcile into the SAME stroke so paint + fix are
   // one undo step. FREE mode commits the raw colours untouched.
   if (mode.value === 'c64') {
@@ -307,6 +385,51 @@ function onPointerUp(): void {
   }
   engine.end()
   commitEdit()
+}
+
+/** Commit the marquee to `selection`. A click (zero-area drag) clears any selection. */
+function commitSelection(): void {
+  const p = selPreview.value
+  selPreview.value = null
+  if (!p) return
+  const x0 = Math.min(p.x0, p.x1)
+  const x1 = Math.max(p.x0, p.x1)
+  const y0 = Math.min(p.y0, p.y1)
+  const y1 = Math.max(p.y0, p.y1)
+  selection.value = x0 === x1 && y0 === y1 ? null : { x0, y0, x1, y1 }
+}
+
+/** The region tools act on: the selection if set, else the whole image. */
+function activeRegion(): Region {
+  const s = selection.value
+  return s
+    ? { left: s.x0, top: s.y0, right: s.x1, bottom: s.y1 }
+    : { left: 0, top: 0, right: W - 1, bottom: H - 1 }
+}
+
+/** Apply the dithered gradient along the dragged line, over the active region, as one
+ *  undo step (same begin/amend/end pattern as the C64-true reconcile). */
+function applyGradient(): void {
+  const l = gradLine.value
+  gradLine.value = null
+  if (!l) return
+  const region = activeRegion()
+  const writes = planGradient(region, l.x0, l.y0, l.x1, l.y1, l.from, l.to)
+  if (!writes.length) return
+  engine.begin('draw', writes[0].x, writes[0].y, writes[0].value as PixelIndex)
+  engine.amend(writes.slice(1))
+  if (mode.value === 'c64') {
+    const cells = cellsInBox(region.left, region.top, region.right, region.bottom, W, H)
+    engine.amend(reconcileCells(engine.grid.snapshot(), W, cells, bgValue.value, PAL_RGB))
+  }
+  engine.end()
+  commitEdit()
+}
+
+/** Clear the current selection (Ctrl+D, DPaint's deselect). */
+function clearSelection(): void {
+  selection.value = null
+  selPreview.value = null
 }
 
 /** Wheel zooms towards the cursor: the image point under the pointer stays put. */
@@ -393,6 +516,7 @@ function save(): void {
  *  mount and whenever the store swaps the buffer from outside (open / switch / new). */
 function reloadFromStore(): void {
   engine.load(image.pixels.slice())
+  clearSelection() // a selection belongs to the image being edited, not the next one
   afterMutation()
 }
 
@@ -541,6 +665,11 @@ function pickColor(index: number): void {
   activeColor.value = index
 }
 
+/** Right-click a swatch → the secondary colour (right-button paint + gradient's far end). */
+function pickSecondary(index: number): void {
+  secondaryColor.value = index
+}
+
 function resetLayout(): void {
   panels.reset(SCOPE)
 }
@@ -558,6 +687,11 @@ function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     save()
+  }
+  // Ctrl+D — drop the selection (DPaint's deselect), so tools act on the whole image again.
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+    e.preventDefault()
+    clearSelection()
   }
 }
 
@@ -707,6 +841,33 @@ onBeforeUnmount(() => {
               <line v-for="c in CELLS_X - 1" :key="'v' + c" :x1="c" :y1="0" :x2="c" :y2="CELLS_Y" />
               <line v-for="r in CELLS_Y - 1" :key="'h' + r" :x1="0" :y1="r" :x2="CELLS_X" :y2="r" />
             </svg>
+            <!-- Selection marquee + gradient-line guides, in pixel space (160×200). -->
+            <svg
+              v-if="selection || selPreview || gradLine"
+              class="img-overlay"
+              :viewBox="`0 0 ${W} ${H}`"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <rect
+                v-if="selectionBox"
+                class="img-marquee"
+                :x="selectionBox.x"
+                :y="selectionBox.y"
+                :width="selectionBox.w"
+                :height="selectionBox.h"
+                vector-effect="non-scaling-stroke"
+              />
+              <line
+                v-if="gradLine"
+                class="img-gradline"
+                :x1="gradLine.x0 + 0.5"
+                :y1="gradLine.y0 + 0.5"
+                :x2="gradLine.x1 + 0.5"
+                :y2="gradLine.y1 + 0.5"
+                vector-effect="non-scaling-stroke"
+              />
+            </svg>
           </div>
           <div v-if="cursorStyle" class="img-cursor" :style="cursorStyle" aria-hidden="true" />
           <button class="img-zoom" :title="t('image.zoom.reset')" @click="resetZoom">
@@ -721,6 +882,7 @@ onBeforeUnmount(() => {
           v-model:tool="activeTool"
           :can-undo="canUndo"
           :can-redo="canRedo"
+          :show-gradient="true"
           @undo="undo"
           @redo="redo"
         />
@@ -729,15 +891,29 @@ onBeforeUnmount(() => {
       <!-- Farben — the full 16-colour C64 picker + the shared background swatch -->
       <FloatPanel :scope="SCOPE" id="colors" :title="t('image.panel.colors')" :min-width="180" :min-height="200">
         <p class="img-pen-hint">{{ t('image.penHint') }}</p>
+        <!-- Primary (left button) + secondary (right button), DPaint-style. The gradient
+             tool dithers between them; the pair is also the erase/fill colours. -->
+        <div class="img-pens">
+          <span class="img-pen-chip is-primary" :style="{ background: C64_PALETTE[activeColor].hex }">
+            <span class="img-pen-tag">{{ t('image.pen.primary') }}</span>
+          </span>
+          <span class="img-pen-chip is-secondary" :style="{ background: C64_PALETTE[secondaryColor].hex }">
+            <span class="img-pen-tag">{{ t('image.pen.secondary') }}</span>
+          </span>
+        </div>
         <div class="img-board">
           <button
             v-for="color in C64_PALETTE"
             :key="color.index"
             class="img-swatch"
-            :class="{ 'is-active': activeColor === color.index }"
+            :class="{
+              'is-active': activeColor === color.index,
+              'is-secondary': secondaryColor === color.index
+            }"
             :style="{ background: color.hex }"
             :title="`${color.index} · ${t(color.i18nKey)}`"
             @click="pickColor(color.index)"
+            @contextmenu.prevent="pickSecondary(color.index)"
           />
         </div>
         <div class="img-bg-row">
@@ -1029,10 +1205,63 @@ onBeforeUnmount(() => {
   vector-effect: non-scaling-stroke;
 }
 
+/* Selection marquee + gradient-line guides — pixel-space overlay, never eats pointers. */
+.img-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+.img-marquee {
+  fill: rgba(94, 196, 255, 0.08);
+  stroke: var(--bc-arc-200);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.img-gradline {
+  stroke: var(--bc-copper-300);
+  stroke-width: 1.75;
+  stroke-dasharray: 3 2;
+}
+
 .img-pen-hint {
   margin: 0 0 var(--bc-space-2);
   font-size: 11px;
   color: var(--bc-text-400);
+}
+.img-pens {
+  display: flex;
+  gap: var(--bc-space-2);
+  margin-bottom: var(--bc-space-2);
+}
+.img-pen-chip {
+  position: relative;
+  flex: 1;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  border-radius: var(--bc-radius-sm);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.img-pen-chip.is-primary {
+  outline: 2px solid var(--bc-arc-400);
+  outline-offset: 1px;
+}
+.img-pen-chip.is-secondary {
+  outline: 2px dashed var(--bc-copper-300);
+  outline-offset: 1px;
+}
+.img-pen-tag {
+  font: 700 9px/1 var(--bc-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  mix-blend-mode: difference;
+  pointer-events: none;
 }
 .img-board {
   display: grid;
@@ -1055,6 +1284,9 @@ onBeforeUnmount(() => {
   outline: 2px solid var(--bc-arc-400);
   outline-offset: 1px;
   box-shadow: var(--bc-glow-arc);
+}
+.img-swatch.is-secondary {
+  box-shadow: inset 0 0 0 2px var(--bc-copper-300), inset 0 0 0 3px rgba(0, 0, 0, 0.55);
 }
 .img-bg-row {
   display: flex;
