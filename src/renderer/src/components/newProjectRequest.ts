@@ -5,9 +5,9 @@ type T = (key: string) => string
 /**
  * Build the New-Project dialog request (M1.T6). ONE place the dialog's content
  * lives, so the toolbar and the welcome page open the exact same dialog. The
- * graphics-mode list shows all three Phase-1 modes (IDE.md §2.1), but only
- * TEXT_MULTICOLOR is enabled for now — the others are visible-but-disabled
- * ("coming later"), matching the roadmap (M1.T6) and the build's real coverage.
+ * graphics-mode list shows all three Phase-1 modes (IDE.md §2.1). TEXT_MULTICOLOR
+ * and BITMAP_MULTICOLOR (BRONZE B2.T6) are enabled; TEXT_HIRES stays
+ * visible-but-disabled ("coming later"), matching the build's real coverage.
  */
 export function buildNewProjectRequest(t: T): NewProjectRequest {
   const later = ` ${t('newproject.comingLater')}`
@@ -25,9 +25,8 @@ export function buildNewProjectRequest(t: T): NewProjectRequest {
     },
     {
       value: 'BITMAP_MULTICOLOR',
-      label: t('newproject.mode.bitmapMulticolor') + later,
-      hint: t('newproject.mode.bitmapMulticolor.hint'),
-      disabled: true
+      label: t('newproject.mode.bitmapMulticolor'),
+      hint: t('newproject.mode.bitmapMulticolor.hint')
     }
   ]
   // Target region (STAHL S5c) — both real choices, PAL first (the default). Picks the

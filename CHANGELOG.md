@@ -7,6 +7,30 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Bitmap-Modus ist wählbar: „Neues Projekt → Bitmap, Multicolor" (BRONZE B2.T6).** Der
+  Weg, den B2 die ganze Zeit gebaut hat, ist jetzt für einen Fremden begehbar: der dritte
+  Grafik-Modus im Neu-Projekt-Dialog trägt nicht mehr das graue „(kommt später)", sondern
+  legt ein echtes Bitmap-Projekt an. Darin malt man im Bild-Editor ein Bild, bindet es mit
+  `UseImage` ein und zeigt es mit `DrawImage` — die volle Kette bis auf den echten C64-Schirm,
+  die 0.2.15 schon konnte, ist damit vom ersten Klick an erreichbar. Der Bild-Editor selbst ist
+  seit 0.2.13 verdrahtet (Toolbar, Explorer, Router) und wartete nur auf diese Freischaltung.
+  **Ehrlich:** ein frisch angelegtes Bitmap-Projekt zeigt beim ersten Build noch Bitmap-Müll —
+  `Graphics BITMAP, MULTICOLOR` setzt nur die VIC-Bits, es räumt die Bitmap nicht auf. Erst wer
+  ein Bild malt und `UseImage`/`DrawImage` tippt, sieht einen sauberen Schirm. Ein geführter
+  Starter (leeres Start-Bild + fertige Zeilen) ist bewusst zurückgestellt — der Modus ist offen,
+  der Feinschliff des Erstkontakts kommt separat.
+- **Bild-Editor: „C64-Vorschau" — sieh, was der C64 wirklich zeigt.** Ein neuer Umschalter malt
+  die Leinwand als das **C64-legale** Bild statt der freien 16-Farben-Kunst: jede 8×8-Zelle auf
+  Hintergrund + 3 Farben reduziert, mit genau der Reconcile-Logik, die auch das Speichern benutzt.
+  Damit sieht man **im Editor**, was `UseImage`/`DrawImage` einbacken werden — inklusive der Pixel,
+  die eine über-Budget-Zelle auf den Hintergrund fallen lässt (ein senkrechter Farbverlauf über
+  einem Buchstaben kann so dessen dünnste Farbe verschlucken). Bisher zeigte FREE-Mode alle Farben
+  frei, und der Verlust fiel erst im echten Build auf — ein Verstoß gegen „wichtiger Zustand muss
+  sichtbar sein". Rein ansichtssache: der Umschalter fasst die gemalte Fläche **nie** an, er zeigt
+  nur die Wahrheit auf Knopfdruck. (Der Clash-Zähler und der C64-TRUE-Malmodus gab es schon; das
+  hier ist ihr fehlendes visuelles Gegenstück.)
+
 ## [0.2.15] - 2026-07-16
 
 ### Hinzugefügt

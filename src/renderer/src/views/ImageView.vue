@@ -105,6 +105,12 @@ const stageStyle = computed(() => ({
 type PaintMode = 'free' | 'c64'
 const mode = ref<PaintMode>('free')
 const showGrid = ref(true)
+/** C64 preview: render the canvas as the C64-LEGAL image (the exact bytes UseImage/
+ *  DrawImage bake) instead of the free 16-colour art. Lets FREE-mode painting stay
+ *  unblocked while the artist can flip to the truth — where an over-budget cell drops
+ *  a colour to background — BEFORE building, not as a surprise in VICE. View-only:
+ *  never touches the live buffer (breadcraft-ux-railing, breadcraft-imageeditor-color-clash). */
+const previewC64 = ref(false)
 
 /** The colour the left button paints (0–15). Right button always paints background. */
 const activeColor = ref(1) // white — a visible default on the black start canvas
@@ -161,12 +167,27 @@ const hoverBudget = computed(() => {
   return { col: h.col, row: h.row, count: used.length, over: used.length > MAX_CELL_COLORS }
 })
 
+/** The buffer to DISPLAY: the raw free-mode art, or — when the C64 preview is on — a
+ *  C64-legal copy reconciled exactly like the save path (imageStore.legalSnapshot), so
+ *  the canvas shows what UseImage/DrawImage will bake. Non-destructive: reconciles a
+ *  COPY, the live buffer keeps the artist's colours. */
+function displaySnapshot(): Uint8Array {
+  const snap = engine.grid.snapshot()
+  if (!previewC64.value) return snap
+  const legal = snap.slice()
+  const all = cellsInBox(0, 0, W - 1, H - 1, W, H)
+  for (const wr of reconcileCells(legal, W, all, bgValue.value, PAL_RGB)) {
+    legal[wr.y * W + wr.x] = wr.value
+  }
+  return legal
+}
+
 /** Paint the engine's current grid into the canvas (each logical pixel = 2 columns). */
 function render(): void {
   const cv = canvasRef.value
   const ctx = cv?.getContext('2d')
   if (!cv || !ctx) return
-  const snap = engine.grid.snapshot()
+  const snap = displaySnapshot()
   const img = ctx.createImageData(DISP_W, DISP_H)
   const data = img.data
   for (let y = 0; y < H; y++) {
@@ -510,6 +531,12 @@ function setMode(m: PaintMode): void {
   commitEdit()
 }
 
+/** Flip the C64 preview and repaint. View-only — no undo step, no store write. */
+function toggleC64Preview(): void {
+  previewC64.value = !previewC64.value
+  render()
+}
+
 function pickColor(index: number): void {
   activeColor.value = index
 }
@@ -594,6 +621,19 @@ onBeforeUnmount(() => {
           <path d="M3 3h18v18H3z" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
         </svg>
         {{ t('image.grid.show') }}
+      </button>
+
+      <!-- C64 preview: show the legal image the C64 will really display (railing). -->
+      <button
+        class="img-toggle"
+        :class="{ 'is-on': previewC64 }"
+        :title="t('image.c64preview.hint')"
+        @click="toggleC64Preview"
+      >
+        <svg class="ico" viewBox="0 0 24 24">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" /><circle cx="12" cy="12" r="3" />
+        </svg>
+        {{ t('image.c64preview.show') }}
       </button>
 
       <!-- Honest per-cell readout: hovered cell's colour spend + global clash count. -->
