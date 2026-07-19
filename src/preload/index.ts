@@ -50,11 +50,10 @@ const api = {
     createTemp: (): Promise<OpenedProject> => ipcRenderer.invoke('project:createTemp'),
     create: (
       name: string,
-      graphicsMode: GraphicsMode,
       withBoilerplate: boolean,
       region: Region
     ): Promise<OpenedProject> =>
-      ipcRenderer.invoke('project:create', name, graphicsMode, withBoilerplate, region),
+      ipcRenderer.invoke('project:create', name, withBoilerplate, region),
     open: (breadPath: string): Promise<OpenedProject> =>
       ipcRenderer.invoke('project:open', breadPath),
     openDialog: (): Promise<OpenedProject | null> =>

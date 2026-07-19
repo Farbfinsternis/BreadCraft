@@ -44,9 +44,10 @@ export interface BreadProjectFile {
   /** Entry crumb (the main.crumb with the frame loop), relative to project dir. */
   entry: string
   /**
-   * Project-wide graphics mode (IDE.md §2.1). Optional in the type for forward/
-   * backward compatibility: old `.bread` files predate the field and read as the
-   * DEFAULT_GRAPHICS_MODE (see normalizeGraphicsMode).
+   * DEPRECATED (ScreenMode block): the screen mode is a runtime `SetMode` switch, not
+   * a project identity. New projects no longer write this field; old `.bread` files that
+   * still carry it are read tolerantly and it is never persisted again. Kept in the type
+   * only so old files parse — the asset editors default to TEXT_MULTICOLOR packing.
    */
   graphicsMode?: GraphicsMode
   /**
@@ -103,8 +104,9 @@ function normalizeAssets(raw: unknown): BreadAssets {
   }
 }
 
-/** The starter main.crumb — its `Graphics …` line reflects the project's mode
- *  (derived from the SSOT, never hardcoded; IDE.md §2.1, M1.T4). */
+/** The starter main.crumb — opens with a `SetMode …` line (the runtime screen-mode
+ *  switch, spelled from the SSOT, never hardcoded). New projects start in the common
+ *  TEXT, MULTICOLOR mode; it's a runtime switch the user flips freely (ScreenMode block). */
 export function sampleMain(graphicsMode: GraphicsMode): string {
   return `; main.crumb — neues BreadCraft-Projekt
 ; Setup-Phase
@@ -118,8 +120,8 @@ Wend
 `
 }
 
-/** The bare main.crumb when boilerplate is opted out: just the mode's `Graphics …`
- *  line so the project still reflects its mode and transpiles, nothing more. */
+/** The bare main.crumb when boilerplate is opted out: just the opening `SetMode …`
+ *  line so the project transpiles, nothing more. */
 function bareMain(graphicsMode: GraphicsMode): string {
   return `${graphicsCommandFor(SSOT, graphicsMode)}\n`
 }
@@ -138,11 +140,13 @@ function writeBread(dir: string, data: BreadProjectFile): void {
   writeFileSync(breadPathFor(dir), JSON.stringify(data, null, 2), 'utf-8')
 }
 
-/** Read + parse a `.bread`, normalising the asset manifest + graphics mode + region. */
+/** Read + parse a `.bread`, normalising the asset manifest + region. `graphicsMode`
+ *  is NOT injected here: it's a deprecated field (the screen mode is now a runtime
+ *  `SetMode` switch, not a project identity — see ScreenMode block). Old files that
+ *  still carry it are read tolerantly (see readProject) and it is never written back. */
 function readBread(dir: string): BreadProjectFile {
   const bread = JSON.parse(readFileSync(breadPathFor(dir), 'utf-8')) as BreadProjectFile
   bread.assets = normalizeAssets(bread.assets)
-  bread.graphicsMode = normalizeGraphicsMode(bread.graphicsMode)
   bread.region = normalizeRegion(bread.region)
   return bread
 }
@@ -195,25 +199,26 @@ export function recentProjects(): RecentProject[] {
 
 /** Scaffold a fresh project (dir + .bread + entry crumb) and return it opened.
  *  `withBoilerplate` (default true, A.8) writes the commented frame-loop starter;
- *  off writes a bare `Graphics …` stub. */
+ *  off writes a bare `SetMode …` stub. New projects open in TEXT, MULTICOLOR — a
+ *  runtime switch, not a project identity, so no mode is stored in the `.bread`. */
 function scaffold(
   dir: string,
   name: string,
   temporary: boolean,
-  graphicsMode: GraphicsMode = DEFAULT_GRAPHICS_MODE,
   withBoilerplate = true,
   region: Region = DEFAULT_REGION
 ): OpenedProject {
   mkdirSync(dir, { recursive: true })
   const entry = 'main.crumb'
-  const content = withBoilerplate ? sampleMain(graphicsMode) : bareMain(graphicsMode)
+  const content = withBoilerplate
+    ? sampleMain(DEFAULT_GRAPHICS_MODE)
+    : bareMain(DEFAULT_GRAPHICS_MODE)
   writeFileSync(join(dir, entry), content, 'utf-8')
   writeBread(dir, {
     $format: 'bread',
     $version: BREAD_VERSION,
     name,
     entry,
-    graphicsMode,
     region,
     crumbs: [entry],
     assets: { ...EMPTY_ASSETS }
@@ -222,15 +227,14 @@ function scaffold(
 }
 
 /** Create a uniquely-named temporary project under <workspace>/temp. A temp
- *  project asks no questions (memory breadcraft-ide-architecture), so the graphics
- *  mode is the silent Phase-1 default (TEXT_MULTICOLOR) — passed EXPLICITLY here so
- *  the choice is visible and not coupled to scaffold's parameter default. */
+ *  project asks no questions (memory breadcraft-ide-architecture); it opens in the
+ *  common TEXT, MULTICOLOR mode, a runtime switch the user can flip in the starter. */
 export function createTempProject(): OpenedProject {
   const tempRoot = join(workspaceRootOrThrow(), TEMP_DIRNAME)
   mkdirSync(tempRoot, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const name = `temp-${stamp}`
-  return scaffold(join(tempRoot, name), name, true, DEFAULT_GRAPHICS_MODE)
+  return scaffold(join(tempRoot, name), name, true)
 }
 
 /** Open a project from its .bread file path. */
@@ -273,12 +277,12 @@ export async function openProjectViaDialog(
   return openProject(result.filePaths[0])
 }
 
-/** Create a new permanent project under <workspace>/projects. The graphics mode
- *  (chosen in the New-Project dialog, M1.T6) is persisted into the `.bread`; the
- *  boilerplate flag (default on, A.8) chooses starter vs. bare main.crumb. */
+/** Create a new permanent project under <workspace>/projects. No screen mode is chosen
+ *  up front (ScreenMode block): a project has no single mode — `SetMode` switches it at
+ *  runtime. The boilerplate flag (default on, A.8) chooses starter vs. bare main.crumb;
+ *  region (STAHL S5c) is still a real target choice and is persisted. */
 export function createProject(
   name: string,
-  graphicsMode: GraphicsMode = DEFAULT_GRAPHICS_MODE,
   withBoilerplate = true,
   region: Region = DEFAULT_REGION
 ): OpenedProject {
@@ -293,14 +297,7 @@ export function createProject(
   let dir = join(projectsRoot, slug)
   let n = 2
   while (existsSync(dir)) dir = join(projectsRoot, `${slug}-${n++}`)
-  return scaffold(
-    dir,
-    display,
-    false,
-    normalizeGraphicsMode(graphicsMode),
-    withBoilerplate,
-    normalizeRegion(region)
-  )
+  return scaffold(dir, display, false, withBoilerplate, normalizeRegion(region))
 }
 
 /** A filesystem-safe project slug: lowercase, spaces/underscores → hyphens, drop any

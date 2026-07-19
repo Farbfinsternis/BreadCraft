@@ -44,7 +44,7 @@ export function registerCrumb(vocabulary: VocabItem[]): void {
         // Constants are checked BEFORE commands/functions: a few names exist in
         // the SSOT both as a constant and as a command/function (TEXT, LEFT,
         // RIGHT). A line-based tokenizer can't use context to disambiguate, and
-        // those names appear in real code as constants (Graphics TEXT,
+        // those names appear in real code as constants (SetMode TEXT,
         // Joystick(LEFT)), so constant wins for consistent coloring. The real
         // lexer/parser disambiguates by context.
         [

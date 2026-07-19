@@ -91,9 +91,9 @@ describe('lexer: numbers', () => {
 
 describe('lexer: words (no grammar class — that is the parser job now, M2.T1)', () => {
   it('emits every identifier-shaped lexeme as a Word, known or not', () => {
-    // `Graphics` (a command) and `wibbleflop` (unknown) are BOTH just Words now —
-    // the lexer carries no SSOT class. `Graphics TEXT` is two plain Words.
-    expect(types(tokenize('Graphics TEXT', vocab))).toEqual([TokenType.Word, TokenType.Word])
+    // `SetMode` (a command) and `wibbleflop` (unknown) are BOTH just Words now —
+    // the lexer carries no SSOT class. `SetMode TEXT` is two plain Words.
+    expect(types(tokenize('SetMode TEXT', vocab))).toEqual([TokenType.Word, TokenType.Word])
     expect(tokenize('wibbleflop', vocab)[0].type).toBe(TokenType.Word)
     expect(tokenize('TEXT', vocab)[0].type).toBe(TokenType.Word)
   })
@@ -261,7 +261,7 @@ describe('lexer: the vertical-slice target', () => {
   })
 
   it('tracks line numbers across newlines', () => {
-    const t = tokenize('Graphics TEXT\nDrawText 0, 0, "HI"', vocab)
+    const t = tokenize('SetMode TEXT\nDrawText 0, 0, "HI"', vocab)
     const onLine2 = t.find((x) => x.line === 2 && x.value === 'DrawText')
     expect(onLine2).toMatchObject({ type: TokenType.Word, col: 1 })
   })

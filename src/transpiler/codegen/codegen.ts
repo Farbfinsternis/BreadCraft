@@ -317,9 +317,9 @@ class Generator {
   private readonly arrays = new Map<string, ArrayInfo>()
   private readonly records = new Map<string, RecordInfo>()
   private readonly consts = new Map<string, Expr>()
-  /** The display area set by the last `Graphics` (TEXT/BITMAP); drives requiresMode checks. */
+  /** The display area set by the last `SetMode` (TEXT/BITMAP); drives requiresMode checks. */
   private gfxArea: 'TEXT' | 'BITMAP' | undefined
-  /** The colour mode set by the last `Graphics` (HIRES/MULTICOLOR); UseSprite reads it
+  /** The colour mode set by the last `SetMode` (HIRES/MULTICOLOR); UseSprite reads it
    *  to decide whether a baked sprite is multicolor (spr_mcolor bit + shared colours). */
   private gfxColor: 'HIRES' | 'MULTICOLOR' | undefined
 
@@ -1477,7 +1477,7 @@ class Generator {
     const name = s.name.toLowerCase()
     const a = s.args
     switch (name) {
-      case 'graphics':
+      case 'setmode':
         this.genGraphics(s)
         break
       case 'vwait':
@@ -1560,7 +1560,7 @@ class Generator {
   }
 
   /**
-   * `Graphics <area>, <colormode>` → the VIC mode bits (Sprachdef §E, _preflight/
+   * `SetMode <area>, <colormode>` → the VIC mode bits (Sprachdef §E, _preflight/
    * tilemap.c). Phase 1: TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR.
    *   - MCM (multicolor) = $D016 bit 4 (VIC.ctrl2): set for MULTICOLOR, clear for HIRES.
    *   - BMM (bitmap)     = $D011 bit 5 (VIC.ctrl1): set for BITMAP, clear for TEXT.
@@ -1569,7 +1569,7 @@ class Generator {
   private genGraphics(s: CommandStmt): void {
     const area = this.constArg(s.args[0])
     // The color mode is optional and defaults to HIRES (the plain text screen, what
-    // conio gives you) — so `Graphics TEXT` alone is the common UI/text case.
+    // conio gives you) — so `SetMode TEXT` alone is the common UI/text case.
     const color = s.args.length >= 2 ? this.constArg(s.args[1]) : 'HIRES'
     if (area !== 'TEXT' && area !== 'BITMAP') {
       this.err(this.M.graphicsFirstArg(), s)
@@ -1586,7 +1586,7 @@ class Generator {
     }
     this.gfxArea = area
     this.gfxColor = color
-    this.emit(`/* Graphics ${area}, ${color} */`)
+    this.emit(`/* SetMode ${area}, ${color} */`)
     // BMM bit (bitmap vs text)
     if (area === 'BITMAP') this.emit('VIC.ctrl1 |= 0x20;')
     else this.emit('VIC.ctrl1 &= ~0x20;')
@@ -1633,7 +1633,7 @@ class Generator {
    * `UseTileset "id"` → bake the painted charset bytes into C, point the VIC at our
    * charset ($3000) + screen ($0400), and set the MC-text shared colours. The proven
    * pattern is _preflight/tilemap.c (Z.32/50/88–95). This is the $D018 piece that
-   * `Graphics` deliberately left out. Without an asset context (no project), an honest
+   * `SetMode` deliberately left out. Without an asset context (no project), an honest
    * error — the bytes can't be resolved.
    */
   private genUseTileset(s: CommandStmt): void {
@@ -1781,7 +1781,7 @@ class Generator {
    * `DrawImage "id"` → show the baked picture (B2.T4).
    *
    * The whole runtime cost of a picture lives here: point the VIC at the bitmap + screen
-   * page ($D018 — the piece `Graphics` deliberately leaves out, exactly like UseTileset's),
+   * page ($D018 — the piece `SetMode` deliberately leaves out, exactly like UseTileset's),
    * set the shared background ($D021), and copy the two 1000-byte colour planes into the
    * screen page and Color-RAM. `expensive` in the SSOT, and honestly so — ~2000 bytes moved.
    *
@@ -2020,7 +2020,7 @@ class Generator {
    * can — a clear error beats cryptic cc65/HW frustration. A variable slot is allowed
    * (the shape RAM math is runtime-safe), but then we can't pre-warn on out-of-range.
    *
-   * Colours: multicolor (from the project Graphics mode) sets the slot's MC bit +
+   * Colours: multicolor (from the current screen mode) sets the slot's MC bit +
    * the two SHARED registers (spr_mcolor0/1 = the project palette's shared pair, the
    * same coupling UseTileset uses). The INDIVIDUAL per-sprite colour (spr_color[slot])
    * has no per-sprite storage yet → a sensible default (white); a real per-sprite

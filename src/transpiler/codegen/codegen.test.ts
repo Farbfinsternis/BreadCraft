@@ -86,7 +86,7 @@ function fakeAssets(): AssetContext {
 
 describe('codegen: program frame', () => {
   it('emits the conio/c64 header and a main() function', () => {
-    const { code, errors } = gen('Graphics TEXT')
+    const { code, errors } = gen('SetMode TEXT')
     expect(errors).toEqual([])
     expect(code).toContain('#include <conio.h>')
     expect(code).toContain('#include <cbm.h>')
@@ -97,7 +97,7 @@ describe('codegen: program frame', () => {
 
 describe('codegen: setup commands → conio', () => {
   it('maps BorderColor / Cls / DrawText with color macros', () => {
-    const src = ['Graphics TEXT', 'BorderColor BLACK', 'Cls BLUE', 'DrawText 0, 0, "HI"'].join('\n')
+    const src = ['SetMode TEXT', 'BorderColor BLACK', 'Cls BLUE', 'DrawText 0, 0, "HI"'].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
     expect(code).toContain('bordercolor(COLOR_BLACK);')
@@ -113,11 +113,11 @@ describe('codegen: setup commands → conio', () => {
   it('Color sets the pen; text is HIRES (bit 3 clear, full nibble) in BOTH modes — Mixed-Mode', () => {
     // C64 Mixed-Mode (MIXED_MODE_FONT_PLAN F1): text cells leave bit 3 CLEAR so the VIC
     // draws crisp 8px glyphs even in a MULTICOLOR-text project (tiles set bit 3 themselves).
-    const hires = gen(['Graphics TEXT, HIRES', 'Color WHITE', 'DrawText 0, 0, "HI"'].join('\n'))
+    const hires = gen(['SetMode TEXT, HIRES', 'Color WHITE', 'DrawText 0, 0, "HI"'].join('\n'))
     expect(hires.errors).toEqual([])
     expect(hires.code).toContain('bc_pen = (COLOR_WHITE);')
 
-    const mc = gen(['Graphics TEXT, MULTICOLOR', 'Color YELLOW', 'DrawText 0, 0, "HI"'].join('\n'))
+    const mc = gen(['SetMode TEXT, MULTICOLOR', 'Color YELLOW', 'DrawText 0, 0, "HI"'].join('\n'))
     expect(mc.errors).toEqual([])
     expect(mc.code).toContain('bc_pen = (COLOR_YELLOW);')
     expect(mc.code).not.toContain('| 8') // text must NOT be folded into multicolor
@@ -459,39 +459,39 @@ describe('codegen: records (Type/Field/EndType, §C)', () => {
   })
 })
 
-describe('codegen: Graphics mode + VWait (Stufe 2, §E/§F)', () => {
+describe('codegen: SetMode + VWait (Stufe 2, §E/§F)', () => {
   it('maps VWait to waitvsync()', () => {
     const { code } = gen('VWait')
     expect(code).toContain('waitvsync();')
   })
 
-  it('Graphics TEXT, MULTICOLOR sets the MCM bit, clears BMM (text)', () => {
-    const { code, errors } = gen('Graphics TEXT, MULTICOLOR')
+  it('SetMode TEXT, MULTICOLOR sets the MCM bit, clears BMM (text)', () => {
+    const { code, errors } = gen('SetMode TEXT, MULTICOLOR')
     expect(errors).toEqual([])
     expect(code).toContain('VIC.ctrl2 |= 0x10;') // multicolor on
     expect(code).toContain('VIC.ctrl1 &= ~0x20;') // text (not bitmap)
   })
 
-  it('Graphics TEXT, HIRES clears both mode bits', () => {
-    const { code } = gen('Graphics TEXT, HIRES')
+  it('SetMode TEXT, HIRES clears both mode bits', () => {
+    const { code } = gen('SetMode TEXT, HIRES')
     expect(code).toContain('VIC.ctrl2 &= ~0x10;') // hires (not multicolor)
     expect(code).toContain('VIC.ctrl1 &= ~0x20;') // text
   })
 
-  it('Graphics BITMAP, MULTICOLOR sets both mode bits', () => {
-    const { code } = gen('Graphics BITMAP, MULTICOLOR')
+  it('SetMode BITMAP, MULTICOLOR sets both mode bits', () => {
+    const { code } = gen('SetMode BITMAP, MULTICOLOR')
     expect(code).toContain('VIC.ctrl1 |= 0x20;') // bitmap
     expect(code).toContain('VIC.ctrl2 |= 0x10;') // multicolor
   })
 
-  it('Graphics TEXT alone defaults to HIRES (color mode optional)', () => {
-    const { code, errors } = gen('Graphics TEXT')
+  it('SetMode TEXT alone defaults to HIRES (color mode optional)', () => {
+    const { code, errors } = gen('SetMode TEXT')
     expect(errors).toEqual([])
     expect(code).toContain('VIC.ctrl2 &= ~0x10;')
   })
 
   it('rejects BITMAP, HIRES (not a Phase-1 mode)', () => {
-    const { errors } = gen('Graphics BITMAP, HIRES')
+    const { errors } = gen('SetMode BITMAP, HIRES')
     expect(errors.some((e) => /nicht vorgesehen/.test(e))).toBe(true)
   })
 })
@@ -998,7 +998,7 @@ describe('codegen: UseSprite (P2.T3) — bake a painted sprite into the program'
 
   it('sets the multicolor bit + shared registers (from the default palette) in MULTICOLOR mode', () => {
     // fakeAssets has no .palette → DEFAULT_PALETTE (shared1=brown, shared2=lightblue).
-    const { code, errors } = gen('Graphics TEXT, MULTICOLOR\nUseSprite 1, "player"', fakeAssets())
+    const { code, errors } = gen('SetMode TEXT, MULTICOLOR\nUseSprite 1, "player"', fakeAssets())
     expect(errors).toEqual([])
     expect(code).toContain('VIC.spr_mcolor |= (1 << (1));')
     expect(code).toContain('VIC.spr_mcolor0 = COLOR_BROWN;')
@@ -1018,14 +1018,14 @@ describe('codegen: UseSprite (P2.T3) — bake a painted sprite into the program'
           ? JSON.stringify({ format: 'breadcraft.palette', background: 6, shared1: 2, shared2: 7 })
           : assets.readFile(rel)
     }
-    const { code, errors } = gen('Graphics TEXT, MULTICOLOR\nUseSprite 0, "player"', withPal)
+    const { code, errors } = gen('SetMode TEXT, MULTICOLOR\nUseSprite 0, "player"', withPal)
     expect(errors).toEqual([])
     expect(code).toContain('VIC.spr_mcolor0 = COLOR_RED;') // shared1 = 2
     expect(code).toContain('VIC.spr_mcolor1 = COLOR_YELLOW;') // shared2 = 7
   })
 
   it('clears the multicolor bit in HIRES mode', () => {
-    const { code, errors } = gen('Graphics TEXT, HIRES\nUseSprite 0, "player"', fakeAssets())
+    const { code, errors } = gen('SetMode TEXT, HIRES\nUseSprite 0, "player"', fakeAssets())
     expect(errors).toEqual([])
     expect(code).toContain('VIC.spr_mcolor &= ~(1 << (0));')
     expect(code).not.toContain('VIC.spr_mcolor0 =')
@@ -1348,7 +1348,7 @@ describe('codegen: AnimateTile (animated-charset trick)', () => {
 describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture on the screen', () => {
   // The Use/Draw pair the language uses everywhere (UseTileset→DrawMap, UseSprite→Sprite):
   // UseImage bakes, DrawImage shows.
-  const SRC = 'Graphics BITMAP, MULTICOLOR\nUseImage "titel"\nDrawImage "titel"\n'
+  const SRC = 'SetMode BITMAP, MULTICOLOR\nUseImage "titel"\nDrawImage "titel"\n'
 
   it('links the bitmap into the bank instead of copying it (the RAM-halving decision)', () => {
     const { code, errors } = gen(SRC, fakeAssets())
@@ -1383,7 +1383,7 @@ describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture 
   })
 
   it('a picture + a tile game: the charset moves out of the bitmap\'s way, each mode gets its own $D018', () => {
-    const { code, errors } = gen(`${SRC}Graphics TEXT, MULTICOLOR\nUseTileset "main"\n`, fakeAssets())
+    const { code, errors } = gen(`${SRC}SetMode TEXT, MULTICOLOR\nUseTileset "main"\n`, fakeAssets())
     expect(errors).toEqual([])
     // The charset drops from its usual $7000 to $5000 — the bitmap owns the bank's top.
     expect(code).toContain('#define BC_CHARSET ((unsigned char*)0x5000)')
@@ -1392,7 +1392,7 @@ describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture 
   })
 
   it('UseImage emits NO runtime code — the bake is the linker\'s job, hence `cheap`', () => {
-    const { code } = gen('Graphics BITMAP, MULTICOLOR\nUseImage "titel"\n', fakeAssets())
+    const { code } = gen('SetMode BITMAP, MULTICOLOR\nUseImage "titel"\n', fakeAssets())
     // The bytes are there…
     expect(code).toContain('const unsigned char img_titel[8000] = {')
     // …but nothing runs: no VIC pokes, no copy. All of that belongs to DrawImage.
@@ -1413,7 +1413,7 @@ describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture 
     // The shape a real game wants: the bake sits in the setup, GoTitle() shows the picture.
     // A walk-order check would reject this (the DrawMap trap); the pre-scan doesn't.
     const { code, errors } = gen(
-      'Function GoTitle()\n  Graphics BITMAP, MULTICOLOR\n  DrawImage "titel"\nEnd Function\nUseImage "titel"\nGoTitle\n',
+      'Function GoTitle()\n  SetMode BITMAP, MULTICOLOR\n  DrawImage "titel"\nEnd Function\nUseImage "titel"\nGoTitle\n',
       fakeAssets()
     )
     expect(errors).toEqual([])
@@ -1428,7 +1428,7 @@ describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture 
   })
 
   it('DrawImage without UseImage is an honest error — like DrawMap without UseTileset', () => {
-    const { errors } = gen('Graphics BITMAP, MULTICOLOR\nDrawImage "titel"\n', fakeAssets())
+    const { errors } = gen('SetMode BITMAP, MULTICOLOR\nDrawImage "titel"\n', fakeAssets())
     expect(errors.length).toBe(1)
     expect(errors[0]).toMatch(/kein Bild eingebacken/)
     expect(errors[0]).toMatch(/UseImage "titel"/) // says exactly what to do

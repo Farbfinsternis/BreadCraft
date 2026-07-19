@@ -267,7 +267,7 @@
     {
       "id": "GfxArea",
       "i18nKey": "enum.gfxarea",
-      "$note": "Erste Achse des Graphics-Befehls.",
+      "$note": "Erste Achse des SetMode-Befehls.",
       "values": [
         {
           "name": "TEXT",
@@ -286,7 +286,7 @@
     {
       "id": "GfxColor",
       "i18nKey": "enum.gfxcolor",
-      "$note": "Zweite Achse des Graphics-Befehls.",
+      "$note": "Zweite Achse des SetMode-Befehls.",
       "values": [
         {
           "name": "HIRES",
@@ -673,7 +673,7 @@
     },
     {
       "id": "cmd-graphics",
-      "name": "Graphics",
+      "name": "SetMode",
       "kind": "command",
       "category": "graphics-setup",
       "i18nKey": "cmd.graphics",
@@ -682,7 +682,7 @@
       "since": "phase1",
       "proven": true,
       "transpile": "setzt $D011/$D016/$D018 — Referenz _preflight/tilemap.c",
-      "$note": "Phase 1: TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR. Der Textmodus IST die Tilemap-Engine (Font=Tileset).",
+      "$note": "Ein Laufzeit-Schalter, den du jederzeit umlegst (kein einmaliges Setup): TEXT↔BITMAP im Spiel wechseln ist der gewollte Weg (ITD: Titelbild→Kachel-Spiel→Titelbild). Phase 1: TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR. Der Textmodus IST die Tilemap-Engine (Font=Tileset). Falle: nach BITMAP→TEXT UseTileset erneut rufen (richtet $D018), und kein DrawText auf ein Bitmap-Titelbild.",
       "params": [
         {
           "name": "area",
@@ -787,7 +787,7 @@
       "cost": "cheap",
       "since": "phase1",
       "proven": true,
-      "$note": "Lädt den Zeichensatz = die Tile-Palette (256 Tiles à 8×8 = 2 KB). Darstellung nach gewähltem Graphics TEXT,…-Modus.",
+      "$note": "Lädt den Zeichensatz = die Tile-Palette (256 Tiles à 8×8 = 2 KB). Darstellung nach gewähltem SetMode TEXT,…-Modus. Nach einem SetMode BITMAP→TEXT erneut rufen, um $D018 wieder auf den Zeichensatz zu richten (der Bake passiert nur beim ersten Mal).",
       "params": [
         {
           "name": "id",
@@ -869,7 +869,7 @@
       "cost": "cheap",
       "since": "phase1",
       "proven": true,
-      "$note": "Billig in TEXT-Modus, teuer in BITMAP-Modus. HUD/Setup. Name DrawText (NICHT 'Text'): 'Text' kollidierte case-insensitiv mit der Grafikmodus-Konstante TEXT (Graphics TEXT,…), sodass Lexer/Editor sie kontextfrei nicht trennen konnten. DrawText reiht sich in DrawMap/DrawImage ein. KEIN 'Text'-Alias — der würde die Kollision zurückholen.",
+      "$note": "Billig in TEXT-Modus, teuer in BITMAP-Modus. HUD/Setup. Name DrawText (NICHT 'Text'): 'Text' kollidierte case-insensitiv mit der Grafikmodus-Konstante TEXT (SetMode TEXT,…), sodass Lexer/Editor sie kontextfrei nicht trennen konnten. DrawText reiht sich in DrawMap/DrawImage ein. KEIN 'Text'-Alias — der würde die Kollision zurückholen.",
       "params": [
         {
           "name": "x",
@@ -1898,7 +1898,7 @@
   "examples": {
     "$comment": "Code-Snippets für Hover-Doku. Code ist sprachneutral (nicht lokalisiert). Verweis via entry.exampleId.",
     "joystick.basic": "If Joystick(LEFT) Then px = px - 1",
-    "graphics.tiles": "Graphics TEXT, MULTICOLOR\nUseTileset \"cave\"\nDrawMap \"level1\"",
+    "graphics.tiles": "SetMode TEXT, MULTICOLOR\nUseTileset \"cave\"\nDrawMap \"level1\"",
     "frameloop": "While 1\n    Sprite \"Player\", px, py\n    VWait\nWend",
     "asm.escape": "; Hardware-Ventil: roher 6502-Asm für das, was die Sprache bewusst weglässt\n; (z.B. Raster-IRQ für Sprite-Multiplexing → mehr als 8 Sprites)\nAsm\n    sei\n    lda #<irq\n    sta $0314\n    lda #>irq\n    sta $0315\n    cli\nEndAsm"
   }

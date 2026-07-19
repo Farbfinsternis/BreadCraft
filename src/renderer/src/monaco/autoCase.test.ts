@@ -50,7 +50,7 @@ describe('autoCase: protects variables (the N4 cases)', () => {
 describe('autoCase: still canonicalizes where a CRUMB word is unambiguous', () => {
   it('a constant in argument position → cased (Cls black → BLACK)', () => {
     expect(decide('Cls black', 'black', 'constant')).toBe(true)
-    expect(decide('Graphics text', 'text', 'constant')).toBe(true)
+    expect(decide('SetMode text', 'text', 'constant')).toBe(true)
   })
 
   it('a called function → cased (joystick(LEFT) → Joystick, max(3) → Max)', () => {

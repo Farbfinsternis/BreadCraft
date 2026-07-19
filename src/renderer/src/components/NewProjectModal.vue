@@ -2,36 +2,31 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUiStore } from '@renderer/stores/ui'
-import type { GraphicsMode, Region } from '@shared/ipc'
+import type { Region } from '@shared/ipc'
 
 /**
- * The New-Project dialog (M1.T6): name + graphics-mode choice + boilerplate toggle.
- * Replaces the bare name prompt — the graphics mode is the project's root SSOT
- * (IDE.md §2.1), so it's chosen up front. All three Phase-1 modes are shown; only
- * the enabled ones are selectable (Phase 1 = TEXT_MULTICOLOR), the rest read
- * "coming later". Driven by ui.newProject; mounted once in App.vue. Mirrors
- * PromptModal's overlay (scrim + card, @click.self cancels; Enter confirms, Esc cancels).
+ * The New-Project dialog: name + target region + boilerplate toggle. There is no
+ * screen-mode choice — the mode is a runtime `SetMode` switch, not a project identity
+ * (ScreenMode block); new projects start in TEXT, MULTICOLOR, freely changed in the
+ * starter. Driven by ui.newProject; mounted once in App.vue. Mirrors PromptModal's
+ * overlay (scrim + card, @click.self cancels; Enter confirms, Esc cancels).
  */
 
 const { t } = useI18n()
 const ui = useUiStore()
 
 const name = ref('')
-const mode = ref<GraphicsMode>('TEXT_MULTICOLOR')
 const region = ref<Region>('PAL')
 const boilerplate = ref(true)
 const inputRef = ref<HTMLInputElement | null>(null)
 
-// On open: seed fields, default the mode to the first enabled choice + region to the
-// first listed (PAL), focus name.
+// On open: seed fields, default region to the first listed (PAL), focus name.
 watch(
   () => ui.newProject,
   async (req) => {
     if (!req) return
     name.value = ''
     boilerplate.value = true
-    const firstEnabled = req.modes.find((m) => !m.disabled)
-    if (firstEnabled) mode.value = firstEnabled.value
     if (req.regions[0]) region.value = req.regions[0].value
     await nextTick()
     inputRef.value?.focus()
@@ -48,7 +43,6 @@ function confirm(): void {
   }
   ui.resolveNewProject({
     name: trimmed,
-    graphicsMode: mode.value,
     region: region.value,
     withBoilerplate: boilerplate.value
   })
@@ -80,26 +74,6 @@ function cancel(): void {
         @keydown.enter="confirm"
         @keydown.esc="cancel"
       />
-
-      <span class="bc-label np-field-label">{{ ui.newProject.modeLabel }}</span>
-      <ul class="np-modes">
-        <li v-for="m in ui.newProject.modes" :key="m.value">
-          <label class="np-mode" :class="{ 'np-mode-disabled': m.disabled }">
-            <input
-              type="radio"
-              name="np-mode"
-              :value="m.value"
-              :checked="mode === m.value"
-              :disabled="m.disabled"
-              @change="mode = m.value"
-            />
-            <span class="np-mode-text">
-              <span class="np-mode-name">{{ m.label }}</span>
-              <span v-if="m.hint" class="np-mode-hint">{{ m.hint }}</span>
-            </span>
-          </label>
-        </li>
-      </ul>
 
       <span class="bc-label np-field-label">{{ ui.newProject.regionLabel }}</span>
       <ul class="np-modes">

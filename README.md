@@ -70,19 +70,26 @@ you paint here is what runs on the C64.*
 - **Sprites:** define a sprite, place it, show/hide it (`UseSprite`, `Sprite`,
   `ShowSprite` / `HideSprite`). The fiddly hardware bits (the 9th X bit, the
   shared colour registers) are handled for you.
+- **Bitmap pictures:** paint a full-screen multicolor picture in the image
+  editor (or import one), bake it in with `UseImage` and show it with
+  `DrawImage` — a title screen or splash, switched on with
+  `SetMode BITMAP, MULTICOLOR` and back to the tile world with
+  `SetMode TEXT, MULTICOLOR`.
 - **On-screen text and a HUD:** draw text (`DrawText`) in a chosen pen colour
   (`Color`), turn a number into text (`Str$`) and build small strings — enough
   for a score, lives, or a "GAME OVER". (Richer string surgery — `Mid$`,
   `Left$`, … — is honestly deferred, not silently broken.)
 - **Joystick input** (`Joystick`).
-- **Graphics-mode setup** (`Graphics TEXT, MULTICOLOR`), frame sync (`VWait`),
-  and a **PAL / NTSC choice** per project — it sets both the per-frame budget the
-  health bar measures against and the region the emulator boots in, instead of
-  silently assuming 50 Hz.
+- **A runtime screen-mode switch** (`SetMode`) — flip between a bitmap title and a
+  tile world whenever you like, not once at the top — plus frame sync (`VWait`) and
+  a **PAL / NTSC choice** per project that sets both the per-frame budget the health
+  bar measures against and the region the emulator boots in, instead of silently
+  assuming 50 Hz.
 - **Editors**, sharing one drawing engine: a project palette, a PETSCII/charset
-  editor, a tilemap editor, and a sprite editor. Assets live on disk as
-  `.petscii` / `.tilemap` / `.palette` / `.sprite`, referenced from the `.bread`
-  manifest; the editor and the build read them through one shared format.
+  editor, a tilemap editor, a sprite editor, and a full-screen image (bitmap)
+  editor. Assets live on disk as `.petscii` / `.tilemap` / `.palette` / `.sprite`
+  / `.image`, referenced from the `.bread` manifest; the editor and the build read
+  them through one shared format.
 - **Health bars:** live RAM usage (read from the linker map — exact) and a rough
   per-frame cost estimate, so you can feel the budget while you write.
 - **German and English UI** — and the compiler's error messages now follow the
@@ -96,19 +103,19 @@ This is the honest part.
   cc65 it bundles is the Windows build. macOS and Linux are not supported yet —
   cross-platform support arrives later, hand in hand with a first-run download
   that fetches the toolchain for you. Until then, this is a Windows program.
-- **No finished game has been built with it yet.** The goal is that a simple
-  platformer (the in-progress test game *Into The Deep*), a Sokoban-style puzzle,
-  and a Maniac-Mansion-style adventure can all be built — that bar has not been
-  reached.
+- **The three-game bar is not reached yet.** The platformer test game
+  *Into The Deep* is playable end to end — a bitmap title screen, a tile level,
+  collect / win / lose, and restart — but the goal is that a platformer, a
+  Sokoban-style puzzle, *and* a Maniac-Mansion-style adventure can all be built.
+  Only the platformer stands so far.
 - **No sound.** There is a placeholder sound editor, but the language has no
   sound commands and the SID is not driven yet.
 - **Keyboard input is deferred.** Only the joystick can be read today;
   `KeyDown` / `KeyHit` report an honest "not implemented yet" rather than
   producing broken code.
-- **Only `TEXT, MULTICOLOR`.** The language knows the other mode bits
-  (`BITMAP`, `HIRES`), but the editors and new projects currently centre on
-  multicolor text; the other modes are visible-but-disabled when you create a
-  project.
+- **No hi-res mode yet.** The tile world and the bitmap pictures are both
+  multicolor. The language knows the `HIRES` bit, but the editors centre on
+  multicolor, so `SetMode TEXT, HIRES` has no first-class authoring path yet.
 - **More than 8 sprites needs assembly.** There is an `Asm` … `EndAsm` escape
   hatch, but no built-in sprite multiplexer yet.
 - **The embedded emulator is not wired up.** To run a `.prg`, BreadCraft

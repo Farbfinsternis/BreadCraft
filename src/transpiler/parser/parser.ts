@@ -470,7 +470,7 @@ class Parser {
 
   /**
    * Command / statement-function arguments: optional wrapping parens (`Cls(BLACK)`,
-   * `Heal(5, 3)`) OR a bare list (`Graphics TEXT, MULTICOLOR`, `Heal 5`). A leading '('
+   * `Heal(5, 3)`) OR a bare list (`SetMode TEXT, MULTICOLOR`, `Heal 5`). A leading '('
    * wraps only when it spans the whole list; otherwise it's a grouped first argument.
    */
   private parseArgs(): Expr[] {

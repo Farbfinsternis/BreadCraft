@@ -30,13 +30,13 @@ function resolveEnumName(ssot: Ssot, enumId: string, value: string): string {
 }
 
 /**
- * Build the `Graphics …` source line for a project's graphics mode, with the area
- * and colour keyword spelled exactly as the SSOT defines them. Example:
- *   TEXT_MULTICOLOR → "Graphics TEXT, MULTICOLOR"
+ * Build the `SetMode …` source line for a given screen mode, with the area and
+ * colour keyword spelled exactly as the SSOT defines them. Example:
+ *   TEXT_MULTICOLOR → "SetMode TEXT, MULTICOLOR"
  */
 export function graphicsCommandFor(ssot: Ssot, mode: GraphicsMode): string {
   const { area, color } = splitMode(mode)
   const areaName = resolveEnumName(ssot, GFX_AREA_ENUM, area)
   const colorName = resolveEnumName(ssot, GFX_COLOR_ENUM, color)
-  return `Graphics ${areaName}, ${colorName}`
+  return `SetMode ${areaName}, ${colorName}`
 }

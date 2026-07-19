@@ -127,7 +127,6 @@ async function newProject(): Promise<void> {
   if (!choice) return
   const opened = await window.breadcraft.project.create(
     choice.name,
-    choice.graphicsMode,
     choice.withBoilerplate,
     choice.region
   )

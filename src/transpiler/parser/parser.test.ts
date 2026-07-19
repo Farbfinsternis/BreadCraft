@@ -43,10 +43,10 @@ function firstStmt(src: string): Statement {
 }
 
 describe('parser: command statements', () => {
-  it('parses  Graphics TEXT  (command + constant arg)', () => {
-    const s = firstStmt('Graphics TEXT') as CommandStmt
+  it('parses  SetMode TEXT  (command + constant arg)', () => {
+    const s = firstStmt('SetMode TEXT') as CommandStmt
     expect(s.kind).toBe('CommandStmt')
-    expect(s.name).toBe('Graphics')
+    expect(s.name).toBe('SetMode')
     expect(s.args).toHaveLength(1)
     expect(s.args[0].kind).toBe('ConstantRef')
     expect((s.args[0] as { name: string }).name).toBe('TEXT')
@@ -141,13 +141,13 @@ describe('parser: separators and comments', () => {
   })
 
   it('splits multiple statements on one line via :', () => {
-    const { program, errors } = parseSrc('Graphics TEXT : BorderColor BLACK')
+    const { program, errors } = parseSrc('SetMode TEXT : BorderColor BLACK')
     expect(errors).toEqual([])
     expect(program.body.map((s) => s.kind)).toEqual(['CommandStmt', 'CommandStmt'])
   })
 
   it('parses statements across newlines', () => {
-    const { program } = parseSrc('Graphics TEXT\nDrawText 0, 0, "HI"')
+    const { program } = parseSrc('SetMode TEXT\nDrawText 0, 0, "HI"')
     expect(program.body).toHaveLength(2)
   })
 })

@@ -17,14 +17,14 @@
   "color.gray3": "Light gray",
 
   "enum.color": "The 16 fixed C64 colours. Usable anywhere a colour is asked for — you write the name, not the number.",
-  "enum.gfxarea": "The screen mode for Graphics.",
+  "enum.gfxarea": "The screen mode for SetMode.",
   "gfx.text": "Text mode — also the tilemap engine (font = tileset).",
   "gfx.bitmap": "Bitmap mode — freely painted pixels instead of tiles.",
-  "enum.gfxcolor": "The colour scheme for Graphics.",
+  "enum.gfxcolor": "The colour scheme for SetMode.",
   "gfx.hires": "High resolution: fine pixels, sparing with colour.",
   "gfx.multicolor": "Multicolour: coarser pixels, but more colourful.",
 
-  "cmd.graphics": "Sets the stage: picks which mode the screen runs in. Belongs at the very start, before anything visible happens.",
+  "cmd.graphics": "A switch you flip whenever you like: picks which mode the screen runs in right now. Flip it mid-game to go from a bitmap title to a tile world and back — that's the intended way, not a one-time setup.",
   "param.graphics.area": "The screen's mode — TEXT (the tilemap engine: letters & tiles) or BITMAP (freely painted pixels).",
   "param.graphics.colormode": "How many colours per dot: HIRES (fine, fewer colours) or MULTICOLOR (coarser, but more colourful).",
   "cmd.cls": "Wipes the inner play area and floods it with one colour in a single stroke. It leaves the border alone — and sweeps away whatever is already on stage, so call it before the show begins.",

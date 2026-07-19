@@ -1,34 +1,14 @@
-import type { NewProjectRequest, ModeChoice, RegionChoice } from '@renderer/stores/ui'
+import type { NewProjectRequest, RegionChoice } from '@renderer/stores/ui'
 
 type T = (key: string) => string
 
 /**
- * Build the New-Project dialog request (M1.T6). ONE place the dialog's content
- * lives, so the toolbar and the welcome page open the exact same dialog. The
- * graphics-mode list shows all three Phase-1 modes (IDE.md §2.1). TEXT_MULTICOLOR
- * and BITMAP_MULTICOLOR (BRONZE B2.T6) are enabled; TEXT_HIRES stays
- * visible-but-disabled ("coming later"), matching the build's real coverage.
+ * Build the New-Project dialog request. ONE place the dialog's content lives, so the
+ * toolbar and the welcome page open the exact same dialog. There is no screen-mode
+ * choice: a project has no single mode — `SetMode` switches it at runtime (ScreenMode
+ * block). New projects start in TEXT, MULTICOLOR, freely changed in the starter.
  */
 export function buildNewProjectRequest(t: T): NewProjectRequest {
-  const later = ` ${t('newproject.comingLater')}`
-  const modes: ModeChoice[] = [
-    {
-      value: 'TEXT_MULTICOLOR',
-      label: t('newproject.mode.textMulticolor'),
-      hint: t('newproject.mode.textMulticolor.hint')
-    },
-    {
-      value: 'TEXT_HIRES',
-      label: t('newproject.mode.textHires') + later,
-      hint: t('newproject.mode.textHires.hint'),
-      disabled: true
-    },
-    {
-      value: 'BITMAP_MULTICOLOR',
-      label: t('newproject.mode.bitmapMulticolor'),
-      hint: t('newproject.mode.bitmapMulticolor.hint')
-    }
-  ]
   // Target region (STAHL S5c) — both real choices, PAL first (the default). Picks the
   // PERF budget AND the region VICE boots, so it's a conscious choice, not a silent 50 Hz.
   const regions: RegionChoice[] = [
@@ -47,8 +27,6 @@ export function buildNewProjectRequest(t: T): NewProjectRequest {
     title: t('newproject.title'),
     nameLabel: t('newproject.nameLabel'),
     namePlaceholder: t('newproject.namePlaceholder'),
-    modeLabel: t('newproject.modeLabel'),
-    modes,
     regionLabel: t('newproject.regionLabel'),
     regions,
     boilerplateLabel: t('newproject.boilerplate'),

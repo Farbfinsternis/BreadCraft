@@ -104,7 +104,7 @@ export type Expr =
 
 // ---- Statements ----
 
-/** A command invocation: `Graphics TEXT`, `DrawText 5, 5, "Hi"`. */
+/** A command invocation: `SetMode TEXT`, `DrawText 5, 5, "Hi"`. */
 export interface CommandStmt extends Pos {
   kind: 'CommandStmt'
   name: string

@@ -7,6 +7,31 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-07-19
+
+### Geändert
+- **`Graphics` heißt jetzt `SetMode` — und der Grafik-Modus ist ehrlich ein Laufzeit-Schalter.**
+  Der Auslöser kam aus dem eigenen Spiel: Into The Deep ruft den Befehl mitten im Spiel
+  mehrfach (Bitmap-Titelbild → Kachel-Welt → zurück). Der alte Name `Graphics` klang nach
+  einer einmaligen Deklaration ganz oben — falsch, denn der VIC-Modus ist eine Eigenschaft
+  *dessen, was gerade gezeigt wird*, keine Identität des ganzen Projekts. Deshalb:
+  - **`Graphics` → `SetMode`** (ein Verb; harte Umbenennung, kein Alias). `Use…` blieb bewusst
+    tabu: `Use…` heißt in CRUMB „einmal zur Bauzeit einbacken", ein Moduswechsel ist das
+    Gegenteil — ein wiederholter Laufzeit-Akt.
+  - **Die Beschreibung + der Sprach-Guide sind neu geschrieben:** vom „bau die Bühne einmal
+    ganz oben" zum „ein Schalter, den du jederzeit umlegst". Dokumentiert sind auch die zwei
+    Fallen beim Zurückschalten: nach `SetMode BITMAP → TEXT` `UseTileset` erneut rufen (richtet
+    $D018 wieder auf den Zeichensatz; der Bake passiert nur beim ersten Mal), und kein
+    `DrawText` auf ein Bitmap-Titelbild (dort ist die Screen-Seite die Farbebene des Bildes).
+- **Beim Anlegen eines Projekts gibt es keine Grafik-Modus-Wahl mehr.** Sie war reine
+  Zeremonie — ein Projekt hat keinen einen Modus, `SetMode` schaltet ihn zur Laufzeit. Neue
+  Projekte starten mit `SetMode TEXT, MULTICOLOR` in der Startvorlage (frei änderbar); die
+  Region-Wahl (PAL/NTSC) bleibt, weil sie ein echtes Ziel setzt. Das in 0.2.16 freigeschaltete
+  „Bitmap, Multicolor"-Startprojekt entfällt damit als eigener Modus: ein Titelbild-Spiel baut
+  man, indem man `SetMode BITMAP, MULTICOLOR` schreibt — genau der Laufzeit-Weg, den ITD geht.
+  Bestehende `.bread`-Dateien mit altem `graphicsMode`-Feld werden klaglos weitergelesen; das
+  Feld wird ignoriert und nicht mehr geschrieben.
+
 ## [0.2.16] - 2026-07-18
 
 ### Hinzugefügt

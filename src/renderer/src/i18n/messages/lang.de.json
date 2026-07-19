@@ -17,14 +17,14 @@
   "color.gray3": "Hellgrau",
 
   "enum.color": "Die 16 festen C64-Farben. Überall nutzbar, wo eine Farbe verlangt wird — Du schreibst den Namen, nicht die Zahl.",
-  "enum.gfxarea": "Die Betriebsart des Bildschirms für Graphics.",
+  "enum.gfxarea": "Die Betriebsart des Bildschirms für SetMode.",
   "gfx.text": "Textmodus — zugleich die Tilemap-Engine (Font = Tileset).",
   "gfx.bitmap": "Bitmap-Modus — frei gemalte Pixel statt Kacheln.",
-  "enum.gfxcolor": "Das Farbverfahren für Graphics.",
+  "enum.gfxcolor": "Das Farbverfahren für SetMode.",
   "gfx.hires": "Hochauflösend: feine Pixel, dafür sparsam mit Farbe.",
   "gfx.multicolor": "Mehrfarbig: gröbere, aber buntere Pixel.",
 
-  "cmd.graphics": "Baut die Bühne: legt fest, in welchem Modus der Bildschirm arbeitet. Gehört an den Anfang, bevor etwas Sichtbares passiert.",
+  "cmd.graphics": "Ein Schalter, den du jederzeit umlegst: legt fest, in welchem Modus der Bildschirm gerade arbeitet. Leg ihn mitten im Spiel um, um von einem Bitmap-Titel in die Kachel-Welt und zurück zu wechseln — das ist der gewollte Weg, kein einmaliges Setup.",
   "param.graphics.area": "Die Betriebsart der Fläche — TEXT (die Tilemap-Engine: Buchstaben & Tiles) oder BITMAP (frei gemalte Pixel).",
   "param.graphics.colormode": "Wie viele Farben pro Punkt: HIRES (fein, weniger Farbe) oder MULTICOLOR (gröber, dafür bunter).",
   "cmd.cls": "Putzt die innere Spielfläche und streicht sie in einem Rutsch in einer Farbe. Den Rahmen lässt es in Ruhe — und was schon auf der Bühne steht, fegt es mit weg: also vor der Vorstellung aufrufen.",

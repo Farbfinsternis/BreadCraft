@@ -123,23 +123,29 @@ wirst.
 Behalt das Theaterbild im Hinterkopf, ich komme immer wieder darauf zurück. Fangen
 wir mit der Vorbereitung an.
 
-### Den Bildschirm vorbereiten
+### Den Bildschirm einstellen
 
 ```
-Graphics TEXT
+SetMode TEXT
 ```
 
-Bevor die Vorstellung beginnt, muss erst einmal die Bühne stehen, und genau das
-macht `Graphics`. Der Befehl legt fest, in welcher Betriebsart der Bildschirm
-arbeitet. Davon gibt es mehrere, und ich wette, Du bist schon ganz neugierig, was es
-mit ihnen auf sich hat. Aber lass uns das Schritt für Schritt angehen. Für den
-Anfang ist `Graphics TEXT` Dein bester Freund. Das ist der ganz normale
-Text-Bildschirm, auf dem sich Buchstaben und Zahlen am wohlsten fühlen.
+Bevor die Vorstellung beginnt, muss die Bühne eingerichtet sein, und genau dafür ist
+`SetMode` da. Der Befehl legt fest, in welcher Betriebsart der Bildschirm *gerade*
+arbeitet. Und dieses „gerade" ist wörtlich gemeint: `SetMode` ist kein einmaliger
+Aufbau, den Du ganz oben abhakst und dann nie wieder anfasst, sondern ein Schalter,
+den Du jederzeit umlegen darfst. Mitten im Spiel von einem gemalten Titelbild in die
+Kachel-Welt wechseln und später wieder zurück? Genau so ist es gedacht, die Bühne
+darf sich während der Vorstellung komplett verwandeln.
 
-Schreib diese Zeile am besten weit nach oben in Dein Programm. Dann steht die Bühne,
-das Licht ist an, und alles, was danach auf den Bildschirm kommt, weiß auch, wo es
-hingehört. Vergisst Du sie, stolpern die nächsten Befehle ein bisschen im Dunkeln
-herum. Also: erst die Bühne, dann die Schauspieler.
+Betriebsarten gibt es mehrere, und ich wette, Du bist schon neugierig, was es mit
+ihnen auf sich hat. Aber der Reihe nach. Für den Anfang ist `SetMode TEXT` Dein
+bester Freund. Das ist der ganz normale Text-Bildschirm, auf dem sich Buchstaben und
+Zahlen am wohlsten fühlen.
+
+Schreib so eine Zeile am besten weit nach oben in Dein Programm. Dann steht die Bühne
+für die erste Szene, das Licht ist an, und alles, was danach auf den Bildschirm kommt,
+weiß auch, wo es hingehört. Vergisst Du sie, stolpern die nächsten Befehle ein bisschen
+im Dunkeln herum. Also: erst die Bühne einstellen, dann die Schauspieler.
 
 Ein Gesetz ist das aber nicht. Gemeint sind nur die Befehle, die wirklich etwas auf
 dem Bildschirm anstellen. Alles, was bloß im Hintergrund Dinge vorbereitet, darf
@@ -148,6 +154,16 @@ später auftauchen soll oder wie schnell sie sich bewegt, lange bevor die Bühne
 Das ist wie der Regisseur, der hinter dem Vorhang schon alles durchspricht, während
 das Publikum noch im Foyer steht. Wie Du solche Werte festlegst, schauen wir uns
 gleich an.
+
+> **Zwei Kleinigkeiten für später, wenn Du zwischen Bild und Kacheln hin- und
+> herschaltest.** Beim reinen Text-Bildschirm brauchst Du Dir darüber noch keine
+> Gedanken zu machen, heb Dir das für den Tag auf, an dem Du ein Titelbild einbaust.
+> *Erstens:* Kommst Du von `SetMode BITMAP` zurück nach `SetMode TEXT`, ruf
+> `UseTileset` noch einmal auf. Das richtet die Bühnentechnik wieder auf Deinen
+> Zeichensatz aus (das eigentliche Einbacken passiert nur beim allerersten Mal).
+> *Zweitens:* Mal kein `DrawText` auf ein gemaltes Bitmap-Titelbild. Dort ist die
+> „Textebene" in Wahrheit die Farbebene des Bildes, und einzelne Buchstaben zerhacken
+> Dir die Farben. Titel-Schrift gehört direkt ins Bild gemalt.
 
 ### Aufräumen und einfärben
 
@@ -200,7 +216,7 @@ oben). Was in den Anführungszeichen steht, erscheint auf dem Schirm.
 Und schon haben wir gemeinsam unser erstes richtiges Programm:
 
 ```
-Graphics TEXT
+SetMode TEXT
 BorderColor BLUE
 Cls BLACK
 DrawText 5, 10, "HALLO WELT"
@@ -563,7 +579,7 @@ stupst BreadCraft Dich freundlich an und erinnert Dich daran. Kein Drama.
 Hier steckt alles Wichtige aus diesem Heft in einem einzigen kleinen Programm:
 
 ```
-Graphics TEXT
+SetMode TEXT
 BorderColor BLUE
 Cls BLACK
 

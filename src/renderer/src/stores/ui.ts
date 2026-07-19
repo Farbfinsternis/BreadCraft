@@ -1,17 +1,8 @@
 import { reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { GraphicsMode, Region } from '@shared/ipc'
+import type { Region } from '@shared/ipc'
 
 export type CollapsiblePanel = 'explorer' | 'outliner' | 'console'
-
-/** One selectable graphics mode in the New-Project dialog. Disabled modes show as
- *  "coming later" (M1.T6: only TEXT_MULTICOLOR is enabled in Phase 1). */
-export interface ModeChoice {
-  value: GraphicsMode
-  label: string
-  hint?: string
-  disabled?: boolean
-}
 
 /** One selectable target region in the New-Project dialog (STAHL S5c: PAL | NTSC). */
 export interface RegionChoice {
@@ -20,13 +11,12 @@ export interface RegionChoice {
   hint?: string
 }
 
-/** A New-Project dialog request (name + mode + boilerplate toggle). */
+/** A New-Project dialog request (name + region + boilerplate toggle). No screen-mode
+ *  choice: the mode is a runtime `SetMode` switch, not a project identity (ScreenMode block). */
 export interface NewProjectRequest {
   title: string
   nameLabel: string
   namePlaceholder?: string
-  modeLabel: string
-  modes: ModeChoice[]
   regionLabel: string
   regions: RegionChoice[]
   boilerplateLabel: string
@@ -36,7 +26,6 @@ export interface NewProjectRequest {
 /** The user's answer to the New-Project dialog (null = cancelled). */
 export interface NewProjectResult {
   name: string
-  graphicsMode: GraphicsMode
   region: Region
   withBoilerplate: boolean
 }

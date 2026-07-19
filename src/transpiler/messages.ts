@@ -295,10 +295,10 @@ const DE_CODEGEN: CodegenMessages = {
   stringFnDeferred: (name) =>
     `${name} kommt mit der vollen String-Stufe (Adventure-Phase) — in diesem Schritt noch nicht verfügbar`,
   commandNoMapping: (name) => `Befehl '${name}' hat in diesem Schritt noch kein C-Mapping`,
-  graphicsFirstArg: () => `Graphics: erstes Argument muss TEXT oder BITMAP sein`,
-  graphicsSecondArg: () => `Graphics: zweites Argument muss HIRES oder MULTICOLOR sein`,
+  graphicsFirstArg: () => `SetMode: erstes Argument muss TEXT oder BITMAP sein`,
+  graphicsSecondArg: () => `SetMode: zweites Argument muss HIRES oder MULTICOLOR sein`,
   graphicsBitmapHires: () =>
-    `Graphics BITMAP, HIRES ist in Phase 1 nicht vorgesehen (nur TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)`,
+    `SetMode BITMAP, HIRES ist in Phase 1 nicht vorgesehen (nur TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)`,
   useTilesetName: () =>
     `UseTileset erwartet einen Tileset-Namen in Anführungszeichen, z. B. UseTileset "main"`,
   useTilesetNoProject: (id) =>
@@ -397,10 +397,10 @@ const EN_CODEGEN: CodegenMessages = {
   stringFnDeferred: (name) =>
     `${name} comes with the full string stage (adventure phase) — not available yet at this step`,
   commandNoMapping: (name) => `command '${name}' has no C mapping yet at this step`,
-  graphicsFirstArg: () => `Graphics: the first argument must be TEXT or BITMAP`,
-  graphicsSecondArg: () => `Graphics: the second argument must be HIRES or MULTICOLOR`,
+  graphicsFirstArg: () => `SetMode: the first argument must be TEXT or BITMAP`,
+  graphicsSecondArg: () => `SetMode: the second argument must be HIRES or MULTICOLOR`,
   graphicsBitmapHires: () =>
-    `Graphics BITMAP, HIRES isn't planned for Phase 1 (only TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)`,
+    `SetMode BITMAP, HIRES isn't planned for Phase 1 (only TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)`,
   useTilesetName: () => `UseTileset expects a tileset name in quotes, e.g. UseTileset "main"`,
   useTilesetNoProject: (id) =>
     `UseTileset "${id}": no project context — assets can only be resolved inside a project`,
