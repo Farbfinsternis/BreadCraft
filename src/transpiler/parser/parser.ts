@@ -15,6 +15,7 @@ import type {
   Statement,
   Pos
 } from './ast'
+import { pos } from './ast'
 
 // The .crumb parser: token stream → AST. Recursive descent at the statement level,
 // a Pratt (precedence-climbing) parser for expressions. Like the lexer it NEVER
@@ -170,7 +171,7 @@ class Parser {
   }
 
   private error(message: string, at: Token): void {
-    this.errors.push({ message, line: at.line, col: at.col })
+    this.errors.push({ message, ...pos(at) })
   }
 
   /** True when the current token ends a statement (newline, ':', or EOF). */
@@ -237,7 +238,7 @@ class Parser {
           return this.parseFor()
         case 'exit':
           this.advance()
-          return { kind: 'ExitStmt', line: t.line, col: t.col }
+          return { kind: 'ExitStmt', ...pos(t) }
         case 'global':
           return this.parseGlobal()
         case 'const':
@@ -250,6 +251,8 @@ class Parser {
           return this.parseFunction()
         case 'return':
           return this.parseReturn()
+        case 'include':
+          return this.parseInclude()
         default:
           // Other keywords (Select, …) are a later layer.
           this.error(this.M.statementNotSupported(t.value), t)
@@ -345,7 +348,7 @@ class Parser {
     } else {
       this.expectKeyword('EndIf')
     }
-    return { kind: 'IfStmt', cond, then, elifs, else: elseBody, line: kw.line, col: kw.col }
+    return { kind: 'IfStmt', cond, then, elifs, else: elseBody, ...pos(kw) }
   }
 
   /**
@@ -378,7 +381,7 @@ class Parser {
     const cond = this.parseExpr(0)
     const body = this.parseBlock(['wend'])
     this.expectKeyword('Wend')
-    return { kind: 'WhileStmt', cond, body, line: kw.line, col: kw.col }
+    return { kind: 'WhileStmt', cond, body, ...pos(kw) }
   }
 
   private parseRepeat(): Statement {
@@ -386,7 +389,7 @@ class Parser {
     const body = this.parseBlock(['until'])
     this.expectKeyword('Until')
     const until = this.parseExpr(0)
-    return { kind: 'RepeatStmt', body, until, line: kw.line, col: kw.col }
+    return { kind: 'RepeatStmt', body, until, ...pos(kw) }
   }
 
   private parseFor(): Statement {
@@ -408,7 +411,7 @@ class Parser {
     }
     const body = this.parseBlock(['next'])
     this.expectKeyword('Next')
-    return { kind: 'ForStmt', variable, from, to, step, body, line: kw.line, col: kw.col }
+    return { kind: 'ForStmt', variable, from, to, step, body, ...pos(kw) }
   }
 
   // ---- argument lists (one routine, EISEN M2.T4) ----
@@ -486,8 +489,7 @@ class Parser {
       kind: 'CommandStmt',
       name: nameTok.value,
       args: this.parseArgs(),
-      line: nameTok.line,
-      col: nameTok.col
+      ...pos(nameTok)
     }
   }
 
@@ -516,8 +518,7 @@ class Parser {
       kind: 'CallStmt',
       callee: nameTok.value,
       args: this.parseArgs(),
-      line: nameTok.line,
-      col: nameTok.col
+      ...pos(nameTok)
     }
   }
 
@@ -530,7 +531,7 @@ class Parser {
     }
     this.advance() // '='
     const value = this.parseExpr(0)
-    return { kind: 'AssignStmt', target, value, line: target.line, col: target.col }
+    return { kind: 'AssignStmt', target, value, ...pos(target) }
   }
 
   /** `Global name.typ = wert` — init is mandatory (Sprachdef §C). */
@@ -548,7 +549,7 @@ class Parser {
     }
     this.advance() // '='
     const value = this.parseExpr(0)
-    return { kind: 'GlobalStmt', target, value, line: kw.line, col: kw.col }
+    return { kind: 'GlobalStmt', target, value, ...pos(kw) }
   }
 
   /** `Const NAME = wert` — compile-time constant; no type suffix (Sprachdef §C). */
@@ -563,7 +564,7 @@ class Parser {
     }
     this.advance() // '='
     const value = this.parseExpr(0)
-    return { kind: 'ConstStmt', name: nameTok.value, value, line: kw.line, col: kw.col }
+    return { kind: 'ConstStmt', name: nameTok.value, value, ...pos(kw) }
   }
 
   /**
@@ -594,7 +595,7 @@ class Parser {
     } else if (sizes.length > 2) {
       this.error(this.M.dimTooManyDims(), kw)
     }
-    return { kind: 'DimStmt', target, sizes, line: kw.line, col: kw.col }
+    return { kind: 'DimStmt', target, sizes, ...pos(kw) }
   }
 
   /**
@@ -629,7 +630,7 @@ class Parser {
       this.skipSeparators()
     }
     this.expectKeyword('EndType')
-    return { kind: 'TypeDecl', name: nameTok.value, fields, line: kw.line, col: kw.col }
+    return { kind: 'TypeDecl', name: nameTok.value, fields, ...pos(kw) }
   }
 
   /**
@@ -669,8 +670,7 @@ class Parser {
       returnSuffix,
       params,
       body,
-      line: kw.line,
-      col: kw.col
+      ...pos(kw)
     }
   }
 
@@ -713,7 +713,21 @@ class Parser {
     if (!this.atStatementEnd() && !this.atKeyword('endfunction')) {
       value = this.parseExpr(0)
     }
-    return { kind: 'ReturnStmt', value, line: kw.line, col: kw.col }
+    return { kind: 'ReturnStmt', value, ...pos(kw) }
+  }
+
+  /**
+   * `Include "file"` — the project build (compile with a readSource, B3.T3) resolves
+   * and removes these BEFORE the parser runs, so one reaching here means a bare
+   * single-file compile with no reader. That can't pull files in, so it's an honest
+   * error rather than a silent no-op; the `Include` + its path token are consumed so
+   * the rest of the file still parses.
+   */
+  private parseInclude(): Statement | null {
+    const kw = this.advance() // Include
+    if (this.peek().type === TokenType.String) this.advance() // swallow the path, if present
+    this.error(this.M.includeNeedsProjectBuild(), kw)
+    return null
   }
 
   /** Recover past a block: consume tokens until (and including) the given terminator
@@ -755,7 +769,7 @@ class Parser {
       this.advance()
       // Left-associative: parse the right side with a higher minimum.
       const right = this.parseExpr(bp + 1)
-      left = { kind: 'Binary', op: t.value, left, right, line: left.line, col: left.col }
+      left = { kind: 'Binary', op: t.value, left, right, ...pos(left) }
     }
     return left
   }
@@ -765,7 +779,7 @@ class Parser {
     if (this.eff(t) === TokenType.Operator && UNARY_OPS.has(t.value.toLowerCase())) {
       this.advance()
       const expr = this.parseUnary()
-      return { kind: 'Unary', op: t.value, expr, line: t.line, col: t.col }
+      return { kind: 'Unary', op: t.value, expr, ...pos(t) }
     }
     return this.parsePrimary()
   }
@@ -775,19 +789,19 @@ class Parser {
     switch (this.eff(t)) {
       case TokenType.NumberDec:
         this.advance()
-        return { kind: 'NumberLit', raw: t.value, base: 'dec', line: t.line, col: t.col }
+        return { kind: 'NumberLit', raw: t.value, base: 'dec', ...pos(t) }
       case TokenType.NumberHex:
         this.advance()
-        return { kind: 'NumberLit', raw: t.value, base: 'hex', line: t.line, col: t.col }
+        return { kind: 'NumberLit', raw: t.value, base: 'hex', ...pos(t) }
       case TokenType.NumberBin:
         this.advance()
-        return { kind: 'NumberLit', raw: t.value, base: 'bin', line: t.line, col: t.col }
+        return { kind: 'NumberLit', raw: t.value, base: 'bin', ...pos(t) }
       case TokenType.String:
         this.advance()
-        return { kind: 'StringLit', value: t.value, line: t.line, col: t.col }
+        return { kind: 'StringLit', value: t.value, ...pos(t) }
       case TokenType.Constant:
         this.advance()
-        return { kind: 'ConstantRef', name: t.value, line: t.line, col: t.col }
+        return { kind: 'ConstantRef', name: t.value, ...pos(t) }
       case TokenType.Function:
         return this.parseCall()
       case TokenType.Identifier:
@@ -802,13 +816,13 @@ class Parser {
         const inner = this.parseExpr(0)
         if (this.peek().type === TokenType.RParen) this.advance()
         else this.error(this.M.closeParenExpected(), this.peek())
-        return { kind: 'Grouping', expr: inner, line: t.line, col: t.col }
+        return { kind: 'Grouping', expr: inner, ...pos(t) }
       }
       default:
         // Nothing valid here — record and synthesize a zero so parsing can go on.
         this.error(this.M.expressionExpected(t.value || String(t.type)), t)
         if (!this.atStatementEnd()) this.advance()
-        return { kind: 'NumberLit', raw: '0', base: 'dec', line: t.line, col: t.col }
+        return { kind: 'NumberLit', raw: '0', base: 'dec', ...pos(t) }
     }
   }
 
@@ -821,7 +835,7 @@ class Parser {
     } else {
       this.error(this.M.funcCallParenExpected(nameTok.value), this.peek())
     }
-    return { kind: 'CallExpr', callee: nameTok.value, args, line: nameTok.line, col: nameTok.col }
+    return { kind: 'CallExpr', callee: nameTok.value, args, ...pos(nameTok) }
   }
 
   private parseIdentifier(): Identifier {
@@ -834,8 +848,7 @@ class Parser {
       kind: 'Identifier',
       name: nameTok.value,
       suffix,
-      line: nameTok.line,
-      col: nameTok.col
+      ...pos(nameTok)
     }
   }
 
@@ -850,7 +863,7 @@ class Parser {
     let base: Identifier | IndexExpr = id
     if (this.peek().type === TokenType.LBracket) {
       const indices = this.parseBracketList()
-      base = { kind: 'IndexExpr', name: id.name, indices, line: id.line, col: id.col }
+      base = { kind: 'IndexExpr', name: id.name, indices, ...pos(id) }
     }
     // Record field access: base\field (Sprachdef §C). After '\' it is always a field
     // name in the record's own namespace, so any Word goes (case-sensitivity already
@@ -860,7 +873,7 @@ class Parser {
       const fieldTok = this.peek()
       if (fieldTok.type === TokenType.Word) {
         this.advance()
-        return { kind: 'FieldExpr', base, field: fieldTok.value, line: id.line, col: id.col }
+        return { kind: 'FieldExpr', base, field: fieldTok.value, ...pos(id) }
       }
       this.error(this.M.fieldNameAfterBackslash(), fieldTok)
     }

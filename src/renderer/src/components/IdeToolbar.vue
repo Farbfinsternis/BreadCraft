@@ -64,10 +64,9 @@ async function runBuild(runAfterBuild: boolean): Promise<void> {
   try {
     await project.saveActive() // flush the open code edit to disk
     await project.saveDirtyAssets() // flush unsaved sprite/charset/tilemap/palette (B-9)
-    // Multi-crumb projects aren't linked yet — only the entry compiles. Warn so a
-    // second crumb's code isn't silently missing from the build (B-9).
-    const crumbCount = project.openFiles.filter((r) => r.toLowerCase().endsWith('.crumb')).length
-    if (crumbCount > 1) output.append({ level: 'warn', text: t('build.multiCrumb', { entry: rel }) })
+    // Multiple crumbs are first-class now: the entry compiles, and `Include` pulls in
+    // whatever it references (B3). A crumb that's merely open but not included simply
+    // isn't part of the program — no warning needed.
     // Build the entry's live editor content (the truth the user sees); fall back to
     // disk for an entry that isn't currently open as a tab.
     const source =

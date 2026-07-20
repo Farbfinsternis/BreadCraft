@@ -84,15 +84,19 @@ class Scanner {
   private readonly classifier: Map<string, TokenType>
   /** Locale-bound diagnostics (STAHL S5b) for the Error tokens this scanner emits. */
   private readonly M: LexerMessages
+  /** Source file name stamped on every token (B3 Include), or undefined for a nameless
+   *  single-file compile. */
+  private readonly file?: string
   private pos = 0
   private line = 1
   private col = 1
   private readonly tokens: Token[] = []
 
-  constructor(src: string, classifier: Map<string, TokenType>, msgs: LexerMessages) {
+  constructor(src: string, classifier: Map<string, TokenType>, msgs: LexerMessages, file?: string) {
     this.src = src
     this.classifier = classifier
     this.M = msgs
+    this.file = file
   }
 
   private peek(ahead = 0): string {
@@ -114,7 +118,15 @@ class Scanner {
     length: number,
     error?: string
   ): void {
-    this.tokens.push({ type, value, line, col, length, ...(error ? { error } : {}) })
+    this.tokens.push({
+      type,
+      value,
+      line,
+      col,
+      length,
+      ...(this.file !== undefined ? { file: this.file } : {}),
+      ...(error ? { error } : {})
+    })
   }
 
   scan(): Token[] {
@@ -426,7 +438,8 @@ export function normalize(tokens: Token[]): Token[] {
         value: pair.into,
         line: t.line,
         col: t.col,
-        length: next.col - t.col + next.length
+        length: next.col - t.col + next.length,
+        ...(t.file !== undefined ? { file: t.file } : {})
       })
       i++ // also consume the second word
       continue
@@ -444,9 +457,10 @@ export function normalize(tokens: Token[]): Token[] {
 export function tokenize(
   source: string,
   vocabulary: VocabItem[],
-  locale: Locale = DEFAULT_LOCALE
+  locale: Locale = DEFAULT_LOCALE,
+  fileName?: string
 ): Token[] {
   const classifier = buildClassifier(vocabulary)
-  const tokens = new Scanner(source, classifier, messages(locale).lexer).scan()
+  const tokens = new Scanner(source, classifier, messages(locale).lexer, fileName).scan()
   return normalize(tokens)
 }

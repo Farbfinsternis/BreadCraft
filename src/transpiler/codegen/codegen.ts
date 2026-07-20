@@ -22,6 +22,7 @@ import type {
   ReturnStmt,
   CallStmt
 } from '../parser/ast'
+import { pos } from '../parser/ast'
 import {
   resolveCharset,
   resolveTilemap,
@@ -490,7 +491,7 @@ class Generator {
   }
 
   private err(message: string, at: Pos, severity: Severity = 'error'): void {
-    this.errors.push({ message, line: at.line, col: at.col, severity })
+    this.errors.push({ message, severity, ...pos(at) })
   }
 
   /** Does the program draw text (DrawText / Color) ANYWHERE — including inside loops,

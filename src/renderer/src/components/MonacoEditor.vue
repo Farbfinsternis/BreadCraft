@@ -10,6 +10,7 @@ import {
 } from '@renderer/monaco/crumb'
 import { autoCaseEdit, registerIntellisense } from '@renderer/monaco/intellisense'
 import { setActiveEditor } from '@renderer/monaco/editorBridge'
+import type { FileMarker } from '@renderer/monaco/markers'
 import { useLanguageStore } from '@renderer/stores/language'
 
 const props = withDefaults(
@@ -17,9 +18,31 @@ const props = withDefaults(
     modelValue: string
     language?: string
     readonly?: boolean
+    /** Build diagnostics for the file on screen (B3.T4) — drawn as squiggles. */
+    markers?: FileMarker[]
   }>(),
-  { language: CRUMB_LANGUAGE_ID, readonly: false }
+  { language: CRUMB_LANGUAGE_ID, readonly: false, markers: () => [] }
 )
+
+const MARKER_OWNER = 'breadcraft-build'
+
+/** Draw the current `markers` prop onto the editor's model (or clear them). */
+function applyMarkers(): void {
+  const model = editor?.getModel()
+  if (!model) return
+  monaco.editor.setModelMarkers(
+    model,
+    MARKER_OWNER,
+    props.markers.map((m) => ({
+      severity: m.level === 'warn' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error,
+      message: m.message,
+      startLineNumber: m.line,
+      startColumn: Math.max(1, m.col),
+      endLineNumber: m.line,
+      endColumn: Math.max(1, m.col) + 1
+    }))
+  )
+}
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
@@ -50,6 +73,7 @@ onMounted(() => {
   })
 
   setActiveEditor(editor)
+  applyMarkers()
 
   editor.onDidChangeModelContent((e) => {
     if (!editor) return
@@ -79,13 +103,20 @@ onMounted(() => {
   })
 })
 
-// Keep the editor in sync if the bound value changes from outside.
+// Keep the editor in sync if the bound value changes from outside. A file switch swaps
+// the content AND the markers prop; re-apply markers after setValue so they land on the
+// file now on screen (B3.T4).
 watch(
   () => props.modelValue,
   (value) => {
     if (editor && value !== editor.getValue()) editor.setValue(value)
+    applyMarkers()
   }
 )
+
+// Redraw squiggles whenever the diagnostics for the on-screen file change (new build,
+// or the user switched to a file that has errors).
+watch(() => props.markers, applyMarkers, { deep: true })
 
 onBeforeUnmount(() => {
   setActiveEditor(undefined)

@@ -155,6 +155,11 @@ export interface OpenedProject {
 export interface BuildLogLine {
   level: 'info' | 'cmd' | 'error' | 'ok' | 'warn'
   text: string
+  /** The source location this line points at (B3.T4) — a compile error/warning in a
+   *  specific `.crumb` file (`file` is project-relative; absent for a nameless single-file
+   *  compile). When present, the console renders the line as a clickable jump and the code
+   *  editor marks the line in that file. */
+  loc?: { file?: string; line: number; col: number }
 }
 
 /** One fillable RAM pool, measured from a base address up to a ceiling (STAHL S1c).

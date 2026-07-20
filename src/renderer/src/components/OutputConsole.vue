@@ -1,14 +1,35 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useUiStore } from '@renderer/stores/ui'
 import { useOutputStore } from '@renderer/stores/output'
+import { useProjectStore } from '@renderer/stores/project'
+import { revealPosition } from '@renderer/monaco/editorBridge'
 import PanelResizer from '@renderer/components/PanelResizer.vue'
+import type { BuildLogLine } from '@shared/ipc'
 
 const { t } = useI18n()
 const ui = useUiStore()
 const output = useOutputStore()
+const project = useProjectStore()
+const router = useRouter()
 const bodyEl = ref<HTMLElement | null>(null)
+
+// Jump from a located console line (a compile error/warning) to its spot in the code
+// editor — opening the RIGHT file first, even across an Include boundary (B3.T4).
+async function jumpTo(loc: NonNullable<BuildLogLine['loc']>): Promise<void> {
+  const rel = loc.file ?? project.entry
+  if (!rel || !rel.toLowerCase().endsWith('.crumb')) return
+  try {
+    if (project.activeRel !== rel) await project.openCrumb(rel)
+    if (router.currentRoute.value.name !== 'code') await router.push({ name: 'code' })
+    await nextTick() // let the editor swap to the file's content before we scroll
+    revealPosition(loc.line, loc.col)
+  } catch {
+    // the file may have been deleted/renamed since the build — ignore the jump
+  }
+}
 
 // Auto-scroll to the newest line as output arrives.
 watch(
@@ -45,12 +66,19 @@ watch(
     </div>
     <div ref="bodyEl" class="panel-body con-body">
       <div v-if="!output.lines.length" class="con-empty">{{ t('console.empty') }}</div>
-      <pre
-        v-for="(l, i) in output.lines"
-        :key="i"
-        class="con-line"
-        :class="`lvl-${l.level}`"
-      >{{ l.text }}</pre>
+      <template v-for="(l, i) in output.lines" :key="i">
+        <pre
+          v-if="l.loc"
+          class="con-line con-jump"
+          :class="`lvl-${l.level}`"
+          role="button"
+          tabindex="0"
+          :title="t('console.jumpHint')"
+          @click="jumpTo(l.loc)"
+          @keydown.enter="jumpTo(l.loc)"
+        >{{ l.text }}</pre>
+        <pre v-else class="con-line" :class="`lvl-${l.level}`">{{ l.text }}</pre>
+      </template>
     </div>
   </section>
 </template>
@@ -82,6 +110,16 @@ watch(
 }
 .con-line.lvl-warn {
   color: var(--bc-copper-300);
+}
+.con-line.con-jump {
+  cursor: pointer;
+}
+.con-line.con-jump:hover {
+  text-decoration: underline;
+}
+.con-line.con-jump:focus-visible {
+  outline: 1px solid var(--bc-arc-300);
+  outline-offset: -1px;
 }
 .con-head-right {
   display: flex;

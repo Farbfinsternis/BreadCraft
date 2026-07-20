@@ -62,6 +62,8 @@ export interface ParserMessages {
   expressionExpected(found: string): string
   funcCallParenExpected(name: string): string
   fieldNameAfterBackslash(): string
+  /** An `Include` reached the parser unresolved — only the project build pulls files in. */
+  includeNeedsProjectBuild(): string
 }
 
 export interface CodegenMessages {
@@ -163,11 +165,31 @@ export interface ResolverMessages {
   imageBackgroundBad(rel: string): string
 }
 
+export interface IncludeMessages {
+  /** `Include` with no quoted file name after it. */
+  includeNeedsPath(): string
+  /** Junk after the file name (`Include "a" foo`). */
+  includeExtraTokens(): string
+  /** `Include` sitting inside a function or block, not at the top level. */
+  includeNotTopLevel(): string
+  /** The path tries to climb out of the project with `..`. */
+  includeEscape(raw: string): string
+  /** The path is absolute (leading `/` or a drive letter) instead of project-relative. */
+  includeAbsolute(raw: string): string
+  /** An empty include path (`Include ""`). */
+  includeEmpty(): string
+  /** The target file could not be read; `from` is the `file:line` that included it. */
+  includeMissing(path: string, from: string): string
+  /** A cycle: the arrow chain of files that leads back onto itself. */
+  includeCycle(chain: string): string
+}
+
 export interface Catalog {
   lexer: LexerMessages
   parser: ParserMessages
   codegen: CodegenMessages
   resolver: ResolverMessages
+  include: IncludeMessages
 }
 
 const ROLE_DE: Record<RoleKey, string> = {
@@ -240,7 +262,9 @@ const DE_PARSER: ParserMessages = {
   closeBracketExpected: () => `']' erwartet`,
   expressionExpected: (found) => `Ausdruck erwartet, '${found}' gefunden`,
   funcCallParenExpected: (name) => `'(' erwartet nach Funktion '${name}'`,
-  fieldNameAfterBackslash: () => `Feldname erwartet nach '\\'`
+  fieldNameAfterBackslash: () => `Feldname erwartet nach '\\'`,
+  includeNeedsProjectBuild: () =>
+    `Include funktioniert nur im Projekt-Build (es bindet andere .crumb-Dateien ein)`
 }
 
 // English — additive; the en-fallback the IDE needs when its language is English.
@@ -272,7 +296,9 @@ const EN_PARSER: ParserMessages = {
   closeBracketExpected: () => `']' expected`,
   expressionExpected: (found) => `expression expected, found '${found}'`,
   funcCallParenExpected: (name) => `'(' expected after function '${name}'`,
-  fieldNameAfterBackslash: () => `field name expected after '\\'`
+  fieldNameAfterBackslash: () => `field name expected after '\\'`,
+  includeNeedsProjectBuild: () =>
+    `Include only works in a project build (it pulls in other .crumb files)`
 }
 
 // German codegen diagnostics — kept byte-identical to the former inline literals.
@@ -541,8 +567,49 @@ const EN_RESOLVER: ResolverMessages = {
   imageBackgroundBad: (rel) => `image '${rel}', background: not a valid colour index (0–15)`
 }
 
-const DE: Catalog = { lexer: DE_LEXER, parser: DE_PARSER, codegen: DE_CODEGEN, resolver: DE_RESOLVER }
-const EN: Catalog = { lexer: EN_LEXER, parser: EN_PARSER, codegen: EN_CODEGEN, resolver: EN_RESOLVER }
+// German include diagnostics (B3 Include).
+const DE_INCLUDE: IncludeMessages = {
+  includeNeedsPath: () =>
+    `Include braucht einen Dateinamen in Anführungszeichen, z. B. Include "physics"`,
+  includeExtraTokens: () => `nach dem Include-Dateinamen darf nichts weiter stehen`,
+  includeNotTopLevel: () =>
+    `Include darf nur auf der obersten Ebene stehen — nicht in einer Funktion oder einem Block`,
+  includeEscape: (raw) => `Include-Pfad '${raw}' darf das Projekt nicht mit '..' verlassen`,
+  includeAbsolute: (raw) =>
+    `Include-Pfad '${raw}' muss relativ zur Projekt-Wurzel sein (kein '/' oder Laufwerk am Anfang)`,
+  includeEmpty: () => `leerer Include-Pfad`,
+  includeMissing: (path, from) => `Include-Datei nicht gefunden: '${path}' (eingebunden in ${from})`,
+  includeCycle: (chain) => `Include-Zyklus: ${chain}`
+}
+
+// English include diagnostics — additive.
+const EN_INCLUDE: IncludeMessages = {
+  includeNeedsPath: () => `Include needs a file name in quotes, e.g. Include "physics"`,
+  includeExtraTokens: () => `nothing may follow the Include file name`,
+  includeNotTopLevel: () =>
+    `Include may only appear at the top level — not inside a function or a block`,
+  includeEscape: (raw) => `Include path '${raw}' must not climb out of the project with '..'`,
+  includeAbsolute: (raw) =>
+    `Include path '${raw}' must be relative to the project root (no leading '/' or drive letter)`,
+  includeEmpty: () => `empty Include path`,
+  includeMissing: (path, from) => `Include file not found: '${path}' (included from ${from})`,
+  includeCycle: (chain) => `Include cycle: ${chain}`
+}
+
+const DE: Catalog = {
+  lexer: DE_LEXER,
+  parser: DE_PARSER,
+  codegen: DE_CODEGEN,
+  resolver: DE_RESOLVER,
+  include: DE_INCLUDE
+}
+const EN: Catalog = {
+  lexer: EN_LEXER,
+  parser: EN_PARSER,
+  codegen: EN_CODEGEN,
+  resolver: EN_RESOLVER,
+  include: EN_INCLUDE
+}
 
 /** The diagnostic catalog for a locale (German is the default; English is additive). */
 export function messages(locale: Locale = DEFAULT_LOCALE): Catalog {

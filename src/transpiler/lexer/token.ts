@@ -61,6 +61,11 @@ export interface Token {
   col: number
   /** Length in source characters (so the editor/parser can map back to a range). */
   length: number
+  /** Which source file this token was scanned from (B3 Include). Absent when `tokenize`
+   *  was called without a file name (single-file compile). With `Include`, each file is
+   *  lexed under its own name and the streams are merged, so a token carries its origin
+   *  losslessly through parser + codegen (memory: breadcraft-ux-railing). */
+  file?: string
   /** Present only on Error tokens: a short, human-readable reason. */
   error?: string
 }

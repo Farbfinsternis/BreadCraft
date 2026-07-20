@@ -90,6 +90,14 @@ export function projectRegion(dir: string): Region {
   return normalizeRegion(readBread(dir).region)
 }
 
+/** The entry crumb of a project dir (the `main.crumb` with the frame loop), read from
+ *  its `.bread`. The build passes this to the transpiler as the Include root + the name
+ *  its diagnostics carry (B3.T3); falls back to `main.crumb` for older/partial `.bread`. */
+export function projectEntry(dir: string): string {
+  const entry = readBread(dir).entry
+  return typeof entry === 'string' && entry.length > 0 ? entry : 'main.crumb'
+}
+
 /** Coerce any persisted `assets` value (old `{}`/flat map, or the new shape) to
  *  a stable BreadAssets — forward/backward compatible (ASSET_IO.md §2). */
 function normalizeAssets(raw: unknown): BreadAssets {

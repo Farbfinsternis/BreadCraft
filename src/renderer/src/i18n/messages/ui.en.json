@@ -44,7 +44,6 @@
   "build.notCrumbFile": "'{rel}' is not a .crumb file.",
   "build.start": "Build & Run: {rel}",
   "build.startBuild": "Build: {rel}",
-  "build.multiCrumb": "Multiple crumbs found — only the entry '{entry}' is built. Other crumbs aren't merged yet.",
   "build.viceHint": "Tip: set the VICE path in the global settings, then the program starts automatically.",
 
   "settings.title": "Global settings",
@@ -277,6 +276,7 @@
   "console.clear": "Clear",
   "console.collapse": "Collapse",
   "console.empty": "No output yet. Build & Run shows its messages here.",
+  "console.jumpHint": "Jump to the spot in the code",
   "console.railLabel": "Output console",
 
   "health.ram.meta": "no build yet · cc65 map provides the value",

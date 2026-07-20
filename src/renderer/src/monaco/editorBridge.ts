@@ -16,3 +16,12 @@ export function revealLine(line: number): void {
   active.setPosition({ lineNumber: line, column: 1 })
   active.focus()
 }
+
+/** Reveal + place the cursor at a specific line/column (1-based) — used to jump to a
+ *  build error's exact spot after opening its file (B3.T4). */
+export function revealPosition(line: number, col: number): void {
+  if (!active) return
+  active.revealLineInCenter(line)
+  active.setPosition({ lineNumber: line, column: Math.max(1, col) })
+  active.focus()
+}

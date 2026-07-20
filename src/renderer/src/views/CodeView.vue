@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useProjectStore } from '@renderer/stores/project'
+import { useOutputStore } from '@renderer/stores/output'
+import { markersForFile } from '@renderer/monaco/markers'
 import MonacoEditor from '@renderer/components/MonacoEditor.vue'
 
 const project = useProjectStore()
+const output = useOutputStore()
+
+// Build diagnostics that live in the file currently on screen (B3.T4). The editor is
+// single-model, so we only ever hand it the markers for the active file.
+const activeMarkers = computed(() =>
+  markersForFile(output.lines, project.activeRel, project.entry)
+)
 
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -32,7 +41,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </div>
     <div class="panel-body editor">
-      <MonacoEditor v-model="project.activeContent" />
+      <MonacoEditor v-model="project.activeContent" :markers="activeMarkers" />
     </div>
   </div>
 </template>

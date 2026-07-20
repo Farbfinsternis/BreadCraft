@@ -10,7 +10,8 @@ import { cc65Tool, cc65Available } from './toolchain'
 import { readSettings } from './settings'
 import { resolveLanguage } from './config'
 import { buildMessages } from './build-messages'
-import { listAssets, readAsset, projectRegion } from './project'
+import { listAssets, readAsset, projectRegion, projectEntry } from './project'
+import type { SourceReader } from '../transpiler'
 import type { BuildLogLine, BuildResult, RamInfo } from '../shared/ipc'
 
 // Build & Run: the last mile. Compiles the given .crumb source to C, invokes the
@@ -62,19 +63,36 @@ export async function buildAndRun(
   // The project's target region (STAHL S5c) picks the PERF budget the estimate measures
   // against AND the region VICE boots — read from the .bread, never silently PAL.
   const region = projectRegion(projectDir)
+  // Include resolution (B3.T3): give the transpiler the entry file's name and a reader
+  // rooted at the project dir, so `Include "crumbs/physics"` pulls in real files. The
+  // resolver rejects `..`/absolute paths, so this reader never escapes the project.
+  const entryName = projectEntry(projectDir)
+  const readSource: SourceReader = (rel) => {
+    const p = join(projectDir, rel)
+    return existsSync(p) ? readFileSync(p, 'utf8') : null
+  }
   const { code, errors, linkerConfig, mainCeiling, highBase, highCeiling, perf } = compile(
     source,
     vocabulary,
     assets,
     locale,
-    region
+    region,
+    entryName,
+    readSource
   )
   // The per-frame cost estimate is valid as soon as the code parsed — feed it to the
   // PERF health-bar on every outcome where we actually compiled something.
   const perfInfo = perf ?? undefined
   for (const e of errors) {
     const level = e.severity === 'warn' ? 'warn' : 'error'
-    add(level, `${e.stage} ${e.line}:${e.col}: ${e.message}`)
+    // Name the file when known (B3 Include) so a multi-file error is unambiguous, and
+    // carry the location structurally so the console line can jump to it (B3.T4).
+    const where = e.file ? `${e.file}:${e.line}:${e.col}` : `${e.line}:${e.col}`
+    log.push({
+      level,
+      text: `${e.stage} ${where}: ${e.message}`,
+      loc: { file: e.file, line: e.line, col: e.col }
+    })
   }
   // Warnings (e.g. narrowing) are honest hints, not blockers; only real errors stop the build.
   if (errors.some((e) => e.severity === 'error')) {

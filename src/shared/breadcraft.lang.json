@@ -663,8 +663,8 @@
       "kind": "keyword",
       "category": "declaration",
       "i18nKey": "kw.include",
-      "since": "later",
-      "proven": false,
+      "since": "phase1",
+      "proven": true,
       "cost": "free",
       "$note": "Preprocessor-Text-Include (nur .crumb-Quellcode, kein Asset). 0 Runtime-Kosten."
     },

@@ -7,6 +7,30 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-07-20
+
+### Hinzugefügt
+- **`Include` — ein Spiel darf jetzt auf mehrere `.crumb`-Dateien wachsen.** Der Auslöser kam
+  wie so oft aus dem eigenen Spiel: Into The Deep war zu einer einzigen 668-Zeilen-Datei
+  angeschwollen, in der man nur noch mit der Taschenlampe navigiert. `Include "physics"` holt
+  eine andere Datei genau an dieser Stelle herein — als würde man sie einkopieren:
+  ```
+  Include "physics"
+  Include "engine/enemies"
+  ```
+  Die Regeln sind bewusst schlicht (der C64 hat *einen* globalen Namensraum, keine
+  Sichtbarkeits-Zauberei zum Lernen): reine Text-Einfügung, **null** Laufzeit-/RAM-/`.prg`-Kosten
+  (es ist ein Bauzeit-Akt), jede Datei landet **höchstens einmal** im Programm (auch wenn zwei
+  Dateien dieselbe einbinden), Pfade sind **relativ zur Projekt-Wurzel** (Ordnernamen wählst Du
+  frei, `.crumb` hängt BreadCraft an), und `Include` steht nur auf der obersten Ebene — nicht in
+  einer Funktion. Wer sich im Kreis einbindet (`a` holt `b` holt `a`), bekommt einen ehrlichen
+  Zyklus-Fehler mit der ganzen Kette statt eines hängenden Builds. **Das Beste unsichtbar:** jede
+  Fehlermeldung nennt jetzt die *richtige* Datei — ein Tippfehler in `physics.crumb:40` heißt auch
+  so und nicht mehr „irgendwo in main.crumb". In der IDE ist so eine Meldung **anklickbar**: ein
+  Klick öffnet genau diese Datei, springt in die Zeile und markiert sie. Der Projektbaum zeigt
+  ohnehin schon jede `.crumb` in jedem selbst gewählten Ordner, und `Include` leuchtet im Editor
+  als Schlüsselwort — beides fiel BreadCraft durch seine SSOT-getriebene Bauart gratis in den Schoß.
+
 ## [0.2.17] - 2026-07-19
 
 ### Geändert

@@ -9,6 +9,21 @@
 export interface Pos {
   line: number
   col: number
+  /** Which source file this position lives in (B3 Include). Absent for a single-file
+   *  compile that never named a file; carried verbatim from the originating token so a
+   *  diagnostic can point at the RIGHT file across `Include` boundaries — no line-map
+   *  back-math (memory: breadcraft-ux-railing). */
+  file?: string
+}
+
+/** Copy just the source position (line/col, and `file` when known) from any positioned
+ *  thing — a token or another node. Centralizes the B3 rule "carry `file` only when
+ *  present", so single-file AST nodes stay free of `file: undefined` noise while
+ *  multi-file nodes keep their provenance. */
+export function pos(x: Pos): Pos {
+  return x.file === undefined
+    ? { line: x.line, col: x.col }
+    : { line: x.line, col: x.col, file: x.file }
 }
 
 // ---- Expressions ----
