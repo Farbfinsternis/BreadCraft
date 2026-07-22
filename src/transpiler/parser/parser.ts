@@ -174,10 +174,16 @@ class Parser {
     this.errors.push({ message, ...pos(at) })
   }
 
-  /** True when the current token ends a statement (newline, ':', or EOF). */
+  /** True when the current token ends a statement (newline, ':', EOF, or a trailing
+   *  `;` comment — nothing but the line terminator can follow a comment). */
   private atStatementEnd(): boolean {
     const t = this.peek().type
-    return t === TokenType.Newline || t === TokenType.StatementSep || t === TokenType.EOF
+    return (
+      t === TokenType.Newline ||
+      t === TokenType.StatementSep ||
+      t === TokenType.Comment ||
+      t === TokenType.EOF
+    )
   }
 
   /** Skip separators and comments between statements. */
@@ -363,6 +369,7 @@ class Parser {
     while (
       !this.atEnd() &&
       this.peek().type !== TokenType.Newline &&
+      this.peek().type !== TokenType.Comment &&
       !this.atKeyword(...terminators)
     ) {
       const s = this.parseStatement()

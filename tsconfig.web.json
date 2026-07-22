@@ -6,6 +6,14 @@
     "src/shared/**/*",
     "src/preload/*.d.ts"
   ],
+  // Test files run under Vitest (esbuild), not the shipped app build. Some
+  // (e.g. src/shared/vocabulary.planned.test.ts) import the main-process
+  // transpiler, which is not part of this composite project — including them
+  // would pull the transpiler graph in and trip TS6307. Keep tests out.
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "baseUrl": ".",

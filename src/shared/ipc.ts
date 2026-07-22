@@ -37,6 +37,12 @@ export interface AppConfig {
    */
   vicePath: string | null
   /**
+   * Whether the first-run VICE onboarding screen has been shown and dismissed (T2).
+   * App-managed (not user-editable): once true, the onboarding never auto-opens again,
+   * though the user can still reach VICE setup from the Run prompt or Settings.
+   */
+  viceOnboardingSeen: boolean
+  /**
    * Chosen UI language, or null until the first run derives it from the OS locale
    * (German ⇒ 'de', anything else / undetectable ⇒ 'en'). Persisted once chosen;
    * user-changeable via Settings (project rule: persist everything — memory
@@ -73,6 +79,33 @@ export interface VicePathCheck {
   exists: boolean
   /** The filename looks like a VICE C64 emulator (x64sc / x64). */
   looksLikeVice: boolean
+}
+
+/**
+ * Outcome of the "pick a VICE folder" browse. The user chooses a *directory* and
+ * BreadCraft finds the executable inside it (a newbie shouldn't have to know it's
+ * `x64sc.exe`). `path` is the resolved executable when `ok`, the chosen folder when
+ * `notfound` (so the UI can name where it looked), and null when the user cancelled.
+ */
+export interface ViceBrowseResult {
+  status: 'ok' | 'notfound' | 'cancelled'
+  path: string | null
+}
+
+/** Live progress of the in-app VICE download/install (T3). */
+export interface ViceDownloadProgress {
+  phase: 'downloading' | 'verifying' | 'extracting'
+  /** 0–100 while downloading, when the server reports a size; omitted otherwise. */
+  percent?: number
+}
+
+/** Final outcome of the in-app VICE download/install (T3). */
+export interface ViceDownloadResult {
+  ok: boolean
+  /** Resolved x64sc/x64 path on success. */
+  path?: string
+  /** Short reason on failure, for a friendly message + fallback. */
+  error?: string
 }
 
 /**

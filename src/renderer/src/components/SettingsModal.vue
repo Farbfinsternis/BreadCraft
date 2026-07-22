@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@renderer/stores/settings'
 import type { Locale, StartupMode } from '@shared/ipc'
@@ -7,13 +7,20 @@ import type { Locale, StartupMode } from '@shared/ipc'
 const { t } = useI18n()
 const settings = useSettingsStore()
 
-type CategoryId = 'general' | 'emulator' | 'language'
-const categories = computed<{ id: CategoryId; label: string }[]>(() => [
+import type { SettingsSection } from '@renderer/stores/settings'
+const categories = computed<{ id: SettingsSection; label: string }[]>(() => [
   { id: 'general', label: t('settings.cat.general') },
   { id: 'emulator', label: t('settings.cat.emulator') },
-  { id: 'language', label: t('settings.cat.language') }
+  { id: 'language', label: t('settings.cat.language') },
+  { id: 'about', label: t('settings.cat.about') }
 ])
-const active = ref<CategoryId>('general')
+
+// Official project pages. External links open in the system browser via the main
+// process's window-open handler (shell.openExternal), never in-app.
+const CC65_URL = 'https://cc65.github.io/'
+const VICE_URL = 'https://vice-emu.sourceforge.io/'
+// Which category shows lives in the store, so a caller can open the modal focused on
+// a section (T5: the VICE-setup prompt lands here on 'emulator').
 
 const startupOptions = computed<{ value: StartupMode; label: string }[]>(() => [
   { value: 'welcome', label: t('settings.startup.welcome') },
@@ -48,8 +55,8 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
             v-for="c in categories"
             :key="c.id"
             class="settings-cat"
-            :class="{ 'is-active': active === c.id }"
-            @click="active = c.id"
+            :class="{ 'is-active': settings.section === c.id }"
+            @click="settings.section = c.id"
           >
             {{ c.label }}
           </button>
@@ -57,7 +64,7 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
 
         <!-- right: options for the active category -->
         <section class="settings-pane">
-          <template v-if="active === 'general'">
+          <template v-if="settings.section === 'general'">
             <h3 class="bc-h3 settings-pane-title">{{ t('settings.cat.general') }}</h3>
             <div class="settings-field">
               <span class="bc-label settings-field-label">{{ t('settings.startup.label') }}</span>
@@ -75,7 +82,7 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
             </div>
           </template>
 
-          <template v-else-if="active === 'emulator'">
+          <template v-else-if="settings.section === 'emulator'">
             <h3 class="bc-h3 settings-pane-title">{{ t('settings.emulator.title') }}</h3>
             <p class="bc-body settings-intro">
               {{ t('settings.emulator.intro', { exe: 'x64sc' }) }}
@@ -92,6 +99,9 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
                 :placeholder="t('settings.emulator.placeholder')"
                 @blur="settings.revalidateVice()"
               />
+              <button class="tbtn" @click="settings.autoDetectVice()">
+                {{ t('settings.emulator.autoDetect') }}
+              </button>
               <button class="tbtn" @click="settings.browseVice()">
                 {{ t('settings.emulator.browse') }}
               </button>
@@ -113,9 +123,15 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
               </template>
               <template v-else> {{ t('settings.emulator.found') }} </template>
             </p>
+            <p v-if="settings.viceNote === 'browse-notfound'" class="settings-hint bad">
+              {{ t('settings.emulator.folderNoVice', { exe: 'x64sc' }) }}
+            </p>
+            <p v-else-if="settings.viceNote === 'detect-notfound'" class="settings-hint bad">
+              {{ t('settings.emulator.detectNone', { exe: 'x64sc' }) }}
+            </p>
           </template>
 
-          <template v-else-if="active === 'language'">
+          <template v-else-if="settings.section === 'language'">
             <h3 class="bc-h3 settings-pane-title">{{ t('settings.language.title') }}</h3>
             <div class="settings-field">
               <span class="bc-label settings-field-label">{{
@@ -132,6 +148,29 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
                   <span>{{ o.label }}</span>
                 </label>
               </div>
+            </div>
+          </template>
+
+          <template v-else-if="settings.section === 'about'">
+            <h3 class="bc-h3 settings-pane-title">{{ t('about.title') }}</h3>
+            <p class="bc-body about-version" v-if="settings.appVersion">
+              {{ t('about.version', { version: settings.appVersion }) }}
+            </p>
+            <p class="bc-body about-tagline">{{ t('about.tagline') }}</p>
+            <p class="bc-body about-license">{{ t('about.license') }}</p>
+
+            <h4 class="bc-label about-credits-title">{{ t('about.creditsTitle') }}</h4>
+            <div class="about-credit">
+              <p class="bc-body">{{ t('about.cc65Body') }}</p>
+              <a class="about-link" :href="CC65_URL" target="_blank" rel="noreferrer">{{
+                t('about.cc65Link')
+              }}</a>
+            </div>
+            <div class="about-credit">
+              <p class="bc-body">{{ t('about.viceBody') }}</p>
+              <a class="about-link" :href="VICE_URL" target="_blank" rel="noreferrer">{{
+                t('about.viceLink')
+              }}</a>
             </div>
           </template>
         </section>
@@ -294,5 +333,38 @@ const languageOptions = computed<{ value: Locale; label: string }[]>(() => [
   gap: var(--bc-space-2);
   padding: var(--bc-space-4) var(--bc-space-5);
   border-top: 1px solid var(--bc-border-subtle);
+}
+.about-version {
+  color: var(--bc-arc-200);
+  font-family: var(--bc-font-mono);
+  margin: 0 0 var(--bc-space-2);
+}
+.about-tagline {
+  color: var(--bc-text-100);
+  margin: 0 0 var(--bc-space-2);
+}
+.about-license {
+  color: var(--bc-text-300);
+  margin: 0 0 var(--bc-space-5);
+}
+.about-credits-title {
+  display: block;
+  margin: 0 0 var(--bc-space-3);
+}
+.about-credit {
+  margin-bottom: var(--bc-space-4);
+}
+.about-credit .bc-body {
+  color: var(--bc-text-300);
+  margin: 0 0 var(--bc-space-1);
+}
+.about-link {
+  font: 500 13px/1.3 var(--bc-font-sans);
+  color: var(--bc-arc-300);
+  text-decoration: none;
+}
+.about-link:hover {
+  color: var(--bc-arc-200);
+  text-decoration: underline;
 }
 </style>

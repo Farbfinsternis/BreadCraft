@@ -75,15 +75,31 @@ async function runBuild(runAfterBuild: boolean): Promise<void> {
     output.appendMany(result.log)
     output.ram = result.ram ?? null // feed the RAM health-bar (STAHL S1c)
     output.perf = result.perf ?? null // feed the PERF health-bar (estimated cost)
-    if (result.needsVicePath) {
-      output.append({ level: 'info', text: t('build.viceHint') })
-      settings.openModal()
-    }
+    // Building never needs VICE — only *running* does (T5). The .prg is already built;
+    // instead of silently popping Settings, explain that and offer to set VICE up.
+    // When the first-run onboarding (T2) lands, point this at it instead of the modal.
+    if (result.needsVicePath) await offerViceSetup()
   } catch (e) {
     output.append({ level: 'error', text: String((e as Error).message ?? e) })
   } finally {
     output.busy = false
   }
+}
+
+/**
+ * "Build & Run" without a VICE path: the build succeeded, only launching is blocked.
+ * Explain it and offer to set VICE up, rather than failing or silently opening a modal
+ * (T5, VICE_ONBOARDING_PLAN). "Set up" opens the first-run onboarding overlay (T2) — the
+ * same guided screen the app shows on a fresh machine.
+ */
+async function offerViceSetup(): Promise<void> {
+  const setUp = await ui.confirm({
+    title: t('build.viceNeededTitle'),
+    message: t('build.viceNeededMsg'),
+    confirmLabel: t('build.viceSetup')
+  })
+  if (setUp) await settings.openOnboarding()
+  else output.append({ level: 'info', text: t('build.viceLater') })
 }
 
 /** Toolbar "Build": produce the .prg from the active file, no VICE launch. */

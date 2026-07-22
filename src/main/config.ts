@@ -18,6 +18,7 @@ const DEFAULT_CONFIG: AppConfig = {
   startupMode: DEFAULT_SETTINGS.startupMode,
   recentProjects: [],
   vicePath: null,
+  viceOnboardingSeen: false,
   language: null,
   windowState: null
 }

@@ -1,7 +1,10 @@
 node_modules
 dist
 out
-build
+# Ignore electron-builder's buildResources dir contents, but keep the app icon
+# (the only tracked asset there — used to generate the installer + exe icons).
+/build/*
+!/build/icon.png
 *.log
 .DS_Store
 

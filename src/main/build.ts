@@ -7,7 +7,7 @@ import type { Ssot } from '../shared/ssot-types'
 import { compile, ramInfo, ramInfoFromMap, ramInfoOverflow } from '../transpiler'
 import type { AssetContext } from '../transpiler'
 import { cc65Tool, cc65Available } from './toolchain'
-import { readSettings } from './settings'
+import { readSettings, writeSettings, detectVice } from './settings'
 import { resolveLanguage } from './config'
 import { buildMessages } from './build-messages'
 import { listAssets, readAsset, projectRegion, projectEntry } from './project'
@@ -173,7 +173,18 @@ export async function buildAndRun(
     return { ok: true, stage: 'cc65', log, cCode: code, prgPath, ram, perf: perfInfo }
   }
 
-  const vicePath = readSettings().vicePath
+  let vicePath = readSettings().vicePath
+  // No usable path saved? Try to discover VICE automatically (T1) — on PATH or in the
+  // usual install spots — and remember it, so a first Run "just works" when VICE is
+  // findable. Only when detection also comes up empty do we ask the user to set it up.
+  if (!vicePath || !existsSync(vicePath)) {
+    const detected = detectVice()
+    if (detected) {
+      writeSettings({ vicePath: detected })
+      vicePath = detected
+      add('info', M.viceDetected(detected))
+    }
+  }
   if (!vicePath || !existsSync(vicePath)) {
     add('info', M.noVicePath)
     return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram, perf: perfInfo }

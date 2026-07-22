@@ -8,6 +8,7 @@ import OutputConsole from '@renderer/components/OutputConsole.vue'
 import StatusBar from '@renderer/components/StatusBar.vue'
 import WorkspaceSetup from '@renderer/components/WorkspaceSetup.vue'
 import SettingsModal from '@renderer/components/SettingsModal.vue'
+import ViceOnboarding from '@renderer/components/ViceOnboarding.vue'
 import PromptModal from '@renderer/components/PromptModal.vue'
 import NewProjectModal from '@renderer/components/NewProjectModal.vue'
 import SaveAsModal from '@renderer/components/SaveAsModal.vue'
@@ -17,6 +18,7 @@ import { ZEN_ROUTE_NAMES } from '@renderer/router'
 import { useUiStore } from '@renderer/stores/ui'
 import { useWorkspaceStore } from '@renderer/stores/workspace'
 import { useProjectStore } from '@renderer/stores/project'
+import { useSettingsStore } from '@renderer/stores/settings'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -24,6 +26,7 @@ const router = useRouter()
 const ui = useUiStore()
 const workspace = useWorkspaceStore()
 const project = useProjectStore()
+const settings = useSettingsStore()
 
 // Zen mode only takes effect in the graphics editors (it's only offered there;
 // the code view always keeps its panels). Persisted zen stays remembered but is
@@ -46,6 +49,9 @@ async function runStartup(): Promise<void> {
   } else {
     router.push({ name: 'welcome' })
   }
+  // First-run VICE onboarding (T2): auto-open once on a machine with no VICE set up.
+  // Runs after the workspace exists, so it never fights the workspace-setup gate.
+  await settings.maybeOpenOnboarding()
 }
 
 onMounted(async () => {
@@ -112,6 +118,10 @@ watch(
     <!-- Global settings modal: lives above the IDE, toggled from the toolbar. -->
     <SettingsModal />
   </div>
+
+  <!-- First-run VICE onboarding overlay (T2): guides a stranger to a runnable
+       emulator. Outside the workspace branch so it can sit above welcome or code. -->
+  <ViceOnboarding />
 
   <!-- Global prompt dialog: name entry / messages, replacing Electron's dead
        window.prompt/alert. Outside both branches so it's always available. -->

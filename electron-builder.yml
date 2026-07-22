@@ -2,10 +2,14 @@
 # Turns the electron-vite output in out/ into a distributable app.
 appId: com.breadcraft.ide
 productName: BreadCraft
+# productName drives the userData folder: packaged installs persist config +
+# the downloaded VICE under %APPDATA%/BreadCraft (see settings.ts / config.ts,
+# both via app.getPath('userData')).
 
 # What goes INTO the app bundle (the compiled app code).
 directories:
   output: dist
+  buildResources: build   # build/icon.png → auto-generated app + installer icons
 files:
   - out/**/*
   - package.json
@@ -14,6 +18,7 @@ files:
 # these land in <resourcesPath>/cc65, which src/main/toolchain.ts (cc65Root)
 # resolves when app.isPackaged. See memory: breadcraft-cc65-bundling.
 # 'samples' and 'html' from the cc65 snapshot are intentionally NOT bundled.
+# VICE is deliberately NOT bundled (GPL) — it is fetched on first run (T3).
 extraResources:
   - from: resources/cc65
     to: cc65
@@ -21,6 +26,18 @@ extraResources:
       - "**/*"
 
 win:
+  icon: build/icon.png
   target:
     - nsis      # installer
     - portable  # single self-contained .exe
+
+# Friendly assisted installer a non-developer can run without admin rights.
+nsis:
+  oneClick: false                        # show a wizard with progress, not a silent flash
+  perMachine: false                      # per-user install → no UAC / admin prompt
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: BreadCraft
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false        # keep the user's VICE + settings across reinstalls

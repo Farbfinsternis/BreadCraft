@@ -1,12 +1,16 @@
-// Writes a validated x.y.z version into package.json. Called by build.bat.
+// Writes a validated version into package.json. Called by build.bat.
 // Usage: node scripts/set-version.mjs <version>
+// Accepts x.y.z and an optional SemVer pre-release suffix (e.g. 0.2.19-preview.1,
+// 0.3.0-rc.2) so preview builds can be versioned honestly.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const version = process.argv[2]
-if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
-  console.error(`Ungültige Version: "${version ?? ''}". Erwartet: x.y.z (z. B. 0.1.0)`)
+if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
+  console.error(
+    `Ungültige Version: "${version ?? ''}". Erwartet: x.y.z oder x.y.z-suffix (z. B. 0.1.0, 0.2.19-preview.1)`
+  )
   process.exit(1)
 }
 

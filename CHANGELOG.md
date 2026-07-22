@@ -7,9 +7,71 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
-## [0.2.18] - 2026-07-20
+## [0.2.19-preview.1] - 2026-07-22
+
+Erste öffentliche **Vorschau** (Pre-Release): BreadCraft lässt sich jetzt installieren und
+richtet den Emulator beim ersten Start selbst ein. Ein Ausblick auf das, was der finale
+Release bringt — noch keine öffentliche Ankündigung.
+
+### Geändert
+- **Die erste Doku-Seite ist jetzt ein kurzer Schnellstart statt eines langen Hefts.** Wer die
+  Doku in der IDE aufmacht, will nicht 600 Zeilen Prosa lesen, sondern *etwas passieren sehen*.
+  Die neue erste Seite „Schnellstart — in fünf Minuten bewegt sich was" führt in wenigen Zeilen
+  zu einem gelben Ball, der über den Bildschirm wandert — die Grundform jedes Spiels (Position
+  ändern, `VWait`, wiederholen), ganz ohne Tiles oder Sprites. Danach lädt sie zum Herumspielen
+  ein und verweist für alle Wörter auf die Referenz. Der alte Titel „CRUMB — deine erste eigene
+  Sprache" war zudem irreführend (CRUMB ist die Sprache, die man *lernt*, nicht eine eigene).
+  Der Schnellstart liegt auf **Deutsch und Englisch** vor (die englische IDE zeigt jetzt die
+  englische Fassung statt auf das deutsche Original zurückzufallen).
+- Das ausführliche Einführungsheft ist **nicht verloren**: Es wandert nach `docs/website-source/`
+  und ist bewusst aus der Inline-Doku ausgehängt, um später als Quelle für den Web-Export zu dienen.
+- **Bauen braucht kein VICE mehr — nur das Ausführen.** Wer „Build & Run" drückt, ohne dass VICE
+  eingerichtet ist, bekommt jetzt ein freundliches, erklärendes Angebot („Dein Programm wurde gebaut
+  — zum Anschauen fehlt noch VICE, jetzt einrichten?") statt eines wortlos aufpoppenden
+  Einstellungs-Fensters. Der `.prg`-Bau selbst gelingt ohne VICE, und wer „Später" wählt, behält ein
+  fertig gebautes Programm. Das Angebot springt direkt in den VICE-Abschnitt der Einstellungen, statt
+  irgendwo im Menü zu landen. (Erster Schritt des VICE-Onboardings.)
+- **VICE einrichten heißt jetzt: Ordner wählen, fertig.** Man muss nicht mehr die genaue
+  Programmdatei finden — BreadCraft kennt ihren Namen. Du zeigst auf den VICE-Ordner, und BreadCraft
+  sucht `x64sc` selbst darin (auch im `bin`-Unterordner). Findet es nichts, sagt es das klar, statt
+  wortlos nichts zu tun.
+- **BreadCraft findet VICE oft ganz von allein.** Ist VICE über `PATH` oder an einem der üblichen
+  Windows-Orte installiert, muss man es gar nicht mehr einrichten: Beim ersten „Run" spürt BreadCraft
+  es auf, merkt es sich und startet direkt. In den Einstellungen gibt es dafür zusätzlich einen Knopf
+  „Automatisch suchen".
+- **Ein geführter Erststart für den Emulator.** Beim allerersten Start ohne eingerichteten Emulator
+  begrüßt dich ein einziger, freundlicher Bildschirm: Hat BreadCraft VICE schon gefunden, reicht ein
+  Klick auf „Benutzen". Sonst führen drei klare Wege weiter — VICE herunterladen, einen vorhandenen
+  Ordner wählen, oder „Später". „Später" ist immer erlaubt: Programme schreiben und bauen geht auch
+  ganz ohne Emulator, und der Bildschirm nervt kein zweites Mal.
+- **„VICE herunterladen" ist jetzt wirklich ein Klick.** BreadCraft lädt den Emulator direkt herunter
+  (mit Fortschrittsbalken), prüft die Datei über eine **Prüfsumme**, entpackt sie in einen eigenen
+  Ordner und richtet sie ein — fertig zum Ausführen, ohne dass du je eine `.exe` suchen musst. Geht
+  etwas schief (Verbindung weg, beschädigte Datei), sagt es das ehrlich und bietet Auswege an
+  (nochmal versuchen · von Hand holen · vorhandenen Ordner wählen). Eine beschädigte Datei wird
+  aus Sicherheit verworfen, statt sie auszuführen.
 
 ### Hinzugefügt
+- **Ein „Über & Lizenzen"-Bereich sagt ehrlich, wer mitarbeitet.** In den Einstellungen gibt es
+  jetzt eine eigene Rubrik: BreadCraft steht (mit Versionsnummer) unter der MIT-Lizenz, **cc65** —
+  die Werkzeugkette, die deine Programme in echten C64-Code übersetzt — ist mitgeliefert und
+  zlib-lizenziert, und **VICE**, der C64 zum Zuschauen, ist freie Software unter der GPL. Genau
+  darum liefern wir VICE *nicht* mit, sondern holen es beim ersten Start von der **offiziellen
+  Quelle** — und sagen das auch direkt am „VICE herunterladen"-Knopf. Jeder Name führt per Klick
+  auf die jeweilige Projektseite. (Der Schluss-Stein des VICE-Onboardings: rechtlich sauber und
+  transparent, bevor BreadCraft in fremde Hände geht.)
+- **BreadCraft hat jetzt einen echten Installer — ein Doppelklick, und es steht im Startmenü.**
+  Bisher war „installieren" ein Entwickler-Ritual (Quelltext holen, `npm`, bauen). Jetzt gibt es
+  `BreadCraft Setup.exe`: ein freundlicher Einrichtungs-Assistent, den auch jemand ohne
+  Entwickler-Werkzeuge einfach durchklickt. Er braucht **keine Administrator-Rechte** (installiert
+  nur für Dich, kein UAC-Schreck), legt eine **Desktop- und Startmenü-Verknüpfung** an und startet
+  BreadCraft am Ende gleich. Wer lieber gar nichts installiert, nimmt die ebenfalls gebaute
+  **portable `BreadCraft.exe`** — eine einzige Datei, die von überall läuft (auch vom USB-Stick).
+  Die komplette cc65-Werkzeugkette steckt schon mit drin; **VICE bleibt bewusst außen vor** (seine
+  GPL-Lizenz verbietet das Mitliefern) und wird beim ersten Start geholt oder verlinkt — genau das,
+  wofür das Erststart-Onboarding da ist. Und weil das Fenster jetzt das kupfern-blaue Zahnrad aus
+  dem BreadCraft-Logo als Symbol trägt, findet man es in der Taskleiste sofort wieder. (Der letzte
+  große Schritt des VICE-Onboardings: aus dem Projekt wird ein Programm, das ein Fremder installiert.)
 - **`Include` — ein Spiel darf jetzt auf mehrere `.crumb`-Dateien wachsen.** Der Auslöser kam
   wie so oft aus dem eigenen Spiel: Into The Deep war zu einer einzigen 668-Zeilen-Datei
   angeschwollen, in der man nur noch mit der Taschenlampe navigiert. `Include "physics"` holt
@@ -30,6 +92,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Klick öffnet genau diese Datei, springt in die Zeile und markiert sie. Der Projektbaum zeigt
   ohnehin schon jede `.crumb` in jedem selbst gewählten Ordner, und `Include` leuchtet im Editor
   als Schlüsselwort — beides fiel BreadCraft durch seine SSOT-getriebene Bauart gratis in den Schoß.
+
+### Behoben
+- **Ein `; Kommentar` am Zeilenende ließ manche Zeilen den Bau abbrechen.** Ausgerechnet das
+  Schnellstart-Beispiel aus der Doku stolperte darüber: Ein Kommentar hinter einem Befehl **ohne
+  Argumente** (`VWait   ; ein Bild lang warten`) oder hinter einem einzeiligen `If … Then …`
+  (`If x > 39 Then x = 0   ; am rechten Rand?`) wurde vom Parser noch als Code gelesen — er verlangte
+  einen Ausdruck und gab auf. Ein Kommentar beendet jetzt überall zuverlässig die Anweisung, so wie
+  man es erwartet (bei Befehlen *mit* Argumenten ging es ohnehin schon). Damit baut der Schnellstart
+  Wort für Wort so, wie er dasteht.
 
 ## [0.2.17] - 2026-07-19
 

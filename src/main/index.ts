@@ -21,7 +21,16 @@ import {
   saveFile,
   writeAsset
 } from './project'
-import { checkVicePath, chooseVicePath, readSettings, writeSettings } from './settings'
+import {
+  checkVicePath,
+  browseForVice,
+  detectVice,
+  markViceOnboardingSeen,
+  openViceDownloadPage,
+  readSettings,
+  writeSettings
+} from './settings'
+import { downloadAndInstallVice } from './vice-download'
 import { resolveLanguage } from './config'
 import { buildAndRun } from './build'
 import { savedWindowOptions, shouldStartMaximized, trackWindowState } from './window-state'
@@ -85,9 +94,20 @@ function registerIpc(): void {
   ipcMain.handle('settings:checkVice', (_event, path: string) => checkVicePath(path))
   ipcMain.handle('settings:browseVice', async (event, current: string | null) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window) return null
-    return chooseVicePath(window, current)
+    if (!window) return { status: 'cancelled', path: null }
+    return browseForVice(window, current)
   })
+  // Auto-detect VICE without the user picking anything (T1): PATH + usual install spots.
+  ipcMain.handle('settings:detectVice', () => detectVice())
+  // First-run onboarding (T2): remember it was shown; open the VICE page for download.
+  ipcMain.handle('settings:dismissViceOnboarding', () => markViceOnboardingSeen())
+  ipcMain.handle('settings:openViceDownload', () => openViceDownloadPage())
+  // In-app VICE download (T3): fetch pinned build, verify SHA-256, extract, persist.
+  ipcMain.handle('settings:downloadVice', (event) => downloadAndInstallVice(event.sender))
+
+  // App version for the About / licenses view (T7). Read from the packaged app, not
+  // a duplicated constant, so it always matches the release.
+  ipcMain.handle('app:version', () => app.getVersion())
 
   // Build & Run: transpile the given source, compile with bundled cc65, run in VICE.
   ipcMain.handle('build:run', (_event, source: string, projectDir: string, runAfterBuild = true) =>

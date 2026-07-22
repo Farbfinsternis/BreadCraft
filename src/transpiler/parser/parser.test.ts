@@ -504,3 +504,35 @@ describe('parser: functions (P1.T2, Sprachdef §C.1)', () => {
     expect(errors.some((e) => /Funktionsname erwartet/.test(e))).toBe(true)
   })
 })
+
+describe('parser: trailing `;` comments end a statement (Schnellstart regression)', () => {
+  it('accepts a comment after a command WITHOUT args (VWait)', () => {
+    const s = firstStmt('VWait   ; ein Bild lang warten') as CommandStmt
+    expect(s.kind).toBe('CommandStmt')
+    expect(s.name).toBe('VWait')
+    expect(s.args).toHaveLength(0)
+  })
+
+  it('accepts a comment after an inline If … Then <stmt>', () => {
+    const s = firstStmt('If x.b > 39 Then x.b = 0   ; am rechten Rand?') as IfStmt
+    expect(s.kind).toBe('IfStmt')
+    expect(s.then).toHaveLength(1)
+    expect(s.then[0].kind).toBe('AssignStmt')
+  })
+
+  it('transpiles the whole Schnellstart loop without errors', () => {
+    const src = [
+      'Color YELLOW          ; womit gemalt wird: gelb',
+      'x.b = 0               ; die Position des Balls, ganz links',
+      'While 1               ; „für immer" — die Hauptschleife',
+      '  DrawText x, 12, " " ; Ball an alter Stelle wegwischen',
+      '  x.b = x + 1         ; einen Schritt nach rechts',
+      '  If x.b > 39 Then x.b = 0   ; am rechten Rand? dann links wieder rein',
+      '  DrawText x, 12, "O" ; Ball an neuer Stelle malen',
+      '  VWait               ; ein Bild lang warten — das gibt das ruhige Tempo',
+      'Wend'
+    ].join('\n')
+    const { errors } = parseSrc(src)
+    expect(errors).toEqual([])
+  })
+})

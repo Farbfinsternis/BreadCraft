@@ -1,5 +1,6 @@
 import type { Locale } from '@shared/ipc'
-import crumbSpracheDe from './guides/crumb-sprache.de.md?raw'
+import crumbSchnellstartDe from './guides/crumb-schnellstart.de.md?raw'
+import crumbSchnellstartEn from './guides/crumb-schnellstart.en.md?raw'
 
 /**
  * One documentation page in the in-IDE reader (DOKU sprint, D2; localized in D8).
@@ -17,9 +18,9 @@ export interface DocPage {
 
 export const DOC_PAGES: DocPage[] = [
   {
-    id: 'crumb-sprache',
-    titleKey: 'docs.guide.crumb-sprache',
-    sources: { de: crumbSpracheDe }
+    id: 'crumb-schnellstart',
+    titleKey: 'docs.guide.crumb-schnellstart',
+    sources: { de: crumbSchnellstartDe, en: crumbSchnellstartEn }
   }
 ]
 

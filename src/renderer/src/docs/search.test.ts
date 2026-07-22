@@ -4,7 +4,7 @@ import { searchDocs } from './search'
 describe('docs search', () => {
   // Words that live only in a heading, only in prose, and only in a code example —
   // each must surface, and crucially must SHOW the term in what the user sees.
-  const queries = ['border', 'zaubern', 'Theater', 'BorderColor', 'Schleife', 'Farbe', 'leben']
+  const queries = ['border', 'Auftritt', 'Position', 'BorderColor', 'Schleife', 'Farbe', 'DrawText']
 
   for (const q of queries) {
     it(`"${q}" returns hits that visibly contain the term`, () => {

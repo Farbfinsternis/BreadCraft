@@ -20,6 +20,7 @@ export interface BuildMessages {
   buildOk(prgPath: string): string
   ramLine(used: number, budget: number, ceilingHex: string): string
   buildOnlySkipped: string
+  viceDetected(vicePath: string): string
   noVicePath: string
   startingVice(vicePath: string, prgPath: string): string
   viceStarted: string
@@ -38,6 +39,7 @@ const DE: BuildMessages = {
   ramLine: (used, budget, ceilingHex) =>
     `RAM: ${used} von ${budget} Bytes belegt (bis $${ceilingHex})`,
   buildOnlySkipped: '.prg gebaut — Start übersprungen (nur Build).',
+  viceDetected: (vicePath) => `VICE automatisch gefunden: ${vicePath}`,
   noVicePath: 'Kein gültiger VICE-Pfad gesetzt — .prg gebaut, aber nicht gestartet.',
   startingVice: (vicePath, prgPath) => `Starte VICE: ${vicePath} "${prgPath}"`,
   viceStarted: 'VICE gestartet.',
@@ -56,6 +58,7 @@ const EN: BuildMessages = {
   ramLine: (used, budget, ceilingHex) =>
     `RAM: ${used} of ${budget} bytes used (up to $${ceilingHex})`,
   buildOnlySkipped: '.prg built — launch skipped (build only).',
+  viceDetected: (vicePath) => `VICE found automatically: ${vicePath}`,
   noVicePath: 'No valid VICE path set — .prg built, but not launched.',
   startingVice: (vicePath, prgPath) => `Starting VICE: ${vicePath} "${prgPath}"`,
   viceStarted: 'VICE started.',

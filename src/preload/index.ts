@@ -13,6 +13,9 @@ import type {
   SettingsPatch,
   TreeNode,
   VicePathCheck,
+  ViceBrowseResult,
+  ViceDownloadProgress,
+  ViceDownloadResult,
   WorkspaceStatus
 } from '../shared/ipc'
 
@@ -30,6 +33,9 @@ export type {
   SettingsPatch,
   TreeNode,
   VicePathCheck,
+  ViceBrowseResult,
+  ViceDownloadProgress,
+  ViceDownloadResult,
   WorkspaceStatus
 }
 
@@ -80,12 +86,27 @@ const api = {
       ipcRenderer.invoke('settings:write', patch),
     checkVice: (path: string): Promise<VicePathCheck> =>
       ipcRenderer.invoke('settings:checkVice', path),
-    browseVice: (current: string | null): Promise<string | null> =>
-      ipcRenderer.invoke('settings:browseVice', current)
+    browseVice: (current: string | null): Promise<ViceBrowseResult> =>
+      ipcRenderer.invoke('settings:browseVice', current),
+    detectVice: (): Promise<string | null> => ipcRenderer.invoke('settings:detectVice'),
+    dismissViceOnboarding: (): Promise<void> =>
+      ipcRenderer.invoke('settings:dismissViceOnboarding'),
+    openViceDownload: (): Promise<void> => ipcRenderer.invoke('settings:openViceDownload'),
+    downloadVice: (): Promise<ViceDownloadResult> => ipcRenderer.invoke('settings:downloadVice'),
+    /** Subscribe to download progress; returns an unsubscribe function. */
+    onViceProgress: (cb: (p: ViceDownloadProgress) => void): (() => void) => {
+      const listener = (_e: unknown, p: ViceDownloadProgress): void => cb(p)
+      ipcRenderer.on('vice:progress', listener)
+      return () => ipcRenderer.removeListener('vice:progress', listener)
+    }
   },
   build: {
     run: (source: string, projectDir: string, runAfterBuild = true): Promise<BuildResult> =>
       ipcRenderer.invoke('build:run', source, projectDir, runAfterBuild)
+  },
+  app: {
+    /** The running app's version (from package.json), for the About / licenses view. */
+    version: (): Promise<string> => ipcRenderer.invoke('app:version')
   }
 }
 
