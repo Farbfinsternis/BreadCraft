@@ -340,6 +340,7 @@
   "docs.cat.graphics-setup": "Graphics & setup",
   "docs.cat.tiles": "Tiles",
   "docs.cat.sprites": "Sprites",
+  "docs.cat.scrolling": "Scrolling world",
   "docs.cat.input": "Input",
   "docs.cat.frame": "Frame timing",
   "docs.cat.branch": "Branches",

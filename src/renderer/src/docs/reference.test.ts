@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { buildReference, collectI18nKeys } from './reference'
 import de from '@renderer/i18n/messages/lang.de.json'
 import en from '@renderer/i18n/messages/lang.en.json'
+import uiDe from '@renderer/i18n/messages/ui.de.json'
+import uiEn from '@renderer/i18n/messages/ui.en.json'
 
 const deKeys = de as Record<string, string>
 const enKeys = en as Record<string, string>
+const uiDeKeys = uiDe as Record<string, string>
+const uiEnKeys = uiEn as Record<string, string>
 
 describe('docs reference model', () => {
   const keys = collectI18nKeys()
@@ -49,5 +53,14 @@ describe('docs reference model', () => {
   it('every SSOT description has English text', () => {
     const missing = keys.filter((k) => !(k in enKeys))
     expect(missing, `${missing.length} missing en keys: ${missing.join(', ')}`).toEqual([])
+  })
+
+  // A new SSOT category (e.g. 'scrolling') silently renders its raw key as the heading
+  // in DocsView and the cheat sheet until someone adds `docs.cat.<category>` to BOTH
+  // ui locale files. This catches that at the moment the category appears.
+  it('every category has a heading in both locales', () => {
+    const cats = buildReference((k) => k).groups.map((g) => `docs.cat.${g.category}`)
+    const missing = cats.filter((k) => !(k in uiDeKeys) || !(k in uiEnKeys))
+    expect(missing, `category headings missing: ${missing.join(', ')}`).toEqual([])
   })
 })

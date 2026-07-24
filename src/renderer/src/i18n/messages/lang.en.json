@@ -115,6 +115,29 @@
   "param.tileat.px": "Pixel X (sprite coordinate).",
   "param.tileat.py": "Pixel Y (sprite coordinate).",
 
+  "cmd.playfield": "Declares a strip of the screen to be the scrolling play field — the rows inside it travel, everything above and below stays nailed down (room for your score). Ten tile rows scroll like butter; paint it taller and the C64 starts chasing the electron beam and loses — the perf bar tells you when it begins to wheeze.",
+  "param.playfield.first": "Top screen row of the play field (0–24).",
+  "param.playfield.last": "Bottom screen row of the play field — first to last is the height.",
+
+  "cmd.usemap": "Steps into a world wider than the screen. DrawMap lays down a picture; UseMap opens a window onto a landscape you can walk through. Needs a PlayField to look through. Costs about 400 bytes per screen of length in memory — the RAM bar counts along for you.",
+  "param.usemap.id": "Name of the map from your project.",
+
+  "cmd.follow": "Pins the camera to a sprite — the world drags along wherever it walks. The threshold is its leash: while it stays closer than that many pixels to the centre, the world holds still; only then does it catch up. No threshold and it stays glued to the middle. At the ends of the map the world stops, the hero keeps walking anyway.",
+  "param.follow.sprite": "The sprite the camera follows.",
+  "param.follow.threshold": "Dead zone around screen centre, in pixels (omitted = always centred).",
+
+  "cmd.setcamerax": "Takes the wheel from the camera and sets the window by hand to a world position — for a pan to the door, a look at the boss, a quick earthquake. It still stops politely at the map ends. Read it back with CameraX().",
+  "param.setcamerax.x": "Left window edge in world pixels.",
+
+  "fn.camerax": "Tells you where the camera window sits (world pixels of its left edge) — use it to map a sprite onto the window: screen X = world_x − CameraX().",
+  "fn.camerax.returns": "Left window edge in world pixels.",
+
+  "cmd.setmaptile": "Changes the WORLD at a pixel spot (the same coordinates as TileAt) — and for real: the collected key stays gone even when its column scrolls back in. Spares you the tedious pixel-to-cell arithmetic. For the standing world without scrolling, SetTile remains.",
+  "param.setmaptile.x": "World X in pixels (as with TileAt).",
+  "param.setmaptile.y": "World Y in pixels (as with TileAt).",
+  "param.setmaptile.tile": "New tile number (0 = empty/walkable).",
+  "param.setmaptile.color": "Colour of the cell.",
+
   "cmd.sprite": "Positions a sprite (0–7) — the VIC chip draws it in hardware, you just say where. The form Sprite n, OFF switches it off.",
   "param.sprite.n": "Which of the 8 sprites (0–7).",
   "param.sprite.x": "X position (0–319; needs 9 bits, hence .w).",

@@ -115,6 +115,29 @@
   "param.tileat.px": "Pixel-X (Sprite-Koordinate).",
   "param.tileat.py": "Pixel-Y (Sprite-Koordinate).",
 
+  "cmd.playfield": "Erklärt einen Streifen des Schirms zum scrollenden Spielfeld — die Zeilen dazwischen wandern, alles darüber und darunter steht wie festgenagelt (Platz für Deinen Punktestand). Zehn Kachelzeilen scrollen butterweich; malst Du höher, hetzt der C64 dem Elektronenstrahl hinterher und verliert — die Perf-Bar sagt Dir, wann er zu keuchen beginnt.",
+  "param.playfield.first": "Oberste Bildschirmzeile des Spielfelds (0–24).",
+  "param.playfield.last": "Unterste Bildschirmzeile des Spielfelds — first bis last ergibt die Höhe.",
+
+  "cmd.usemap": "Betritt eine Welt, die breiter ist als der Schirm. DrawMap legt ein Bild hin; UseMap öffnet ein Fenster in eine Landschaft, durch die Du wandern kannst. Braucht ein PlayField zum Hindurchschauen. Kostet im Speicher rund 400 Byte pro Bildschirm Länge — die RAM-Bar zählt für Dich mit.",
+  "param.usemap.id": "Name der Karte aus Deinem Projekt.",
+
+  "cmd.follow": "Heftet die Kamera an einen Sprite — die Welt zieht mit, wohin er läuft. Die Schwelle ist seine Leine: solange er näher als so viele Pixel an der Bildmitte bleibt, rührt sich die Welt nicht; erst dann zieht sie nach. Ohne Schwelle klebt er in der Mitte. An den Enden der Karte bleibt die Welt stehen, der Held läuft trotzdem weiter.",
+  "param.follow.sprite": "Der Sprite, dem die Kamera folgt.",
+  "param.follow.threshold": "Toter Bereich um die Bildmitte in Pixeln (weggelassen = immer mittig).",
+
+  "cmd.setcamerax": "Nimmt der Kamera das Steuer aus der Hand und setzt das Fenster von Hand auf eine Welt-Position — für einen Schwenk zur Tür, den Blick auf den Boss, ein kurzes Erdbeben. An den Karten-Enden macht sie brav halt. Zurücklesen kannst Du mit CameraX().",
+  "param.setcamerax.x": "Linke Fensterkante in Welt-Pixeln.",
+
+  "fn.camerax": "Verrät, wo das Kamera-Fenster gerade steht (Welt-Pixel der linken Kante) — damit rechnest Du einen Sprite aufs Fenster um: Bildschirm-X = welt_x − CameraX().",
+  "fn.camerax.returns": "Linke Fensterkante in Welt-Pixeln.",
+
+  "cmd.setmaptile": "Ändert die WELT an einer Pixel-Stelle (dieselben Koordinaten wie TileAt) — und zwar richtig: der eingesammelte Schlüssel ist weg, auch wenn seine Spalte später wieder hereinscrollt. Nimmt Dir das lästige Umrechnen von Pixel auf Zelle ab. Für die stehende Welt ohne Scrolling bleibt SetTile.",
+  "param.setmaptile.x": "Welt-X in Pixeln (wie bei TileAt).",
+  "param.setmaptile.y": "Welt-Y in Pixeln (wie bei TileAt).",
+  "param.setmaptile.tile": "Neue Kachel-Nummer (0 = leer/begehbar).",
+  "param.setmaptile.color": "Farbe der Zelle.",
+
   "cmd.sprite": "Positioniert ein Sprite (0–7) — der VIC-Chip zeichnet es in Hardware, Du sagst nur wohin. Die Form Sprite n, OFF schaltet es ab.",
   "param.sprite.n": "Welches der 8 Sprites (0–7).",
   "param.sprite.x": "X-Position (0–319; braucht 9 Bit, daher .w).",

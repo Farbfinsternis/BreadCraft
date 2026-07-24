@@ -76,6 +76,7 @@ const CATEGORY_ORDER = [
   'graphics-setup',
   'tiles',
   'sprites',
+  'scrolling',
   'input',
   'frame',
   'branch',

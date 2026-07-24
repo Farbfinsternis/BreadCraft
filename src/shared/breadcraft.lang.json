@@ -1263,6 +1263,155 @@
       ]
     },
     {
+      "$group": "§E Scrolling / Welt (S1) — Map = Welt, Kamera = Fenster. Technik in _preflight/scroll_t3.c bewiesen (Gate A), CRUMB-Codegen noch offen → since:later"
+    },
+    {
+      "id": "cmd-playfield",
+      "name": "PlayField",
+      "kind": "command",
+      "category": "scrolling",
+      "i18nKey": "cmd.playfield",
+      "frameSafe": false,
+      "cost": "cheap",
+      "since": "later",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "Raster-Split: $D016-Scrollwert an SPLIT_IN (Zeile über erster), HUD-Wert an SPLIT_OUT (Zeile über letzter+1). Höhe = last-first+1 Kachelzeilen. Referenz _preflight/scroll_t2c.c.",
+      "$note": "Das scrollende Band: die Bildschirmzeilen first..last scrollen, alles darüber/darunter steht (Platz für HUD). GEMESSENE Decke (T4): bis 10 Kachelzeilen scrollt es sanft, darüber reißt das Bild — NICHT verboten (der C64 kann es, nur nicht schön), die Perf-Bar quittiert die Überforderung. Setup-only (der Split wird einmal gestellt).",
+      "params": [
+        {
+          "name": "first",
+          "type": ".b",
+          "i18nKey": "param.playfield.first"
+        },
+        {
+          "name": "last",
+          "type": ".b",
+          "i18nKey": "param.playfield.last"
+        }
+      ]
+    },
+    {
+      "id": "cmd-usemap",
+      "name": "UseMap",
+      "kind": "command",
+      "category": "scrolling",
+      "i18nKey": "cmd.usemap",
+      "frameSafe": false,
+      "cost": "cheap",
+      "since": "later",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "Macht eine (breite) Map zur Welt: Spaltendaten + Kachel→Farb-Tabelle in RAM, Fenster ab Spalte 0 ins Screen-RAM. Referenz _preflight/scroll_t3.c.",
+      "$note": "GEGENSTÜCK zu DrawMap: DrawMap legt ein Bild hin (passt auf einen Schirm), UseMap BETRITT eine Welt, die breiter als der Schirm sein darf. Braucht ein PlayField (das Band, in dem die Welt scrollt) und ein aktives Tileset. Der Bake ist einmalig/billig — die echten Kosten sind das Scrollen pro Frame (Perf-Bar, T4: Spitze ~81 % alle 8 Frames). RAM: ~400 Byte pro Bildschirm Level (RAM-Bar).",
+      "params": [
+        {
+          "name": "id",
+          "type": "$",
+          "i18nKey": "param.usemap.id"
+        }
+      ]
+    },
+    {
+      "id": "cmd-follow",
+      "name": "Follow",
+      "kind": "command",
+      "category": "scrolling",
+      "i18nKey": "cmd.follow",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "later",
+      "proven": true,
+      "transpile": "Bindet die Kamera an einen Sprite; threshold = toter Bereich um die Mitte (Pixel), in dem der Spieler läuft, ohne dass die Welt nachzieht. Klemmt an den Map-Enden. Referenz _preflight/scroll_t3.c.",
+      "$note": "Die Kamera folgt dem Sprite. threshold ist der tote Bereich um die Bildmitte: erst wenn der Spieler weiter als threshold Pixel von der Mitte weg ist, zieht die Welt nach (Follow PLAYER ohne threshold = immer mittig). An den Level-Enden steht die Welt, der Spieler läuft weiter. Darf umgesetzt werden (anderer Sprite in einer Zwischensequenz).",
+      "params": [
+        {
+          "name": "sprite",
+          "type": ".b",
+          "i18nKey": "param.follow.sprite"
+        },
+        {
+          "name": "threshold",
+          "type": ".b",
+          "i18nKey": "param.follow.threshold",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "cmd-setcamerax",
+      "name": "SetCameraX",
+      "kind": "command",
+      "category": "scrolling",
+      "i18nKey": "cmd.setcamerax",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "later",
+      "proven": true,
+      "transpile": "Setzt die Kamera-Fensterposition (Welt-Pixel, linke Kante); klemmt an den Map-Enden. Löst für den Frame ein Follow ab. Referenz _preflight/scroll_t3.c.",
+      "$note": "Die TÜR für direkte Kamera-Kontrolle: setzt das Fenster auf eine Welt-X-Position — für Zwischensequenzen, Boss-Räume, ein Kamera-Rütteln. Ohne Follow bleibt die Kamera, wo man sie setzt. X-only (S1 ist horizontal). Gegenstück zum Lesen: CameraX().",
+      "params": [
+        {
+          "name": "x",
+          "type": ".w",
+          "i18nKey": "param.setcamerax.x"
+        }
+      ]
+    },
+    {
+      "id": "fn-camerax",
+      "name": "CameraX",
+      "kind": "function",
+      "category": "scrolling",
+      "i18nKey": "fn.camerax",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "later",
+      "proven": true,
+      "returns": {
+        "type": ".w",
+        "i18nKey": "fn.camerax.returns"
+      },
+      "$note": "Liest die linke Kante des Kamera-Fensters in Welt-Pixeln — um einen Sprite aufs Fenster umzurechnen (Bildschirm-X = welt_x − CameraX()) oder zu prüfen, wie weit die Welt schon gereist ist. Setzen mit SetCameraX.",
+      "params": []
+    },
+    {
+      "id": "cmd-setmaptile",
+      "name": "SetMapTile",
+      "kind": "command",
+      "category": "scrolling",
+      "i18nKey": "cmd.setmaptile",
+      "frameSafe": true,
+      "cost": "cheap",
+      "since": "later",
+      "proven": true,
+      "requiresMode": "TEXT",
+      "transpile": "Ändert die WELT an einer Pixel-Position (wie TileAt): schreibt in den Map-Speicher UND, falls die Zelle gerade im Fenster liegt, ins Screen-/Color-RAM. Referenz _preflight/scroll_t3.c.",
+      "$note": "GEGENSTÜCK zu TileAt für die scrollende Welt: nimmt PIXEL in Welt-Koordinaten (wie TileAt), rechnet selbst in die Zelle um — beendet das händische (px-SPR_X0)>>3 aus world.crumb. Wichtig: es ändert die WELT, nicht nur den Bildschirm — ein eingesammelter Schlüssel bleibt weg, wenn seine Spalte wieder hereinscrollt. Für die stehende Kachel-Welt ohne Scrolling bleibt SetTile (Zelle statt Pixel).",
+      "params": [
+        {
+          "name": "x",
+          "type": ".w",
+          "i18nKey": "param.setmaptile.x"
+        },
+        {
+          "name": "y",
+          "type": ".b",
+          "i18nKey": "param.setmaptile.y"
+        },
+        {
+          "name": "tile",
+          "type": ".b",
+          "i18nKey": "param.setmaptile.tile"
+        },
+        {
+          "name": "color",
+          "type": "Color",
+          "i18nKey": "param.setmaptile.color"
+        }
+      ]
+    },
+    {
       "$group": "§E Eingabe (nicht-blockierend, Frame)"
     },
     {

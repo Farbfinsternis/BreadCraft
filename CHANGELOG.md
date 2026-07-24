@@ -7,6 +7,17 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Die Wörter fürs Scrollen stehen fest — sichtbar, aber noch als „geplant" markiert.** In der
+  Referenz und im Highlighting tauchen sechs neue Wörter für seitwärts scrollende Level auf:
+  `PlayField` (welcher Streifen des Schirms scrollt und welcher als HUD steht), `UseMap` (eine
+  Karte betreten, die breiter ist als der Schirm), `Follow` (die Kamera hängt sich an den Helden,
+  mit einer „Leine" um die Bildmitte), `SetCameraX`/`CameraX()` (die Kamera von Hand steuern und
+  auslesen) und `SetMapTile` (die Welt an einer Pixel-Stelle ändern — der eingesammelte Schlüssel
+  bleibt weg). Bauen kann man damit noch nichts (der Editor zeigt sie als *geplant*) — die Technik
+  dahinter ist aber auf echtem C64 (VICE) bewiesen: butterweiches Scrolling bis zu zehn
+  Kachelzeilen hoch, mit stehendem Punktestand darüber und darunter.
+
 ## [0.2.19-preview.1] - 2026-07-22
 
 Erste öffentliche **Vorschau** (Pre-Release): BreadCraft lässt sich jetzt installieren und
