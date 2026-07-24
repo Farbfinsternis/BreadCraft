@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import {
   MAP_W,
   MAP_H,
+  MAX_MAP_W,
   TILEMAP_FILE,
   DEFAULT_COLOR_RAM,
   parseTilemap,
@@ -62,6 +63,32 @@ export const useTilemapStore = defineStore('tilemap', () => {
     tiles.value = new Uint8Array(w * h).fill(EMPTY_TILE)
     colors.value = new Uint8Array(w * h).fill(DEFAULT_COLOR_RAM)
     version.value++
+  }
+
+  /**
+   * Widen the level to `newWidth` columns, keeping everything painted (S1.B2.T3). The
+   * grid is row-major, so a wider map is NOT the old array with cells appended — every
+   * row moves to a new stride. Copy row by row, or the level would shear.
+   *
+   * Growing only ever adds empty land on the right; it never shrinks (a level shortened
+   * by accident would take painted work with it — that stays a deliberate act, not a
+   * side effect of the mouse wandering).
+   */
+  function growTo(newWidth: number): void {
+    const w = Math.min(MAX_MAP_W, Math.floor(newWidth))
+    if (w <= width.value) return
+    const h = height.value
+    const nextTiles = new Uint8Array(w * h).fill(EMPTY_TILE)
+    const nextColors = new Uint8Array(w * h).fill(DEFAULT_COLOR_RAM)
+    for (let row = 0; row < h; row++) {
+      nextTiles.set(tiles.value.subarray(row * width.value, (row + 1) * width.value), row * w)
+      nextColors.set(colors.value.subarray(row * width.value, (row + 1) * width.value), row * w)
+    }
+    width.value = w
+    tiles.value = nextTiles
+    colors.value = nextColors
+    version.value++
+    dirty.value = true
   }
 
   // The project this map belongs to (set on load). Saves target this dir.
@@ -184,6 +211,7 @@ export const useTilemapStore = defineStore('tilemap', () => {
     tileAt,
     colorAt,
     setTile,
+    growTo,
     clear,
     loadForProject,
     save,

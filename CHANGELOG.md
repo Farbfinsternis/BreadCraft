@@ -33,6 +33,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gibt es gar nicht. Ein Knopf „Ganz zeigen" holt das ganze Level zurück ins Fenster, und wo Du
   zuletzt gearbeitet hast, wird gemerkt.
 
+- **Ein Level wächst, indem Du weitermalst.** Rechts neben der Karte wartet ein schraffierter
+  Streifen — malst Du hinein, nimmt das Level ihn auf, **einen ganzen Bildschirm auf einmal**
+  (ein Level ist damit immer eine runde Zahl von Bildschirmen lang, nie krumme 47 Spalten). Der
+  Radierer lässt es nicht wachsen: an leerem Land herumzureiben ist kein Wunsch nach mehr davon.
+  Oben läuft mit, was das kostet: **„2,5 Bildschirme · noch Platz für ~38"** — ein Bildschirm
+  Level kostet den C64 rund 400 Byte, und das ist auf echter Hardware gemessen, nicht geschätzt.
+  So spürst Du den Preis beim Malen und nicht erst beim Bauen.
+
 ### Geändert
 - **`DrawMap` sagt jetzt ehrlich, wenn eine Karte zu breit für den Bildschirm ist**, statt sie
   stillschweigend zu zerschneiden: „diese Karte ist 120 Spalten breit, auf den Bildschirm passen

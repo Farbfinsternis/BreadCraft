@@ -64,6 +64,40 @@ describe('tilemap store: a level wider than the screen', () => {
     expect(tm.tileAt(WIDE_W, markRow)).toBe(EMPTY_TILE)
   })
 
+  // S1.B2.T3: growing is where a row-major grid bites — every row moves to a new stride,
+  // so a naive "append cells" would shear the whole level one row at a time.
+  it('grows without shearing what is already painted', () => {
+    const tm = useTilemapStore()
+    // A recognisable pattern: the first and last cell of every row.
+    for (let row = 0; row < MAP_H; row++) {
+      tm.setTile(0, row, 100 + row, 3)
+      tm.setTile(MAP_W - 1, row, 200 - row, 4)
+    }
+
+    tm.growTo(MAP_W * 2)
+
+    expect(tm.width).toBe(MAP_W * 2)
+    expect(tm.tiles.length).toBe(MAP_W * 2 * MAP_H)
+    for (let row = 0; row < MAP_H; row++) {
+      expect(tm.tileAt(0, row)).toBe(100 + row)
+      expect(tm.tileAt(MAP_W - 1, row)).toBe(200 - row)
+      expect(tm.colorAt(MAP_W - 1, row)).toBe(4)
+      // The new land is empty, not a copy of anything.
+      expect(tm.tileAt(MAP_W, row)).toBe(EMPTY_TILE)
+      expect(tm.tileAt(MAP_W * 2 - 1, row)).toBe(EMPTY_TILE)
+    }
+    expect(tm.dirty).toBe(true)
+  })
+
+  it('never shrinks a level by growing', () => {
+    const tm = useTilemapStore()
+    tm.growTo(MAP_W * 3)
+    tm.setTile(MAP_W * 3 - 1, 0, 55, 2)
+    tm.growTo(MAP_W) // a smaller target must not take painted work with it
+    expect(tm.width).toBe(MAP_W * 3)
+    expect(tm.tileAt(MAP_W * 3 - 1, 0)).toBe(55)
+  })
+
   it('keeps the width when the map is emptied and when it is saved', async () => {
     const { json, markCol, markRow } = wideMapJson()
     const { written } = stubAssets(json)

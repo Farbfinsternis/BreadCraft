@@ -8,7 +8,8 @@ import { useTilemapStore, EMPTY_TILE } from '../stores/tilemap'
 import { useProjectStore } from '../stores/project'
 import { useMapViewStore, MIN_ZOOM, MAX_ZOOM } from '../stores/mapview'
 import { fitZoom, clampPan, viewOffset, zoomAt } from './map-viewport'
-import { DEFAULT_COLOR_RAM } from '../stores/assetIo'
+import { levelBytes, levelScreens, screensLeft } from './level-budget'
+import { DEFAULT_COLOR_RAM, MAX_MAP_W } from '../stores/assetIo'
 import { SCREEN_W } from '@shared/asset-formats'
 import { drawChar } from '../pixel-engine/charsetRender'
 import FloatPanel from '../components/FloatPanel.vue'
@@ -65,21 +66,33 @@ const viewH = ref(0)
 
 /** The view fits the whole map into the panel until you turn the wheel — which is
  *  exactly how a one-screen map has always looked. */
+// The whole STAGE — the level plus the waiting land (T3) — is what the view moves over,
+// so the strip you grow into is always reachable and "show it all" really shows it all.
 const zoom = computed(
-  () => mapview.zoom ?? fitZoom(viewW.value, viewH.value, canvasW.value, canvasH.value)
+  () => mapview.zoom ?? fitZoom(viewW.value, viewH.value, stageW.value, canvasH.value)
 )
 const box = computed(() => ({
   viewW: viewW.value,
   viewH: viewH.value,
-  canvasW: canvasW.value,
+  canvasW: stageW.value,
   canvasH: canvasH.value
 }))
 
 // The stored pan held inside what the map allows (never draggable out of sight).
-const panX = computed(() => clampPan(mapview.panX, viewW.value, canvasW.value, zoom.value))
+const panX = computed(() => clampPan(mapview.panX, viewW.value, stageW.value, zoom.value))
 const panY = computed(() => clampPan(mapview.panY, viewH.value, canvasH.value, zoom.value))
-const offsetX = computed(() => viewOffset(viewW.value, canvasW.value, zoom.value, mapview.panX))
+const offsetX = computed(() => viewOffset(viewW.value, stageW.value, zoom.value, mapview.panX))
 const offsetY = computed(() => viewOffset(viewH.value, canvasH.value, zoom.value, mapview.panY))
+
+// ---- new land: the level grows by painting into it (T3) ----
+// One screen of empty land waits past the right edge. Paint in it and the level takes
+// it in — growing in whole screens, so a level is always a round number of screens
+// wide (which is how you think about it: "three screens long"), never a ragged 47.
+const canGrow = computed(() => mapW.value + SCREEN_W <= MAX_MAP_W)
+const growCols = computed(() => (canGrow.value ? SCREEN_W : 0))
+/** Total columns the pointer may reach: the level plus the waiting land. */
+const reachW = computed(() => mapW.value + growCols.value)
+const stageW = computed(() => reachW.value * CHAR_PX)
 
 /** The screen boundaries: a hairline every 40 columns. NOT frames around separate
  *  maps — the C64 scrolls straight through, so the level is one flowing strip and
@@ -194,13 +207,15 @@ function scheduleDraw(full: boolean, cellIndex?: number): void {
 // ---- painting ----
 let painting = false
 
+/** Which cell the pointer is over — reaching across the new land, so a click there can
+ *  grow the level (T3). Cells at col >= mapW are land the level does not own yet. */
 function cellFromEvent(ev: PointerEvent): { col: number; row: number } | null {
-  const canvas = canvasRef.value
-  if (!canvas) return null
-  const rect = canvas.getBoundingClientRect()
-  const col = Math.floor(((ev.clientX - rect.left) / rect.width) * mapW.value)
+  const overlay = overlayRef.value
+  if (!overlay) return null
+  const rect = overlay.getBoundingClientRect()
+  const col = Math.floor(((ev.clientX - rect.left) / rect.width) * reachW.value)
   const row = Math.floor(((ev.clientY - rect.top) / rect.height) * mapH.value)
-  if (col < 0 || row < 0 || col >= mapW.value || row >= mapH.value) return null
+  if (col < 0 || row < 0 || col >= reachW.value || row >= mapH.value) return null
   return { col, row }
 }
 
@@ -242,6 +257,13 @@ function stampColor(): number {
 function paintAt(ev: PointerEvent): void {
   const c = cellFromEvent(ev)
   if (!c) return
+  // Painting in the new land takes it in — a whole screen at a time, so a level is
+  // always a round number of screens long. The eraser doesn't: rubbing at empty land
+  // is not a wish for more of it.
+  if (c.col >= mapW.value) {
+    if (tool.value === 'erase') return
+    tilemap.growTo((Math.floor(c.col / SCREEN_W) + 1) * SCREEN_W)
+  }
   const beforeTile = tilemap.tileAt(c.col, c.row)
   const beforeColor = tilemap.colorAt(c.col, c.row)
   const tn = stampTile()
@@ -368,17 +390,19 @@ function initCanvas(): void {
   ctx = canvas.getContext('2d')
   const overlay = overlayRef.value
   if (overlay) {
-    overlay.width = canvasW.value
+    // The overlay reaches across the new land too, so the ghost can stand there and
+    // show WHERE the level would grow before a click commits it.
+    overlay.width = stageW.value
     overlay.height = canvasH.value
     octx = overlay.getContext('2d')
   }
   redrawAll()
 }
 
-// Loading a map of a different size (a wide level, or back to a one-screen one) must
+// A map of a different size (a wide level, a grown one, or back to one screen) must
 // resize the canvas bitmaps — setting width/height also clears them, so a full redraw
 // follows. Without this the old map's pixels would linger past the new map's edge.
-watch([canvasW, canvasH], () => {
+watch([canvasW, canvasH, stageW], () => {
   clearGhost()
   initCanvas()
 })
@@ -420,6 +444,13 @@ const filledCount = computed(() => {
   for (let i = 0; i < tilemap.tiles.length; i++) if (tilemap.tiles[i] !== EMPTY_TILE) n++
   return n
 })
+
+// What the level costs the C64, in the units a level designer thinks in (T3): its
+// length in screens, and how many more would still fit. Same numbers the RAM bar will
+// show later — the cost is felt while painting, not discovered at build time.
+const levelLength = computed(() => levelScreens(mapW.value, SCREEN_W))
+const roomLeft = computed(() => screensLeft(mapW.value, SCREEN_W))
+const levelCost = computed(() => levelBytes(mapW.value))
 
 /** Empty the whole map (T1). Destructive + no undo, so confirm first. */
 function clearMap(): void {
@@ -521,6 +552,11 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
         <span class="tm-counter-val">{{ filledCount }}</span>
         {{ t('tilemap.counterSuffix', { n: mapW * mapH }) }}
       </span>
+      <span class="tm-counter" :title="t('tilemap.levelSizeTitle', { bytes: levelCost })">
+        <span class="tm-counter-val">{{ levelLength }}</span>
+        {{ t('tilemap.levelScreens') }} ·
+        {{ t('tilemap.levelRoomLeft', { n: roomLeft }) }}
+      </span>
       <button class="tm-reset" :title="t('tilemap.fitViewTitle')" @click="fitView">
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
         {{ t('tilemap.fitView') }}
@@ -569,17 +605,28 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
           <div
             class="tm-map-stack"
             :style="{
-              width: `${canvasW}px`,
+              width: `${stageW}px`,
               height: `${canvasH}px`,
               transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`
             }"
           >
-            <canvas ref="canvasRef" class="tm-map-canvas" />
-            <!-- transparent hover-preview overlay; sits exactly on the map and takes
+            <canvas
+              ref="canvasRef"
+              class="tm-map-canvas"
+              :style="{ width: `${canvasW}px`, height: `${canvasH}px` }"
+            />
+            <!-- Neuland: der Streifen, in den hinein das Level wächst (T3). -->
+            <div
+              v-if="canGrow"
+              class="tm-new-land"
+              :style="{ left: `${canvasW}px`, width: `${growCols * 8}px`, height: `${canvasH}px` }"
+            />
+            <!-- transparent hover-preview overlay; spans map AND new land, and takes
                  the pointer events (the map canvas underneath is purely the render) -->
             <canvas
               ref="overlayRef"
-              class="tm-map-canvas tm-map-overlay"
+              class="tm-map-overlay"
+              :style="{ width: `${stageW}px`, height: `${canvasH}px` }"
               @pointerdown="onPointerDown"
               @pointermove="onPointerMove"
               @pointerleave="onPointerLeave"
@@ -845,17 +892,29 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
    tile edges crisp however far you lean in. */
 .tm-map-canvas {
   display: block;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
   image-rendering: pixelated;
   background: #000;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
-  cursor: crosshair;
-  touch-action: none;
   user-select: none;
 }
-.is-grab .tm-map-canvas,
-.is-grabbing .tm-map-canvas {
+/* New land (T3): empty ground waiting past the right edge. Paint here and the level
+   takes the screen in. Deliberately quiet — an invitation, not a second map. */
+.tm-new-land {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(122, 176, 255, 0.05) 0 4px,
+    rgba(122, 176, 255, 0.1) 4px 8px
+  );
+  box-shadow: inset 0 0 0 1px rgba(122, 176, 255, 0.25);
+}
+.is-grab .tm-map-overlay,
+.is-grabbing .tm-map-overlay {
   cursor: inherit;
 }
 /* A screen boundary: a hairline, drawn OUTSIDE the scaled stack so it stays one pixel
@@ -878,12 +937,18 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
   color: rgba(122, 176, 255, 0.75);
   user-select: none;
 }
-/* The hover-preview overlay lies on top of the map, transparent, same size. */
+/* The hover-preview overlay lies on top of map AND new land, transparent — it is also
+   the element that takes the pointer, so it must cover everything paintable. */
 .tm-map-overlay {
+  display: block;
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   background: transparent;
-  box-shadow: none;
+  image-rendering: pixelated;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
 }
 
 /* ---- tools ---- */

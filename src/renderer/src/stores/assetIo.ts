@@ -66,6 +66,8 @@ function charsetCodec(mode: GraphicsMode): {
  *  wider, and its true size comes from the file. */
 export const MAP_W = fmt.MAP_W
 export const MAP_H = fmt.MAP_H
+/** Widest a level may get (sanity only — RAM is the real limit, and that gets SHOWN). */
+export const MAX_MAP_W = fmt.MAX_MAP_W
 
 // ---- Palette (.palette) ----
 
