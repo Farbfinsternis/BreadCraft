@@ -157,7 +157,13 @@ let ctx: CanvasRenderingContext2D | null = null
 // cell under the cursor, so you see WHERE a click will paint before committing.
 const overlayRef = ref<HTMLCanvasElement | null>(null)
 let octx: CanvasRenderingContext2D | null = null
-let hoverIndex = -1 // row*mapW+col currently ghosted, or -1 when none
+// The ghosted cell as COLUMN and ROW, not as a packed index. A packed index needs a
+// width to be packed and unpacked with, and the ghost may stand in the new land past
+// the level's right edge (T3) — where "the level's width" is the wrong ruler. Getting
+// that wrong wipes the wrong cell, so every ghost stays: a trail of half-transparent
+// tiles that looks exactly like the editor painting by itself.
+let hoverCol = -1
+let hoverRow = -1
 
 /** Draw one map cell (its tile's 8×8 char) at column/row. */
 function drawCell(col: number, row: number): void {
@@ -224,10 +230,10 @@ function cellFromEvent(ev: PointerEvent): { col: number; row: number } | null {
  *  a click will commit. No-op if the same cell is already ghosted. */
 function showGhost(col: number, row: number): void {
   if (!octx) return
-  const idx = row * mapW.value + col
-  if (idx === hoverIndex) return
+  if (col === hoverCol && row === hoverRow) return
   clearGhost()
-  hoverIndex = idx
+  hoverCol = col
+  hoverRow = row
   octx.save()
   octx.globalAlpha = 0.5
   const ramHex = C64_PALETTE[stampColor() & 7]?.hex ?? C64_PALETTE[1].hex
@@ -237,11 +243,10 @@ function showGhost(col: number, row: number): void {
 
 /** Remove the current ghost from the overlay. */
 function clearGhost(): void {
-  if (!octx || hoverIndex < 0) return
-  const col = hoverIndex % mapW.value
-  const row = Math.floor(hoverIndex / mapW.value)
-  octx.clearRect(col * CHAR_PX, row * CHAR_PX, CHAR_PX, CHAR_PX)
-  hoverIndex = -1
+  if (!octx || hoverCol < 0) return
+  octx.clearRect(hoverCol * CHAR_PX, hoverRow * CHAR_PX, CHAR_PX, CHAR_PX)
+  hoverCol = -1
+  hoverRow = -1
 }
 
 // What a click stamps: the pen writes the selected tile + active Color-RAM colour;
