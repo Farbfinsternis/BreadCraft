@@ -342,6 +342,13 @@ function onPointerMove(ev: PointerEvent): void {
   else clearGhost()
 }
 function onPointerUp(): void {
+  if (painting) {
+    // A stroke has ended: screens at the far end that hold nothing go back to being new
+    // land — so a tile dropped into the next screen by accident can simply be rubbed
+    // out again. At the END of the stroke, never during it: the ground must not move
+    // under a drag.
+    tilemap.trimEmptyScreens(SCREEN_W)
+  }
   painting = false
   strokeErases.value = false // the pen comes back as it was
   if (dragging.value) {

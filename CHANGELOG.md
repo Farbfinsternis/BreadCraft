@@ -42,7 +42,10 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Radierer lässt es nicht wachsen: an leerem Land herumzureiben ist kein Wunsch nach mehr davon.
   Oben läuft mit, was das kostet: **„2,5 Bildschirme · noch Platz für ~38"** — ein Bildschirm
   Level kostet den C64 rund 400 Byte, und das ist auf echter Hardware gemessen, nicht geschätzt.
-  So spürst Du den Preis beim Malen und nicht erst beim Bauen.
+  So spürst Du den Preis beim Malen und nicht erst beim Bauen. Und der Weg zurück steht offen:
+  **radierst Du den Ausrutscher wieder weg, gibt das Level den leeren Bildschirm zurück** — er
+  wird wieder zu wartendem Neuland. Nur ganz leere Bildschirme am Ende fallen weg; wo etwas
+  gemalt ist, verschwindet nichts.
 
 ### Geändert
 - **`DrawMap` sagt jetzt ehrlich, wenn eine Karte zu breit für den Bildschirm ist**, statt sie

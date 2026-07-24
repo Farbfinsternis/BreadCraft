@@ -91,6 +91,48 @@ export const useTilemapStore = defineStore('tilemap', () => {
     dirty.value = true
   }
 
+  /**
+   * Give back trailing screens that hold nothing (S1.B2.T3). A tile painted into new
+   * land by accident grows the level; rubbing it out must hand that screen back, or the
+   * level silently carries a screen of nothing — RAM the C64 pays for.
+   *
+   * The rule that makes this safe: only WHOLLY EMPTY screens at the far end fall away,
+   * and never the first one. Painted work can never be lost this way — there is nothing
+   * to lose. Growth is per stroke, so shrinking is too (the editor calls this when a
+   * stroke ends, not per cell — the ground must not move under a drag).
+   */
+  function trimEmptyScreens(screenW: number): void {
+    if (screenW <= 0) return
+    const w = width.value
+    const h = height.value
+    let keep = w
+    while (keep > screenW && columnsAreEmpty(keep - screenW, keep)) keep -= screenW
+    if (keep === w) return
+
+    const nextTiles = new Uint8Array(keep * h)
+    const nextColors = new Uint8Array(keep * h)
+    for (let row = 0; row < h; row++) {
+      nextTiles.set(tiles.value.subarray(row * w, row * w + keep), row * keep)
+      nextColors.set(colors.value.subarray(row * w, row * w + keep), row * keep)
+    }
+    width.value = keep
+    tiles.value = nextTiles
+    colors.value = nextColors
+    version.value++
+    dirty.value = true
+  }
+
+  /** Is every cell in columns [from, to) empty (nothing painted there)? */
+  function columnsAreEmpty(from: number, to: number): boolean {
+    for (let row = 0; row < height.value; row++) {
+      const base = row * width.value
+      for (let col = from; col < to; col++) {
+        if (tiles.value[base + col] !== EMPTY_TILE) return false
+      }
+    }
+    return true
+  }
+
   // The project this map belongs to (set on load). Saves target this dir.
   let projectDir: string | null = null
   let assetRel: string = TILEMAP_FILE
@@ -212,6 +254,7 @@ export const useTilemapStore = defineStore('tilemap', () => {
     colorAt,
     setTile,
     growTo,
+    trimEmptyScreens,
     clear,
     loadForProject,
     save,

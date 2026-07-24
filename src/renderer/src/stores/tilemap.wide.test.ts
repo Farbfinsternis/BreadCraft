@@ -89,6 +89,39 @@ describe('tilemap store: a level wider than the screen', () => {
     expect(tm.dirty).toBe(true)
   })
 
+  // The other half of growing (user report 2026-07-24): a tile dropped into the next
+  // screen by accident grows the level, so rubbing it out has to hand that screen back
+  // — otherwise the level silently carries a screen of nothing, which the C64 pays for
+  // in RAM.
+  it('hands back trailing screens that hold nothing', () => {
+    const tm = useTilemapStore()
+    tm.growTo(MAP_W * 3)
+    tm.setTile(MAP_W + 5, 4, 130, 2) // one tile, in screen 2
+
+    tm.trimEmptyScreens(MAP_W)
+    expect(tm.width).toBe(MAP_W * 2) // screen 3 was empty → gone; screen 2 is painted
+
+    tm.setTile(MAP_W + 5, 4, EMPTY_TILE, 1) // rub it out again
+    tm.trimEmptyScreens(MAP_W)
+    expect(tm.width).toBe(MAP_W) // back to where it started
+  })
+
+  it('never trims away painted work', () => {
+    const tm = useTilemapStore()
+    tm.growTo(MAP_W * 3)
+    tm.setTile(MAP_W * 3 - 1, MAP_H - 1, 77, 5) // the very last cell of the level
+    tm.trimEmptyScreens(MAP_W)
+    expect(tm.width).toBe(MAP_W * 3)
+    expect(tm.tileAt(MAP_W * 3 - 1, MAP_H - 1)).toBe(77)
+  })
+
+  it('keeps the first screen even when the map is completely empty', () => {
+    // There is no zero-screen level.
+    const tm = useTilemapStore()
+    tm.trimEmptyScreens(MAP_W)
+    expect(tm.width).toBe(MAP_W)
+  })
+
   it('never shrinks a level by growing', () => {
     const tm = useTilemapStore()
     tm.growTo(MAP_W * 3)
