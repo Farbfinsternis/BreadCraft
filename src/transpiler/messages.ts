@@ -95,6 +95,7 @@ export interface CodegenMessages {
   drawMapName(): string
   drawMapNoProject(id: string): string
   drawMapNoTileset(id: string): string
+  drawMapTooWide(id: string, width: number, screenW: number): string
   animateTileArgs(): string
   animateTileNoTileset(): string
   animateTileTooMany(max: number): string
@@ -343,6 +344,10 @@ const DE_CODEGEN: CodegenMessages = {
   drawMapNoProject: (id) =>
     `DrawMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`,
   drawMapNoTileset: (id) => `DrawMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
+  drawMapTooWide: (id, width, screenW) =>
+    `DrawMap "${id}": diese Karte ist ${width} Spalten breit, auf den Bildschirm passen ${screenW}. ` +
+    `DrawMap legt ein Bild hin, das auf einen Schirm passt — eine Karte, die breiter ist als der ` +
+    `Schirm, ist eine WELT, durch die man läuft: dafür ist UseMap da (kommt mit dem Scrolling).`,
   animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
   animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   animateTileTooMany: (max) =>
@@ -444,6 +449,10 @@ const EN_CODEGEN: CodegenMessages = {
   drawMapNoProject: (id) =>
     `DrawMap "${id}": no project context — maps can only be resolved inside a project`,
   drawMapNoTileset: (id) => `DrawMap "${id}": no tileset active — call UseTileset "…" first`,
+  drawMapTooWide: (id, width, screenW) =>
+    `DrawMap "${id}": this map is ${width} columns wide, the screen fits ${screenW}. ` +
+    `DrawMap lays down a picture that fits one screen — a map wider than the screen is a ` +
+    `WORLD you walk through: that is what UseMap is for (arrives with the scrolling).`,
   animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
   animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
   animateTileTooMany: (max) =>

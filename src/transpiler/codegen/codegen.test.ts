@@ -46,6 +46,14 @@ function fakeAssets(): AssetContext {
       }
     ]
   })
+  // A level three screens wide (S1.B2.T1) — a WORLD, not a picture. DrawMap must say so
+  // instead of shearing it onto one screen.
+  const wideMap = JSON.stringify({
+    format: 'breadcraft.tilemap',
+    width: 120,
+    height: 25,
+    layers: [{ type: 'grafik', tiles: Array.from({ length: 120 * 25 }, () => 0) }]
+  })
   // Two frames so a test can confirm UseSprite bakes ONLY frame 0.
   const sprite = JSON.stringify({
     format: 'breadcraft.sprite',
@@ -68,6 +76,7 @@ function fakeAssets(): AssetContext {
   const files: Record<string, string> = {
     'main.petscii': charset,
     'level1.tilemap': tilemap,
+    'welt.tilemap': wideMap,
     'player.sprite': sprite,
     'titel.image': image(0xaa, 6),
     'raum2.image': image(0xbb, 0)
@@ -76,7 +85,7 @@ function fakeAssets(): AssetContext {
     manifest: {
       palette: null,
       charsets: ['main.petscii'],
-      tilemaps: ['level1.tilemap'],
+      tilemaps: ['level1.tilemap', 'welt.tilemap'],
       sprites: ['player.sprite'],
       images: ['titel.image', 'raum2.image']
     },
@@ -1219,6 +1228,15 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
   it('errors honestly when DrawMap has no active tileset', () => {
     const { errors } = gen('DrawMap "level1"', fakeAssets())
     expect(errors.some((e) => /kein Tileset aktiv/.test(e))).toBe(true)
+  })
+
+  // S1.B2.T1: a map wider than the screen is a world you walk through, not a picture.
+  // Baking it with DrawMap would shear it (row n starting mid-row) — so it says so, and
+  // points at UseMap. Nothing is emitted for the sheared map.
+  it('errors honestly when DrawMap gets a map wider than the screen', () => {
+    const { code, errors } = gen('UseTileset "main"\nDrawMap "welt"', fakeAssets())
+    expect(errors.some((e) => /120 Spalten breit.*UseMap/s.test(e))).toBe(true)
+    expect(code).not.toContain('map_welt')
   })
 
   it('errors on an unknown tileset id (strict, at the command)', () => {

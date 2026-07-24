@@ -17,6 +17,18 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   bleibt weg). Bauen kann man damit noch nichts (der Editor zeigt sie als *geplant*) — die Technik
   dahinter ist aber auf echtem C64 (VICE) bewiesen: butterweiches Scrolling bis zu zehn
   Kachelzeilen hoch, mit stehendem Punktestand darüber und darunter.
+- **Eine Karte darf breiter sein als der Bildschirm.** Bisher war jede Karte genau ein Schirm groß
+  (40×25) — die Größe stand zwar in der Datei, aber niemand las sie. Jetzt entscheidet die Datei:
+  Karten dürfen sich über mehrere Bildschirme nach rechts strecken, und der Editor zeigt sie in
+  voller Länge. Alte Karten bleiben, was sie waren: genau ein Schirm. (Malen kann man die Breite
+  noch nicht — das ist der nächste Schritt.)
+
+### Geändert
+- **`DrawMap` sagt jetzt ehrlich, wenn eine Karte zu breit für den Bildschirm ist**, statt sie
+  stillschweigend zu zerschneiden: „diese Karte ist 120 Spalten breit, auf den Bildschirm passen
+  40 … eine Karte, die breiter ist als der Schirm, ist eine WELT, durch die man läuft — dafür ist
+  `UseMap` da." Und eine Karte, die eine unmögliche Größe behauptet, wird nicht mehr heimlich
+  zurechtgebogen (das hätte das ganze Level Zeile für Zeile verschoben), sondern gemeldet.
 
 ## [0.2.19-preview.1] - 2026-07-22
 

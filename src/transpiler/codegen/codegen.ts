@@ -35,6 +35,7 @@ import {
   type ResolvedPalette,
   type ResolvedImage
 } from '../assets'
+import { SCREEN_W } from '@shared/asset-formats'
 import { planMemory, type MemoryMap } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
 import { seedFontRegion } from '@shared/font-slots'
@@ -1842,6 +1843,13 @@ class Generator {
     let colors: Uint8Array
     try {
       const map = resolveTilemap(id, this.assets.manifest, this.assets.readFile, this.locale)
+      // A map wider than the screen is a WORLD, not a picture — DrawMap would silently
+      // shear it (row n would start mid-row). Say so instead (S1.B2.T1); UseMap is the
+      // door for those, and it arrives with the scrolling codegen.
+      if (map.width > SCREEN_W) {
+        this.err(this.M.drawMapTooWide(id, map.width, SCREEN_W), s)
+        return
+      }
       tiles = map.tiles
       colors = map.colors
     } catch (e) {

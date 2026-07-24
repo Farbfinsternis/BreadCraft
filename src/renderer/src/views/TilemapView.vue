@@ -6,7 +6,7 @@ import { usePanelsStore } from '../stores/panels'
 import { useCharsetStore } from '../stores/charset'
 import { useTilemapStore, EMPTY_TILE } from '../stores/tilemap'
 import { useProjectStore } from '../stores/project'
-import { MAP_W, MAP_H, DEFAULT_COLOR_RAM } from '../stores/assetIo'
+import { DEFAULT_COLOR_RAM } from '../stores/assetIo'
 import { drawChar } from '../pixel-engine/charsetRender'
 import FloatPanel from '../components/FloatPanel.vue'
 import { FONT_SLOTS } from '@shared/font-slots'
@@ -42,8 +42,13 @@ panels.ensure(SCOPE, {
 })
 
 const CHAR_PX = 8
-const CANVAS_W = MAP_W * CHAR_PX // 320
-const CANVAS_H = MAP_H * CHAR_PX // 200
+// The map's own size drives the canvas (S1.B2.T1) — one screen for a normal map, wider
+// for a scrolling world. Panning/zooming that wider canvas is the next slice (T2); for
+// now it simply renders at its true size.
+const mapW = computed(() => tilemap.width)
+const mapH = computed(() => tilemap.height)
+const canvasW = computed(() => mapW.value * CHAR_PX)
+const canvasH = computed(() => mapH.value * CHAR_PX)
 
 // Index → hex for the 4 MC colour sources, same mapping the PETSCII editor uses
 // (0=bg, 1=shared1, 2=shared2, 3=free). A painted tile renders identically here.
@@ -95,12 +100,12 @@ let ctx: CanvasRenderingContext2D | null = null
 // cell under the cursor, so you see WHERE a click will paint before committing.
 const overlayRef = ref<HTMLCanvasElement | null>(null)
 let octx: CanvasRenderingContext2D | null = null
-let hoverIndex = -1 // row*MAP_W+col currently ghosted, or -1 when none
+let hoverIndex = -1 // row*mapW+col currently ghosted, or -1 when none
 
 /** Draw one map cell (its tile's 8×8 char) at column/row. */
 function drawCell(col: number, row: number): void {
   if (!ctx) return
-  const tn = tilemap.tiles[row * MAP_W + col]
+  const tn = tilemap.tiles[row * mapW.value + col]
   drawChar(
     ctx,
     charset.chars[tn],
@@ -113,11 +118,11 @@ function drawCell(col: number, row: number): void {
   )
 }
 
-/** Redraw the whole 40×25 map (load / charset / palette change). */
+/** Redraw the whole map (load / charset / palette change). */
 function redrawAll(): void {
   if (!ctx) return
-  for (let row = 0; row < MAP_H; row++) {
-    for (let col = 0; col < MAP_W; col++) drawCell(col, row)
+  for (let row = 0; row < mapH.value; row++) {
+    for (let col = 0; col < mapW.value; col++) drawCell(col, row)
   }
 }
 
@@ -135,7 +140,7 @@ function scheduleDraw(full: boolean, cellIndex?: number): void {
     if (fullDirty) {
       redrawAll()
     } else {
-      for (const i of dirtyCells) drawCell(i % MAP_W, Math.floor(i / MAP_W))
+      for (const i of dirtyCells) drawCell(i % mapW.value, Math.floor(i / mapW.value))
     }
     fullDirty = false
     dirtyCells.clear()
@@ -149,9 +154,9 @@ function cellFromEvent(ev: PointerEvent): { col: number; row: number } | null {
   const canvas = canvasRef.value
   if (!canvas) return null
   const rect = canvas.getBoundingClientRect()
-  const col = Math.floor(((ev.clientX - rect.left) / rect.width) * MAP_W)
-  const row = Math.floor(((ev.clientY - rect.top) / rect.height) * MAP_H)
-  if (col < 0 || row < 0 || col >= MAP_W || row >= MAP_H) return null
+  const col = Math.floor(((ev.clientX - rect.left) / rect.width) * mapW.value)
+  const row = Math.floor(((ev.clientY - rect.top) / rect.height) * mapH.value)
+  if (col < 0 || row < 0 || col >= mapW.value || row >= mapH.value) return null
   return { col, row }
 }
 
@@ -160,7 +165,7 @@ function cellFromEvent(ev: PointerEvent): { col: number; row: number } | null {
  *  a click will commit. No-op if the same cell is already ghosted. */
 function showGhost(col: number, row: number): void {
   if (!octx) return
-  const idx = row * MAP_W + col
+  const idx = row * mapW.value + col
   if (idx === hoverIndex) return
   clearGhost()
   hoverIndex = idx
@@ -174,8 +179,8 @@ function showGhost(col: number, row: number): void {
 /** Remove the current ghost from the overlay. */
 function clearGhost(): void {
   if (!octx || hoverIndex < 0) return
-  const col = hoverIndex % MAP_W
-  const row = Math.floor(hoverIndex / MAP_W)
+  const col = hoverIndex % mapW.value
+  const row = Math.floor(hoverIndex / mapW.value)
   octx.clearRect(col * CHAR_PX, row * CHAR_PX, CHAR_PX, CHAR_PX)
   hoverIndex = -1
 }
@@ -201,7 +206,7 @@ function paintAt(ev: PointerEvent): void {
   // Redraw just THIS cell immediately (the fast path during a drag) — no full-map
   // repaint. setTile is a no-op if unchanged, so only draw when tile OR colour changed.
   if (beforeTile !== tn || beforeColor !== color) {
-    scheduleDraw(false, c.row * MAP_W + c.col)
+    scheduleDraw(false, c.row * mapW.value + c.col)
   }
 }
 
@@ -248,17 +253,25 @@ watch([selectedTile, activeColor, indexPalette, tool], () => clearGhost())
 function initCanvas(): void {
   const canvas = canvasRef.value
   if (!canvas) return
-  canvas.width = CANVAS_W
-  canvas.height = CANVAS_H
+  canvas.width = canvasW.value
+  canvas.height = canvasH.value
   ctx = canvas.getContext('2d')
   const overlay = overlayRef.value
   if (overlay) {
-    overlay.width = CANVAS_W
-    overlay.height = CANVAS_H
+    overlay.width = canvasW.value
+    overlay.height = canvasH.value
     octx = overlay.getContext('2d')
   }
   redrawAll()
 }
+
+// Loading a map of a different size (a wide level, or back to a one-screen one) must
+// resize the canvas bitmaps — setting width/height also clears them, so a full redraw
+// follows. Without this the old map's pixels would linger past the new map's edge.
+watch([canvasW, canvasH], () => {
+  clearGhost()
+  initCanvas()
+})
 
 onMounted(async () => {
   await nextTick()
@@ -275,7 +288,7 @@ onBeforeUnmount(() => {
 const filledCount = computed(() => {
   void tilemap.version
   let n = 0
-  for (let i = 0; i < MAP_W * MAP_H; i++) if (tilemap.tiles[i] !== EMPTY_TILE) n++
+  for (let i = 0; i < tilemap.tiles.length; i++) if (tilemap.tiles[i] !== EMPTY_TILE) n++
   return n
 })
 
@@ -380,10 +393,10 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
         </div>
       </FloatPanel>
 
-      <!-- Karte (40×25 canvas) -->
+      <!-- Karte (canvas in Kartengröße — ein Schirm, oder breiter) -->
       <FloatPanel :scope="SCOPE" id="map" :title="t('tilemap.panel.map')" :min-width="300" :min-height="240">
         <div class="tm-map-wrap">
-          <div class="tm-map-stack">
+          <div class="tm-map-stack" :style="{ aspectRatio: `${canvasW} / ${canvasH}` }">
             <canvas ref="canvasRef" class="tm-map-canvas" />
             <!-- transparent hover-preview overlay; sits exactly on the map and takes
                  the pointer events (the map canvas underneath is purely the render) -->
@@ -631,13 +644,13 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
   max-height: 100%;
   aspect-ratio: 320 / 200;
 }
-/* The canvas is 320×200 internally (the real C64 picture); CSS scales it to fit
-   the panel while keeping the 8:5 aspect, and `pixelated` keeps tile edges crisp. */
+/* The canvas is the map's true pixel size internally (320×200 for one screen, wider
+   for a scrolling world); CSS scales it to fit the panel — the stack above carries the
+   map's own aspect ratio, so nothing is squeezed — and `pixelated` keeps edges crisp. */
 .tm-map-canvas {
   display: block;
   width: 100%;
   height: 100%;
-  aspect-ratio: 320 / 200;
   image-rendering: pixelated;
   background: #000;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);

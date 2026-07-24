@@ -83,24 +83,22 @@ function withFormatError<T>(label: string, rel: string, run: () => T): T {
 // Format dimensions/constants come from the shared codecs (one place — Befund 21/23).
 const CHAR_COUNT = fmt.CHAR_COUNT
 const BYTES_PER_CHAR = fmt.BYTES_PER_CHAR
-const MAP_W = fmt.MAP_W
-const MAP_H = fmt.MAP_H
-const MAP_CELLS = fmt.MAP_CELLS
 const SPRITE_BYTES = fmt.SPRITE_BYTES
 const IMAGE_BITMAP_BYTES = fmt.IMAGE_BITMAP_BYTES
 const IMAGE_SCREEN_BYTES = fmt.IMAGE_SCREEN_BYTES
 const IMAGE_COLOR_BYTES = fmt.IMAGE_COLOR_BYTES
 
-/** A successfully resolved tilemap: 1000 tile numbers PLUS the parallel per-cell
- *  Color-RAM colours, ready to bake into C. */
+/** A successfully resolved tilemap: its tile numbers PLUS the parallel per-cell
+ *  Color-RAM colours, ready to bake into C. `width`×`height` cells — one screen for a
+ *  normal map, wider for a scrolling world (S1.B2.T1). */
 export interface ResolvedTilemap {
   kind: 'tilemap'
   id: string
   rel: string
-  /** 1000 tile numbers (0–255), row-major (cell = row*40 + col). */
+  /** width*height tile numbers (0–255), row-major (cell = row*width + col). */
   tiles: Uint8Array
-  /** 1000 per-cell Color-RAM colours (0–15), row-major — the free 4th MC colour the
-   *  editor painted per 8×8 cell. Parallel to `tiles`; cells past the stored data (or
+  /** The parallel per-cell Color-RAM colours (0–15), row-major — the free 4th MC colour
+   *  the editor painted per 8×8 cell. Parallel to `tiles`; cells past the stored data (or
    *  files predating per-cell colour) carry DEFAULT_COLOR_RAM. */
   colors: Uint8Array
   width: number
@@ -201,8 +199,8 @@ function parsePetsciiBytes(rel: string, text: string, locale: Locale): Uint8Arra
 }
 
 /**
- * Resolve a tilemap id (`"level1"`) to its 1000 tile numbers. Same strict, eager
- * contract as resolveCharset: unknown id / missing file / wrong format all throw
+ * Resolve a tilemap id (`"level1"`) to its tile numbers and its size. Same strict,
+ * eager contract as resolveCharset: unknown id / missing file / wrong format all throw
  * AssetResolveError at resolve time. Reads the `.tilemap`'s first `grafik` layer
  * (Phase 1 has exactly one) — the editor's serializeTilemap truth.
  */
@@ -225,30 +223,34 @@ export function resolveTilemap(
     throw new AssetResolveError(M.mapFileMissing(rel))
   }
 
-  const { tiles, colors } = parseTilemapData(rel, text, locale)
-  return { kind: 'tilemap', id, rel, tiles, colors, width: MAP_W, height: MAP_H }
+  const { tiles, colors, width, height } = parseTilemapData(rel, text, locale)
+  return { kind: 'tilemap', id, rel, tiles, colors, width, height }
 }
 
 /**
- * Parse the `.tilemap` JSON into parallel flat 1000-element tile + Color-RAM arrays.
- * Shape is `{ layers: [{ type, tiles: number[], colors: number[] | null }] }`; reads
- * the `grafik` layer. Strict: malformed structure or an out-of-range value is a hard
- * error (the bake must not poke garbage into Screen/Color RAM). A short `tiles` layer
- * is padded with 0 (empty tile); a short/absent `colors` is padded with the default
+ * Parse the `.tilemap` JSON into parallel flat tile + Color-RAM arrays of the map's
+ * own size. Shape is `{ width, height, layers: [{ type, tiles, colors }] }`; reads the
+ * `grafik` layer. Strict: malformed structure or an out-of-range value is a hard error
+ * (the bake must not poke garbage into Screen/Color RAM). A short `tiles` layer is
+ * padded with 0 (empty tile); a short/absent `colors` is padded with the default
  * per-cell colour — both are valid partial / pre-colour maps.
  */
 function parseTilemapData(
   rel: string,
   text: string,
   locale: Locale
-): { tiles: Uint8Array; colors: Uint8Array } {
+): { tiles: Uint8Array; colors: Uint8Array; width: number; height: number } {
   const M = messages(locale).resolver
-  const { tiles: srcTiles, colors: srcColors } = withFormatError(M.labelMap, rel, () =>
-    fmt.parseTilemap(text, locale)
-  )
+  const {
+    tiles: srcTiles,
+    colors: srcColors,
+    width,
+    height
+  } = withFormatError(M.labelMap, rel, () => fmt.parseTilemap(text, locale))
 
-  const tiles = new Uint8Array(MAP_CELLS)
-  for (let i = 0; i < MAP_CELLS && i < srcTiles.length; i++) {
+  const cells = width * height
+  const tiles = new Uint8Array(cells)
+  for (let i = 0; i < cells && i < srcTiles.length; i++) {
     const n = srcTiles[i]
     if (typeof n !== 'number' || n < 0 || n > 255 || !Number.isInteger(n)) {
       throw new AssetResolveError(M.tileNumberBad(rel, i))
@@ -256,9 +258,9 @@ function parseTilemapData(
     tiles[i] = n
   }
 
-  const colors = new Uint8Array(MAP_CELLS).fill(fmt.DEFAULT_COLOR_RAM)
+  const colors = new Uint8Array(cells).fill(fmt.DEFAULT_COLOR_RAM)
   if (srcColors) {
-    for (let i = 0; i < MAP_CELLS && i < srcColors.length; i++) {
+    for (let i = 0; i < cells && i < srcColors.length; i++) {
       const c = srcColors[i]
       if (typeof c !== 'number' || c < 0 || c > 15 || !Number.isInteger(c)) {
         throw new AssetResolveError(M.colorRamBad(rel, i))
@@ -266,7 +268,7 @@ function parseTilemapData(
       colors[i] = c
     }
   }
-  return { tiles, colors }
+  return { tiles, colors, width, height }
 }
 
 /** A successfully resolved palette: the three SHARED C64 colour registers as

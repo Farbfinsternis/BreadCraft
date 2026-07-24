@@ -61,10 +61,11 @@ function charsetCodec(mode: GraphicsMode): {
     : { pack: indicesToBytesHires, unpack: bytesToIndicesHires }
 }
 
-/** Standard C64 screen — one tilemap cell per character cell. */
+/** Standard C64 screen — one tilemap cell per character cell. Since S1.B2.T1 this is
+ *  the size of ONE SCREEN (and of a new map), not of every map: a scrolling world is
+ *  wider, and its true size comes from the file. */
 export const MAP_W = fmt.MAP_W
 export const MAP_H = fmt.MAP_H
-const MAP_CELLS = fmt.MAP_CELLS // 1000
 
 // ---- Palette (.palette) ----
 
@@ -165,31 +166,42 @@ export function parseCharset(
 export const DEFAULT_COLOR_RAM = fmt.DEFAULT_COLOR_RAM
 
 /** The graphics layer's two parallel per-cell arrays: tile numbers (0–255) and
- *  Color-RAM colours (C64 index 0–15, the free MC colour per 8×8 cell). */
+ *  Color-RAM colours (C64 index 0–15, the free MC colour per 8×8 cell) — plus the
+ *  map's size. A map is `width` cells wide (one screen, or wider for a scrolling
+ *  world) and `height` cells tall; cell = row*width + col. */
 export interface TilemapData {
   tiles: Uint8Array
   colors: Uint8Array
+  width: number
+  height: number
 }
 
 /**
- * Serialize the 40×25 graphics layer to the `.tilemap` JSON (TILEMAP_EDITOR.md §4).
+ * Serialize the graphics layer to the `.tilemap` JSON (TILEMAP_EDITOR.md §4).
  *
  * Future-proof shape: layers are an ARRAY of layer objects, NOT hardcoded fields —
  * so later layers (META data layer, parallax) slot in without a format rewrite.
- * Phase 1 holds one `grafik` layer of 1000 tile numbers (0–255) PLUS its 1000
+ * Phase 1 holds one `grafik` layer of tile numbers (0–255) PLUS the parallel
  * Color-RAM colours (0–15, the free MC colour per cell, §4 "+ zugehöriges Color-RAM").
  */
 export function serializeTilemap(data: TilemapData): string {
-  return fmt.serializeTilemap(Array.from(data.tiles), Array.from(data.colors))
+  return fmt.serializeTilemap(
+    Array.from(data.tiles),
+    Array.from(data.colors),
+    data.width,
+    data.height
+  )
 }
 
 /**
- * Parse a `.tilemap` file into the dense 1000-cell graphics layer (tiles + Color-
- * RAM). Reads the first `grafik` layer (Phase 1 has exactly one). Color-RAM is
- * forward-compatible: files predating it (no `colors`) default every cell to
- * DEFAULT_COLOR_RAM. Returns null if malformed (wrong format, missing/short tiles)
- * so the editor starts empty rather than loading garbage. Out-of-range tile/colour
- * values clamp to 0 / DEFAULT_COLOR_RAM (the editor's tolerant policy).
+ * Parse a `.tilemap` file into its dense graphics layer (tiles + Color-RAM). Reads
+ * the first `grafik` layer (Phase 1 has exactly one). The file's own `width`/`height`
+ * size the arrays — a map may be wider than one screen (S1.B2.T1); a file without
+ * those fields is a pre-B2 map and is exactly one screen. Color-RAM is forward-
+ * compatible: files predating it (no `colors`) default every cell to DEFAULT_COLOR_RAM.
+ * Returns null if malformed (wrong format, missing tiles, impossible size) so the
+ * editor starts empty rather than loading garbage. Out-of-range tile/colour values
+ * clamp to 0 / DEFAULT_COLOR_RAM and a short layer pads (the editor's tolerant policy).
  */
 export function parseTilemap(text: string): TilemapData | null {
   let raw: fmt.TilemapLayerRaw
@@ -199,20 +211,23 @@ export function parseTilemap(text: string): TilemapData | null {
     return null
   }
 
-  const tiles = new Uint8Array(MAP_CELLS)
-  for (let i = 0; i < MAP_CELLS && i < raw.tiles.length; i++) {
+  const { width, height } = raw
+  const cells = width * height
+
+  const tiles = new Uint8Array(cells)
+  for (let i = 0; i < cells && i < raw.tiles.length; i++) {
     const n = raw.tiles[i]
     tiles[i] = typeof n === 'number' && n >= 0 && n <= 255 ? n : 0
   }
 
-  const colors = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
+  const colors = new Uint8Array(cells).fill(DEFAULT_COLOR_RAM)
   if (raw.colors) {
-    for (let i = 0; i < MAP_CELLS && i < raw.colors.length; i++) {
+    for (let i = 0; i < cells && i < raw.colors.length; i++) {
       const c = raw.colors[i]
       if (typeof c === 'number' && c >= 0 && c <= 15) colors[i] = c
     }
   }
-  return { tiles, colors }
+  return { tiles, colors, width, height }
 }
 
 // ---- Sprite (.sprite) ----

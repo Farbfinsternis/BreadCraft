@@ -10,13 +10,20 @@ import {
 } from './assetIo'
 
 /**
- * The 40×25 graphics-layer tilemap drawn in the Tilemap editor.
+ * The graphics-layer tilemap drawn in the Tilemap editor.
  *
  * Each cell holds a TILE NUMBER 0–255 (an index into the project charset — the
  * "tiles" painted in the PETSCII editor) AND a COLOR-RAM colour 0–15 (the free 4th
  * multicolor colour, chosen per 8×8 cell — PETSCII_FORMAT.md §2.2, the C64's real
  * per-cell colour). The grid is DENSE (a map is filled), so two flat Uint8Arrays
- * (1000 each, row-major, cell = row*40 + col) are the natural model.
+ * (row-major, cell = row*width + col) are the natural model.
+ *
+ * SIZE (S1.B2.T1): a map is `width` × `height` cells. One screen (40×25) is the
+ * default and what every pre-B2 file is, but a scrolling world may be WIDER — the
+ * file's own dimensions decide, never a constant. Height stays one screen while
+ * vertical scrolling is deferred. Row-major is kept on purpose: the scrolling engine
+ * reads COLUMNS, but transposing is compile-time work for the codegen (S1.B3) and
+ * costs the running C64 nothing — so the painting code stays untouched.
  *
  * PERSISTENCE (ASSET_IO.md / TILEMAP_EDITOR.md §5): lives on disk as the project's
  * `.tilemap` asset, referenced from the `.bread` manifest. Phase 1 = one visible
@@ -25,7 +32,9 @@ import {
  * §2.5) — a dirty flag drives the editor's save indicator.
  */
 
-const MAP_CELLS = MAP_W * MAP_H // 1000
+/** A brand-new map is one screen (wider comes from painting, S1.B2.T3). */
+const NEW_MAP_W = MAP_W
+const NEW_MAP_H = MAP_H
 
 /**
  * The "empty" tile = Space (C64 screen code 32), NOT slot 0. Slot 0 is `@` in the
@@ -38,32 +47,49 @@ export const EMPTY_TILE = 32
 export const useTilemapStore = defineStore('tilemap', () => {
   // Dense parallel grids (row-major). A bumped ref version lets the editor
   // re-render on in-place writes (a Uint8Array isn't deeply reactive).
-  const tiles = ref<Uint8Array>(new Uint8Array(MAP_CELLS).fill(EMPTY_TILE))
-  const colors = ref<Uint8Array>(new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM))
+  const width = ref(NEW_MAP_W)
+  const height = ref(NEW_MAP_H)
+  const tiles = ref<Uint8Array>(new Uint8Array(NEW_MAP_W * NEW_MAP_H).fill(EMPTY_TILE))
+  const colors = ref<Uint8Array>(new Uint8Array(NEW_MAP_W * NEW_MAP_H).fill(DEFAULT_COLOR_RAM))
   const version = ref(0)
   const dirty = ref(false)
+
+  /** Resize to a blank map of w×h cells (load / new / clear all go through here, so
+   *  the two grids and the two dimensions can never disagree). */
+  function resetTo(w: number, h: number): void {
+    width.value = w
+    height.value = h
+    tiles.value = new Uint8Array(w * h).fill(EMPTY_TILE)
+    colors.value = new Uint8Array(w * h).fill(DEFAULT_COLOR_RAM)
+    version.value++
+  }
 
   // The project this map belongs to (set on load). Saves target this dir.
   let projectDir: string | null = null
   let assetRel: string = TILEMAP_FILE
 
+  /** Is this cell inside the map? */
+  function inside(col: number, row: number): boolean {
+    return col >= 0 && col < width.value && row >= 0 && row < height.value
+  }
+
   /** The tile number at a cell (EMPTY_TILE = blank Space). */
   function tileAt(col: number, row: number): number {
-    if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return EMPTY_TILE
-    return tiles.value[row * MAP_W + col]
+    if (!inside(col, row)) return EMPTY_TILE
+    return tiles.value[row * width.value + col]
   }
 
   /** The Color-RAM colour (0–15) at a cell. */
   function colorAt(col: number, row: number): number {
-    if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return DEFAULT_COLOR_RAM
-    return colors.value[row * MAP_W + col]
+    if (!inside(col, row)) return DEFAULT_COLOR_RAM
+    return colors.value[row * width.value + col]
   }
 
   /** Paint one cell with a tile number AND its Color-RAM colour (the free MC colour
    *  for that 8×8 cell). Marks dirty only — saving is EXPLICIT. No-op if unchanged. */
   function setTile(col: number, row: number, n: number, color: number): void {
-    if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return
-    const i = row * MAP_W + col
+    if (!inside(col, row)) return
+    const i = row * width.value + col
     if (tiles.value[i] === n && colors.value[i] === color) return
     tiles.value[i] = n & 0xff
     colors.value[i] = color & 0x0f
@@ -75,25 +101,36 @@ export const useTilemapStore = defineStore('tilemap', () => {
   async function loadForProject(dir: string, rel: string | null): Promise<void> {
     projectDir = dir
     assetRel = rel ?? TILEMAP_FILE
-    tiles.value = new Uint8Array(MAP_CELLS).fill(EMPTY_TILE)
-    colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
-    version.value++
+    resetTo(NEW_MAP_W, NEW_MAP_H)
     dirty.value = false
     if (!rel) return // no tilemap asset yet — start empty
     const text = await window.breadcraft.assets.read(dir, rel)
     if (!text) return
     const parsed = parseTilemap(text)
     if (parsed) {
+      // The FILE decides the size — a pre-B2 map is one screen, a scrolling world wider.
+      width.value = parsed.width
+      height.value = parsed.height
       tiles.value = parsed.tiles
       colors.value = parsed.colors
       version.value++
     }
   }
 
+  /** The map exactly as it stands — grids plus their size, the shape the file wants. */
+  function snapshot(): {
+    tiles: Uint8Array
+    colors: Uint8Array
+    width: number
+    height: number
+  } {
+    return { tiles: tiles.value, colors: colors.value, width: width.value, height: height.value }
+  }
+
   /** Write the tilemap to disk (explicit save: button / Ctrl+S). */
   async function save(): Promise<void> {
     if (!projectDir) return
-    const text = serializeTilemap({ tiles: tiles.value, colors: colors.value })
+    const text = serializeTilemap(snapshot())
     await window.breadcraft.assets.write(projectDir, 'tilemap', assetRel, text)
     dirty.value = false
   }
@@ -113,11 +150,9 @@ export const useTilemapStore = defineStore('tilemap', () => {
     if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
-    tiles.value = new Uint8Array(MAP_CELLS).fill(EMPTY_TILE)
-    colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
-    version.value++
+    resetTo(NEW_MAP_W, NEW_MAP_H)
     dirty.value = false
-    const text = serializeTilemap({ tiles: tiles.value, colors: colors.value })
+    const text = serializeTilemap(snapshot())
     await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
   }
 
@@ -125,9 +160,8 @@ export const useTilemapStore = defineStore('tilemap', () => {
    *  the default Color-RAM colour. Destructive and there is no undo yet, so the editor
    *  guards this behind a confirm dialog. A new array identity triggers a full redraw. */
   function clear(): void {
-    tiles.value = new Uint8Array(MAP_CELLS).fill(EMPTY_TILE)
-    colors.value = new Uint8Array(MAP_CELLS).fill(DEFAULT_COLOR_RAM)
-    version.value++
+    // Empties the map, does NOT resize it — a five-screen level stays five screens wide.
+    resetTo(width.value, height.value)
     dirty.value = true
   }
 
@@ -135,12 +169,14 @@ export const useTilemapStore = defineStore('tilemap', () => {
   async function saveTo(dir: string, rel: string): Promise<void> {
     projectDir = dir
     assetRel = rel
-    const text = serializeTilemap({ tiles: tiles.value, colors: colors.value })
+    const text = serializeTilemap(snapshot())
     await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
     dirty.value = false
   }
 
   return {
+    width,
+    height,
     tiles,
     colors,
     version,

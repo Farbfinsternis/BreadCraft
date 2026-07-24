@@ -1,0 +1,87 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
+import { useTilemapStore, EMPTY_TILE } from './tilemap'
+import { serializeTilemap, MAP_W, MAP_H, DEFAULT_COLOR_RAM } from './assetIo'
+
+// S1.B2.T1: a map is as wide as its FILE says, not as wide as a constant. The store
+// must load a level wider than one screen, address its far columns correctly
+// (cell = row*width + col — the seam where a hardcoded 40 would silently shear the
+// level), keep that width across clear(), and write it back unchanged.
+
+const WIDE_W = MAP_W * 3 // three screens of level
+
+/** A wide map with one recognisable cell in a column no one-screen map even has. */
+function wideMapJson(): { json: string; markCol: number; markRow: number } {
+  const markCol = WIDE_W - 1
+  const markRow = 7
+  const tiles = new Uint8Array(WIDE_W * MAP_H).fill(EMPTY_TILE)
+  const colors = new Uint8Array(WIDE_W * MAP_H).fill(DEFAULT_COLOR_RAM)
+  tiles[markRow * WIDE_W + markCol] = 137
+  colors[markRow * WIDE_W + markCol] = 5
+  return {
+    json: serializeTilemap({ tiles, colors, width: WIDE_W, height: MAP_H }),
+    markCol,
+    markRow
+  }
+}
+
+/** Minimal asset IPC: hands back one file's text and records what gets written. */
+function stubAssets(text: string): { written: string[] } {
+  const written: string[] = []
+  ;(globalThis as { window?: unknown }).window = {
+    breadcraft: {
+      assets: {
+        read: async () => text,
+        write: async (_d: string, _k: string, _rel: string, t: string) => {
+          written.push(t)
+        }
+      }
+    }
+  }
+  return { written }
+}
+
+describe('tilemap store: a level wider than the screen', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('loads the size from the file and reaches its far columns', async () => {
+    const { json, markCol, markRow } = wideMapJson()
+    stubAssets(json)
+    const tm = useTilemapStore()
+
+    await tm.loadForProject('C:/proj', 'assets/level01.tilemap')
+
+    expect(tm.width).toBe(WIDE_W)
+    expect(tm.height).toBe(MAP_H)
+    expect(tm.tiles.length).toBe(WIDE_W * MAP_H)
+    expect(tm.tileAt(markCol, markRow)).toBe(137)
+    expect(tm.colorAt(markCol, markRow)).toBe(5)
+    // Painting past the last column is still outside the map, wide or not.
+    tm.setTile(WIDE_W, markRow, 200, 3)
+    expect(tm.tileAt(WIDE_W, markRow)).toBe(EMPTY_TILE)
+  })
+
+  it('keeps the width when the map is emptied and when it is saved', async () => {
+    const { json, markCol, markRow } = wideMapJson()
+    const { written } = stubAssets(json)
+    const tm = useTilemapStore()
+    await tm.loadForProject('C:/proj', 'assets/level01.tilemap')
+
+    // clear() empties the level, it does not shrink it back to one screen.
+    tm.clear()
+    expect(tm.width).toBe(WIDE_W)
+    expect(tm.tiles.length).toBe(WIDE_W * MAP_H)
+    expect(tm.tileAt(markCol, markRow)).toBe(EMPTY_TILE)
+
+    tm.setTile(markCol, markRow, 42, 6)
+    await tm.save()
+
+    const back = JSON.parse(written.at(-1) as string)
+    expect(back.width).toBe(WIDE_W)
+    expect(back.height).toBe(MAP_H)
+    expect(back.layers[0].tiles[markRow * WIDE_W + markCol]).toBe(42)
+  })
+})

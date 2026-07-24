@@ -13,8 +13,18 @@ function fullMap(fill: (i: number) => number): Uint8Array {
   return t
 }
 
-function data(tiles: Uint8Array, colors?: Uint8Array): { tiles: Uint8Array; colors: Uint8Array } {
-  return { tiles, colors: colors ?? new Uint8Array(CELLS).fill(DEFAULT_COLOR_RAM) }
+function data(
+  tiles: Uint8Array,
+  colors?: Uint8Array,
+  width = MAP_W,
+  height = MAP_H
+): { tiles: Uint8Array; colors: Uint8Array; width: number; height: number } {
+  return {
+    tiles,
+    colors: colors ?? new Uint8Array(tiles.length).fill(DEFAULT_COLOR_RAM),
+    width,
+    height
+  }
 }
 
 describe('assetIo: tilemap serialize/parse', () => {
@@ -77,6 +87,31 @@ describe('assetIo: tilemap serialize/parse', () => {
     expect(back!.tiles[1]).toBe(0)
     expect(back!.colors[0]).toBe(DEFAULT_COLOR_RAM) // invalid → default
     expect(back!.colors[1]).toBe(7)
+  })
+
+  // S1.B2.T1: the editor sizes its grids from the FILE, so a level three screens wide
+  // survives a save/load unchanged — including the cells a one-screen map has no room for.
+  it('roundtrips a map wider than one screen', () => {
+    const w = MAP_W * 3
+    const tiles = new Uint8Array(w * MAP_H)
+    tiles[w * 4 + (w - 1)] = 99 // last column of a wide row — past a 40-wide grid
+    const back = parseTilemap(serializeTilemap(data(tiles, undefined, w, MAP_H)))
+    expect(back).not.toBeNull()
+    expect(back!.width).toBe(w)
+    expect(back!.tiles).toHaveLength(w * MAP_H)
+    expect(back!.tiles[w * 4 + (w - 1)]).toBe(99)
+  })
+
+  it('loads a map without width/height as one screen', () => {
+    const back = parseTilemap(JSON.stringify({ layers: [{ type: 'grafik', tiles: [1, 2, 3] }] }))
+    expect(back!.width).toBe(MAP_W)
+    expect(back!.height).toBe(MAP_H)
+    expect(back!.tiles).toHaveLength(CELLS) // short layer pads — tolerant policy
+  })
+
+  it('returns null on an impossible declared size (rather than shearing the level)', () => {
+    const json = JSON.stringify({ width: 7, height: 25, layers: [{ type: 'grafik', tiles: [1] }] })
+    expect(parseTilemap(json)).toBeNull()
   })
 
   it('returns null on broken JSON', () => {

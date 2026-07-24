@@ -108,6 +108,41 @@ describe('asset-formats: tilemap (.tilemap)', () => {
       /hat keinen Grafik-Layer mit Kacheln/
     )
   })
+
+  // S1.B2.T1: the file's own size is now READ, not assumed. A map may be wider than
+  // one screen (the scrolling world); a file without the fields is a pre-B2 map and
+  // is exactly one screen — that is what those files always were.
+  it('reads the declared size and round-trips a wider-than-screen map', () => {
+    const w = fmt.SCREEN_W * 3
+    const tiles = new Array(w * fmt.SCREEN_H).fill(0)
+    tiles[w * 2 + 100] = 77 // a cell only a wide map even has
+    const json = JSON.parse(fmt.serializeTilemap(tiles, [], w, fmt.SCREEN_H))
+    expect(json.width).toBe(w)
+    const back = fmt.parseTilemap(fmt.serializeTilemap(tiles, [], w, fmt.SCREEN_H))
+    expect(back.width).toBe(w)
+    expect(back.height).toBe(fmt.SCREEN_H)
+    expect(back.tiles[w * 2 + 100]).toBe(77)
+  })
+
+  it('treats a map without width/height as exactly one screen', () => {
+    const back = fmt.parseTilemap(JSON.stringify({ layers: [{ type: 'grafik', tiles: [1] }] }))
+    expect(back.width).toBe(fmt.SCREEN_W)
+    expect(back.height).toBe(fmt.SCREEN_H)
+  })
+
+  // A garbled dimension is NOT quietly repaired: sizing the grid off a bad number
+  // would shear the whole level (every row offset), which looks like corrupted art
+  // rather than a broken file.
+  it('throws on an impossible size instead of guessing', () => {
+    const bad = (w: unknown, h: unknown): string =>
+      JSON.stringify({ width: w, height: h, layers: [{ type: 'grafik', tiles: [1] }] })
+    expect(() => fmt.parseTilemap(bad(0, 25))).toThrowError(/unmögliche Größe/)
+    expect(() => fmt.parseTilemap(bad(40.5, 25))).toThrowError(/unmögliche Größe/)
+    expect(() => fmt.parseTilemap(bad('40', 25))).toThrowError(/unmögliche Größe/)
+    expect(() => fmt.parseTilemap(bad(fmt.MAX_MAP_W + 1, 25))).toThrowError(/unmögliche Größe/)
+    // Vertical scrolling is deferred, so a map is one screen tall — nothing else.
+    expect(() => fmt.parseTilemap(bad(40, 50))).toThrowError(/unmögliche Größe/)
+  })
 })
 
 describe('asset-formats: palette (.palette)', () => {

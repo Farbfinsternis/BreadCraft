@@ -235,6 +235,20 @@ describe('asset-resolver: resolveTilemap (happy path)', () => {
     expect(r.tiles[5]).toBe(9)
     expect(r.tiles[0]).toBe(0)
   })
+
+  // S1.B2.T1: the bake follows the FILE's size. A pre-B2 map (no width/height) stays
+  // one screen; a wide level resolves to width*height cells, so the codegen can see how
+  // wide the world really is instead of quietly reading the first 1000 cells.
+  it('resolves a map wider than the screen at its true size', () => {
+    const w = 120
+    const tiles = new Array(w * 25).fill(0)
+    tiles[w * 3 + 119] = 55
+    const json = JSON.stringify({ width: w, height: 25, layers: [{ type: 'grafik', tiles }] })
+    const r = resolveTilemap('wide', manifest([], ['wide.tilemap']), reader({ 'wide.tilemap': json }))
+    expect(r.width).toBe(w)
+    expect(r.tiles.length).toBe(w * 25)
+    expect(r.tiles[w * 3 + 119]).toBe(55)
+  })
 })
 
 describe('asset-resolver: resolveTilemap (strict, eager errors)', () => {

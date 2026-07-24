@@ -24,20 +24,26 @@ export interface FormatMessages {
   wrongCharCount(n: number, expected: number): string
   /** A tilemap has no `grafik` layer carrying tiles. */
   noGrafikLayer(): string
+  /** A tilemap declares a nonsensical `width`/`height` (S1.B2.T1). */
+  mapDimBad(field: string, value: unknown, min: number, max: number): string
 }
 
 const DE: FormatMessages = {
   jsonBroken: (ext) => `ist kein gültiges ${ext} (JSON kaputt)`,
   noField: (field) => `hat keine '${field}'-Daten`,
   wrongCharCount: (n, expected) => `hat ${n} Zeichen, erwartet ${expected}`,
-  noGrafikLayer: () => `hat keinen Grafik-Layer mit Kacheln`
+  noGrafikLayer: () => `hat keinen Grafik-Layer mit Kacheln`,
+  mapDimBad: (field, value, min, max) =>
+    `gibt eine unmögliche Größe an (${field} = ${String(value)}, erlaubt ${min}–${max})`
 }
 
 const EN: FormatMessages = {
   jsonBroken: (ext) => `is not a valid ${ext} (broken JSON)`,
   noField: (field) => `has no '${field}' data`,
   wrongCharCount: (n, expected) => `has ${n} chars, expected ${expected}`,
-  noGrafikLayer: () => `has no graphics layer with tiles`
+  noGrafikLayer: () => `has no graphics layer with tiles`,
+  mapDimBad: (field, value, min, max) =>
+    `declares an impossible size (${field} = ${String(value)}, allowed ${min}–${max})`
 }
 
 /** The format-error wording for a locale (German is the default; English additive). */
