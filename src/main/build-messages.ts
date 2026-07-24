@@ -25,6 +25,8 @@ export interface BuildMessages {
   startingVice(vicePath: string, prgPath: string): string
   viceStarted: string
   viceStartFailed(detail: string): string
+  /** The launch never got off the ground (no process id) — the detail for the line above. */
+  viceStartNoPid(vicePath: string): string
 }
 
 const DE: BuildMessages = {
@@ -43,7 +45,11 @@ const DE: BuildMessages = {
   noVicePath: 'Kein gültiger VICE-Pfad gesetzt — .prg gebaut, aber nicht gestartet.',
   startingVice: (vicePath, prgPath) => `Starte VICE: ${vicePath} "${prgPath}"`,
   viceStarted: 'VICE gestartet.',
-  viceStartFailed: (detail) => `VICE-Start fehlgeschlagen: ${detail}`
+  viceStartFailed: (detail) => `VICE-Start fehlgeschlagen: ${detail}`,
+  viceStartNoPid: (vicePath) =>
+    `Windows hat "${vicePath}" nicht gestartet (kein Prozess entstanden). ` +
+    `Steht der Pfad noch? Blockiert ein Virenscanner? Starte VICE einmal von Hand — ` +
+    `geht das, liegt es nicht an VICE.`
 }
 
 const EN: BuildMessages = {
@@ -62,7 +68,10 @@ const EN: BuildMessages = {
   noVicePath: 'No valid VICE path set — .prg built, but not launched.',
   startingVice: (vicePath, prgPath) => `Starting VICE: ${vicePath} "${prgPath}"`,
   viceStarted: 'VICE started.',
-  viceStartFailed: (detail) => `VICE launch failed: ${detail}`
+  viceStartFailed: (detail) => `VICE launch failed: ${detail}`,
+  viceStartNoPid: (vicePath) =>
+    `Windows did not start "${vicePath}" (no process appeared). Is the path still right? ` +
+    `Is a virus scanner blocking it? Start VICE by hand once — if that works, VICE isn't the problem.`
 }
 
 /** The build-log strings for a UI locale (only German maps to German; anything

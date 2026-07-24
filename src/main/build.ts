@@ -196,6 +196,22 @@ export async function buildAndRun(
   add('cmd', M.startingVice(vicePath, prgPath))
   try {
     const child = spawn(vicePath, [regionFlag, prgPath], { detached: true, stdio: 'ignore' })
+    // A failed spawn does NOT throw: Node reports it through an asynchronous 'error'
+    // event, long after this function has returned its log. Without the two lines below,
+    // a launch that never happened was reported as "VICE started." — the build looked
+    // perfect and nothing appeared on screen.
+    //
+    // `pid` is the synchronous truth: it stays undefined when the launch failed outright
+    // (missing file, no permission), so the log can say so while it still can. The error
+    // handler is what keeps a later failure from taking the whole IDE down with it — an
+    // unhandled 'error' event on a child process throws in the main process.
+    child.on('error', () => {
+      /* already reported via the pid check; swallow so it can't crash the app */
+    })
+    if (!child.pid) {
+      add('error', M.viceStartFailed(M.viceStartNoPid(vicePath)))
+      return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
+    }
     child.unref()
     add('ok', M.viceStarted)
     return { ok: true, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
