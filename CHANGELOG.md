@@ -33,6 +33,12 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gibt es gar nicht. Ein Knopf „Ganz zeigen" holt das ganze Level zurück ins Fenster, und wo Du
   zuletzt gearbeitet hast, wird gemerkt.
 
+- **`PlayField` und `UseMap` bauen jetzt wirklich.** Die ersten beiden Scroll-Wörter sind keine
+  Ankündigung mehr: `PlayField 3, 12` erklärt die Bildschirmzeilen 3 bis 12 zum Spielfeld, und
+  `UseMap "level01"` betritt eine Welt, die breiter sein darf als der Schirm. BreadCraft backt das
+  Level spaltenweise ein, stellt den Raster-Schnitt und zeigt das erste Fenster — darüber und
+  darunter steht Dein HUD still. Auf einem echten C64 (VICE) nachgewiesen. Bewegen kann man das
+  Fenster noch nicht (`SetCameraX`, `Follow` folgen), aber die Engine darunter läuft.
 - **Der Level-Zähler sagt jetzt, warum Dein Level kostet, was es kostet.** Solange jede Kachel
   *eine* Farbe behält, genügt dem C64 eine kleine Farbtabelle — ein Bildschirm Level kostet rund
   400 Byte. Malst Du dieselbe Kachel in zwei Farben (der C64 erlaubt das, die Farbe sitzt in

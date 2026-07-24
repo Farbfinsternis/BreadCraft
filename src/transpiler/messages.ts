@@ -96,6 +96,14 @@ export interface CodegenMessages {
   drawMapNoProject(id: string): string
   drawMapNoTileset(id: string): string
   drawMapTooWide(id: string, width: number, screenW: number): string
+  playFieldArgs(): string
+  playFieldRange(rows: number): string
+  playFieldAfterMap(): string
+  useMapName(): string
+  useMapNoProject(id: string): string
+  useMapNoTileset(id: string): string
+  useMapNoPlayField(id: string): string
+  useMapTwice(active: string, other: string): string
   animateTileArgs(): string
   animateTileNoTileset(): string
   animateTileTooMany(max: number): string
@@ -347,7 +355,27 @@ const DE_CODEGEN: CodegenMessages = {
   drawMapTooWide: (id, width, screenW) =>
     `DrawMap "${id}": diese Karte ist ${width} Spalten breit, auf den Bildschirm passen ${screenW}. ` +
     `DrawMap legt ein Bild hin, das auf einen Schirm passt — eine Karte, die breiter ist als der ` +
-    `Schirm, ist eine WELT, durch die man läuft: dafür ist UseMap da (kommt mit dem Scrolling).`,
+    `Schirm, ist eine WELT, durch die man läuft: dafür ist UseMap da.`,
+  playFieldArgs: () =>
+    `PlayField erwartet zwei feste Zeilen, z. B. PlayField 3, 12 — der Raster-Schnitt wird beim ` +
+    `Bauen gestellt, deshalb müssen die Zeilen schon beim Bauen feststehen (Zahl oder Const)`,
+  playFieldRange: (rows) =>
+    `PlayField: die Zeilen müssen zwischen 0 und ${rows - 1} liegen und die erste über der letzten ` +
+    `(z. B. PlayField 3, 12 = zehn Kachelzeilen scrollen, darüber und darunter steht das Bild)`,
+  playFieldAfterMap: () =>
+    `PlayField kommt zu spät: die Welt ist schon eingebacken. Sag zuerst, WELCHER Streifen scrollt ` +
+    `(PlayField), dann welche Welt darin läuft (UseMap)`,
+  useMapName: () => `UseMap erwartet einen Karten-Namen in Anführungszeichen, z. B. UseMap "level01"`,
+  useMapNoProject: (id) =>
+    `UseMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`,
+  useMapNoTileset: (id) => `UseMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
+  useMapNoPlayField: (id) =>
+    `UseMap "${id}": kein Spielfeld gesetzt — vorher PlayField sagen, z. B. PlayField 3, 12. ` +
+    `Der C64 scrollt einen STREIFEN des Schirms; ohne ihn weiß niemand, welche Zeilen wandern ` +
+    `und welche als Punktestand stehenbleiben`,
+  useMapTwice: (active, other) =>
+    `UseMap "${other}": das Programm betritt schon die Welt "${active}" — ein Programm hat heute ` +
+    `EINE scrollende Welt (Levelwechsel braucht Nachladen von Diskette)`,
   animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
   animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   animateTileTooMany: (max) =>
@@ -452,7 +480,27 @@ const EN_CODEGEN: CodegenMessages = {
   drawMapTooWide: (id, width, screenW) =>
     `DrawMap "${id}": this map is ${width} columns wide, the screen fits ${screenW}. ` +
     `DrawMap lays down a picture that fits one screen — a map wider than the screen is a ` +
-    `WORLD you walk through: that is what UseMap is for (arrives with the scrolling).`,
+    `WORLD you walk through: that is what UseMap is for.`,
+  playFieldArgs: () =>
+    `PlayField expects two fixed rows, e.g. PlayField 3, 12 — the raster split is set at build ` +
+    `time, so the rows must be known at build time (a number or a Const)`,
+  playFieldRange: (rows) =>
+    `PlayField: the rows must lie between 0 and ${rows - 1}, first above last ` +
+    `(e.g. PlayField 3, 12 = ten tile rows scroll, above and below the picture stands still)`,
+  playFieldAfterMap: () =>
+    `PlayField comes too late: the world is already baked. First say WHICH strip scrolls ` +
+    `(PlayField), then which world runs inside it (UseMap)`,
+  useMapName: () => `UseMap expects a map name in quotes, e.g. UseMap "level01"`,
+  useMapNoProject: (id) =>
+    `UseMap "${id}": no project context — maps can only be resolved inside a project`,
+  useMapNoTileset: (id) => `UseMap "${id}": no tileset active — call UseTileset "…" first`,
+  useMapNoPlayField: (id) =>
+    `UseMap "${id}": no play field set — say PlayField first, e.g. PlayField 3, 12. The C64 ` +
+    `scrolls a STRIP of the screen; without it nobody knows which rows travel and which stand ` +
+    `still as your score line`,
+  useMapTwice: (active, other) =>
+    `UseMap "${other}": the program already enters the world "${active}" — a program has ONE ` +
+    `scrolling world today (changing levels needs loading from disk)`,
   animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
   animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
   animateTileTooMany: (max) =>

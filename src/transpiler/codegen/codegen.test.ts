@@ -47,12 +47,34 @@ function fakeAssets(): AssetContext {
     ]
   })
   // A level three screens wide (S1.B2.T1) — a WORLD, not a picture. DrawMap must say so
-  // instead of shearing it onto one screen.
+  // instead of shearing it onto one screen; UseMap walks through it (S1.B3.1). Every
+  // tile keeps one colour, so it buys the cheap tile→colour table.
+  const W = 120
   const wideMap = JSON.stringify({
     format: 'breadcraft.tilemap',
-    width: 120,
+    width: W,
     height: 25,
-    layers: [{ type: 'grafik', tiles: Array.from({ length: 120 * 25 }, () => 0) }]
+    layers: [
+      {
+        type: 'grafik',
+        tiles: Array.from({ length: W * 25 }, (_, i) => 70 + (Math.floor(i / W) % 3)),
+        colors: Array.from({ length: W * 25 }, (_, i) => 2 + (Math.floor(i / W) % 3))
+      }
+    ]
+  })
+  // The same size, but tile 80 is painted in two colours — the level then pays its
+  // colours per cell (@shared/level-cost).
+  const mottledMap = JSON.stringify({
+    format: 'breadcraft.tilemap',
+    width: W,
+    height: 25,
+    layers: [
+      {
+        type: 'grafik',
+        tiles: Array.from({ length: W * 25 }, () => 80),
+        colors: Array.from({ length: W * 25 }, (_, i) => (i === 5 * W + 7 ? 7 : 1))
+      }
+    ]
   })
   // Two frames so a test can confirm UseSprite bakes ONLY frame 0.
   const sprite = JSON.stringify({
@@ -77,6 +99,8 @@ function fakeAssets(): AssetContext {
     'main.petscii': charset,
     'level1.tilemap': tilemap,
     'welt.tilemap': wideMap,
+    'welt2.tilemap': wideMap,
+    'bunt.tilemap': mottledMap,
     'player.sprite': sprite,
     'titel.image': image(0xaa, 6),
     'raum2.image': image(0xbb, 0)
@@ -85,7 +109,7 @@ function fakeAssets(): AssetContext {
     manifest: {
       palette: null,
       charsets: ['main.petscii'],
-      tilemaps: ['level1.tilemap', 'welt.tilemap'],
+      tilemaps: ['level1.tilemap', 'welt.tilemap', 'welt2.tilemap', 'bunt.tilemap'],
       sprites: ['player.sprite'],
       images: ['titel.image', 'raum2.image']
     },
@@ -1228,6 +1252,104 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
   it('errors honestly when DrawMap has no active tileset', () => {
     const { errors } = gen('DrawMap "level1"', fakeAssets())
     expect(errors.some((e) => /kein Tileset aktiv/.test(e))).toBe(true)
+  })
+
+  // S1.B3.1: PlayField + UseMap build the engine proven in _preflight/scroll_t3.c.
+  describe('PlayField + UseMap (the scrolling world)', () => {
+    const world = (extra = ''): string =>
+      ['UseTileset "main"', 'PlayField 3, 12', 'UseMap "welt"', extra].join('\n')
+
+    it('bakes the level COLUMN-major and sets the raster split from the band', () => {
+      const { code, errors } = gen(world(), fakeAssets())
+      expect(errors).toEqual([])
+      expect(code).toContain('#define BC_BAND_TOP  3')
+      expect(code).toContain('#define BC_BAND_H    10')
+      expect(code).toContain('#define BC_MAP_W     120')
+      expect(code).toContain('#define BC_SPLIT_IN  (51 + 8 * BC_BAND_TOP - 1)')
+      expect(code).toContain('#define BC_SPLIT_OUT (51 + 8 * (BC_BAND_TOP + BC_BAND_H) - 1)')
+      // 120 columns × 10 band rows, one column's cells next to each other — that is what
+      // a coarse scroll step needs when it reveals a column.
+      expect(code).toContain('static const unsigned char bc_lvl_welt[1200]')
+      // The window is filled at setup, and the beam is taken over for the split.
+      expect(code).toContain('bc_fill_col(_c, _c)')
+      expect(code).toContain('__asm__("sei")')
+      expect(code).toContain('__asm__("cli")') // …and handed back if the program ever ends
+    })
+
+    it('turns VWait into the raster-split frame', () => {
+      const { code } = gen(world('While 1\n  VWait\nWend'), fakeAssets())
+      expect(code).toContain('static void bc_vwait(void)')
+      expect(code).toContain('bc_vwait();')
+      expect(code).not.toContain('waitvsync();')
+    })
+
+    // A program without a world keeps the plain frame sync — the engine costs nothing
+    // to a game that never scrolls.
+    it('leaves a non-scrolling program exactly as it was', () => {
+      const { code } = gen('UseTileset "main"\nWhile 1\n  VWait\nWend', fakeAssets())
+      expect(code).toContain('waitvsync();')
+      expect(code).not.toContain('bc_vwait')
+      expect(code).not.toContain('BC_BAND_TOP')
+    })
+
+    it('needs a play field first — otherwise nobody knows which rows travel', () => {
+      const { errors } = gen('UseTileset "main"\nUseMap "welt"', fakeAssets())
+      expect(errors.some((e) => /kein Spielfeld gesetzt/.test(e))).toBe(true)
+    })
+
+    it('needs a tileset, and a real map name', () => {
+      const noTiles = gen('PlayField 3, 12\nUseMap "welt"', fakeAssets())
+      expect(noTiles.errors.some((e) => /kein Tileset aktiv/.test(e))).toBe(true)
+      const noName = gen(world().replace('UseMap "welt"', 'UseMap 7'), fakeAssets())
+      expect(noName.errors.some((e) => /Karten-Namen in Anführungszeichen/.test(e))).toBe(true)
+    })
+
+    it('refuses rows that are not on the screen', () => {
+      expect(gen('PlayField 3, 30', fakeAssets()).errors.some((e) => /zwischen 0 und 24/.test(e))).toBe(true)
+      expect(gen('PlayField 12, 4', fakeAssets()).errors.some((e) => /zwischen 0 und 24/.test(e))).toBe(true)
+    })
+
+    it('insists the rows are known at build time (the split is a constant)', () => {
+      const { errors } = gen('UseTileset "main"\nx.b = 3\nPlayField x, 12', fakeAssets())
+      expect(errors.some((e) => /feste Zeilen/.test(e))).toBe(true)
+    })
+
+    it('takes a Const for the rows — that IS known at build time', () => {
+      const { code, errors } = gen(
+        'Const TOP = 3\nUseTileset "main"\nPlayField TOP, 12\nUseMap "welt"',
+        fakeAssets()
+      )
+      expect(errors).toEqual([])
+      expect(code).toContain('#define BC_BAND_TOP  3')
+    })
+
+    it('enters ONE world — a second is an honest error, not a silent overwrite', () => {
+      const { errors } = gen(world('UseMap "welt2"'), fakeAssets())
+      expect(errors.some((e) => /betritt schon die Welt "welt"/.test(e))).toBe(true)
+    })
+
+    it('will not move the band after the level was cut for it', () => {
+      const { errors } = gen(world('PlayField 5, 14'), fakeAssets())
+      expect(errors.some((e) => /kommt zu spät/.test(e))).toBe(true)
+    })
+
+    // The colour model follows the painting (@shared/level-cost): one colour per tile
+    // buys the cheap 256-byte table, a tile in two colours pays per cell.
+    it('bakes a tile→colour table when every tile keeps one colour', () => {
+      const { code } = gen(world(), fakeAssets())
+      expect(code).toContain('static const unsigned char bc_lvlcol_welt[256]')
+      expect(code).toContain('COLOR_RAM[idx] = bc_lvlcol_welt[bc_lvl_welt[_s]];')
+    })
+
+    it('bakes colour per cell when a tile is painted in two colours, and says which', () => {
+      const { code } = gen(
+        'UseTileset "main"\nPlayField 3, 12\nUseMap "bunt"',
+        fakeAssets()
+      )
+      expect(code).toContain('static const unsigned char bc_lvlcol_bunt[1200]')
+      expect(code).toMatch(/colour per cell — tiles 80 are painted/)
+      expect(code).toContain('COLOR_RAM[idx] = bc_lvlcol_bunt[_s];')
+    })
   })
 
   // S1.B2.T1: a map wider than the screen is a world you walk through, not a picture.

@@ -33,9 +33,11 @@ import {
   type AssetManifest,
   type AssetReader,
   type ResolvedPalette,
-  type ResolvedImage
+  type ResolvedImage,
+  type ResolvedTilemap
 } from '../assets'
-import { SCREEN_W } from '@shared/asset-formats'
+import { SCREEN_W, SCREEN_H } from '@shared/asset-formats'
+import { levelCost, type ColorModel } from '@shared/level-cost'
 import { planMemory, type MemoryMap } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
 import { seedFontRegion } from '@shared/font-slots'
@@ -364,6 +366,14 @@ class Generator {
    *  is baked → bc_solid stays all-zero (nothing solid: the S11 default that makes a
    *  DrawText/HUD collision structurally impossible until the user paints walls). */
   private tilesetSolid: boolean[] | null = null
+
+  // ---- the scrolling world (S1.B3: PlayField / UseMap) ----
+  /** The play field: which SCREEN ROWS scroll. Compile-time on purpose — the raster split
+   *  lines are constants in the generated program, so the band cannot be a variable. */
+  private playField: { first: number; last: number } | undefined
+  /** The world entered by `UseMap`. A program has one (a second is an honest error): the
+   *  level lives in RAM as one baked block, and swapping it means loading from disk. */
+  private levelWorld: { id: string; columns: number; model: ColorModel } | undefined
 
   // ---- animated tiles (AnimateTile): animated-charset trick ----
   /** AnimateTile used → emit the bc_anim_* registry + tick (cycles a tile's 8 charset
@@ -805,6 +815,9 @@ class Generator {
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
 
+    // The scrolling engine (S1.B3), emitted only for a program that enters a world.
+    const scrollEngine = this.scrollEngineDecls()
+
     // Animated-tile registry + tick (AnimateTile), emitted only when used. Needs
     // BC_CHARSET, which the active tileset guarantees (genAnimateTile errors otherwise).
     const animTiles = this.animTileDecls()
@@ -929,6 +942,7 @@ class Generator {
       ...baked,
       ...spriteRuntime,
       ...tileWorld,
+      ...scrollEngine,
       ...animTiles,
       ...strHelpers,
       ...textDecls,
@@ -939,6 +953,12 @@ class Generator {
       ...setup,
       ...this.lines,
       '',
+      // A scrolling world runs with interrupts off (the raster split needs the beam to
+      // itself). A game loops forever and never gets here — but a program that DOES end
+      // must hand the machine back able to breathe, or BASIC returns to a dead keyboard.
+      ...(this.levelWorld
+        ? ['  __asm__("cli"); /* hand the interrupts back to the KERNAL */', '']
+        : []),
       '  return 0;',
       '}',
       ''
@@ -951,6 +971,76 @@ class Generator {
       highBase: map.highBase,
       highCeiling: map.highCeiling
     }
+  }
+
+  /**
+   * The scrolling engine (S1.B3.1), emitted only for a program that entered a world with
+   * `UseMap`. This is the C form of the engine proven on real hardware in
+   * `_intern/_preflight/scroll_t3.c`; the plan's measurements (`_intern/SCROLLING_PLAN.md`
+   * T2b–T4) are what its shape is for.
+   *
+   * THE FRAME IS THE POINT. `$D016` shifts the WHOLE screen, so a scrolling band inside a
+   * standing frame is a raster split: the fine-scroll value goes in one line above the
+   * band, the standing value one line below it. That splits every frame into two windows:
+   *
+   *   SPLIT_IN..SPLIT_OUT   the beam DRAWS the band — nothing about it may change, but
+   *                         thinking is free. This is where the program's own frame code
+   *                         runs (`VWait` hands it this pocket).
+   *   after SPLIT_OUT       the beam is below the band — the only place the band may be
+   *                         moved (S1.B3.2 puts the coarse shift here).
+   */
+  private scrollEngineDecls(): string[] {
+    if (!this.levelWorld || !this.playField) return []
+    const name = safeAssetName(this.levelWorld.id)
+    const rows = this.playField.last - this.playField.first + 1
+    const colour =
+      this.levelWorld.model === 'tileTable'
+        ? `bc_lvlcol_${name}[bc_lvl_${name}[_s]]`
+        : `bc_lvlcol_${name}[_s]`
+    return [
+      '/* ---- the scrolling world (proven in _preflight/scroll_t3.c) ---- */',
+      `#define BC_BAND_TOP  ${this.playField.first}   /* first scrolling screen row */`,
+      `#define BC_BAND_H    ${rows}   /* tile rows that travel */`,
+      `#define BC_MAP_W     ${this.levelWorld.columns}   /* level columns */`,
+      // The first raster line of a text row is 51 + 8*row; the split must be set one line
+      // BEFORE the row it applies to, hence the -1.
+      '#define BC_SPLIT_IN  (51 + 8 * BC_BAND_TOP - 1)',
+      '#define BC_SPLIT_OUT (51 + 8 * (BC_BAND_TOP + BC_BAND_H) - 1)',
+      // CSEL (bit 3) stays OFF: 38 columns hide the partially scrolled edge columns behind
+      // the side border. Switching it per split could open the border — never do that here.
+      `#define BC_D016_HUD  ${this.gfxColor === 'MULTICOLOR' ? '0xD0' : '0xC0'}   /* standing frame, ${this.gfxColor === 'MULTICOLOR' ? 'multicolor' : 'hires'} text */`,
+      '#define BC_RASTER    (*(volatile unsigned char*)0xD012)',
+      '',
+      // The camera itself arrives with the words that move it (S1.B3.2) — an unused
+      // variable is a promise the program does not keep yet.
+      'static unsigned char bc_xscroll = 7;     /* $D016 fine scroll, this frame */',
+      'static unsigned char bc_xscroll_next = 7;',
+      '',
+      '/* one column of the level into one screen column (screen AND colour) */',
+      'static void bc_fill_col(unsigned char scol, unsigned int mapcol) {',
+      '  unsigned char row;',
+      '  unsigned int _s = mapcol * BC_BAND_H;',
+      '  unsigned int idx = (unsigned int)BC_BAND_TOP * BC_SCR_W + scol;',
+      '  for (row = 0; row < BC_BAND_H; ++row) {',
+      `    BC_SCREEN[idx] = bc_lvl_${name}[_s];`,
+      `    COLOR_RAM[idx] = ${colour};`,
+      '    idx += BC_SCR_W;',
+      '    ++_s;',
+      '  }',
+      '}',
+      '',
+      '/* The frame turns over: end the one that was drawing, begin the next. Everything',
+      '   the program does between two VWaits runs while the beam draws the band — the',
+      '   pocket where thinking is free and the band must not be touched. */',
+      'static void bc_vwait(void) {',
+      '  while (BC_RASTER != BC_SPLIT_OUT) { }',
+      '  VIC.ctrl2 = BC_D016_HUD;               /* below the band the picture stands */',
+      '  bc_xscroll = bc_xscroll_next;',
+      '  while (BC_RASTER != BC_SPLIT_IN) { }',
+      '  VIC.ctrl2 = BC_D016_HUD | bc_xscroll;  /* from here down the world scrolls */',
+      '}',
+      ''
+    ]
   }
 
   /**
@@ -1484,7 +1574,10 @@ class Generator {
         break
       case 'vwait':
         // Frame sync (PAL 50Hz) — the proven cbm.h call (Sprachdef §F, _preflight/game.c).
-        this.emit('waitvsync();')
+        // In a scrolling world the frame is cut in two by a raster split (S1.B3.1), so
+        // VWait becomes that turn-over: it hands the program the pocket in which the beam
+        // draws the band. Same word, same meaning ("one frame passes"), stronger engine.
+        this.emit(this.levelWorld ? 'bc_vwait();' : 'waitvsync();')
         // Advance any AnimateTile registrations once per frame (cheap no-op if none).
         if (this.usesAnimTiles) this.emit('bc_anim_tick();')
         break
@@ -1499,6 +1592,12 @@ class Generator {
         break
       case 'drawmap':
         this.genDrawMap(s)
+        break
+      case 'playfield':
+        this.genPlayField(s)
+        break
+      case 'usemap':
+        this.genUseMap(s)
         break
       case 'settile':
         this.genSetTile(s)
@@ -1878,6 +1977,145 @@ class Generator {
     this.emit(
       `{ unsigned int _c; for (_c = 0; _c < ${tiles.length}; ++_c) { BC_SCREEN[_c] = ${cName}[_c]; COLOR_RAM[_c] = ${colName}[_c]; } }`
     )
+  }
+
+  /**
+   * `PlayField first, last` → the strip of the screen that scrolls (S1.B3.1). Rows
+   * outside it stand still while the world travels — that is where a score line lives.
+   *
+   * COMPILE-TIME on purpose: the band is drawn by a raster split, and the two split
+   * lines are constants in the generated program. A band that could change at runtime
+   * would mean rewriting the split mid-frame — so the rows must be known at build time
+   * (a number, or a Const), and saying so is more honest than silently taking the first
+   * value a variable happened to hold.
+   */
+  private genPlayField(s: CommandStmt): void {
+    const first = this.constInt(s.args[0])
+    const last = this.constInt(s.args[1])
+    if (first === undefined || last === undefined) {
+      this.err(this.M.playFieldArgs(), s)
+      return
+    }
+    if (first < 0 || last > SCREEN_H - 1 || first > last) {
+      this.err(this.M.playFieldRange(SCREEN_H), s)
+      return
+    }
+    // The world is baked against this geometry, so moving it afterwards would describe
+    // a band the level was never cut for.
+    if (this.levelWorld) {
+      this.err(this.M.playFieldAfterMap(), s)
+      return
+    }
+    this.playField = { first, last }
+    this.emit(`/* PlayField ${first}, ${last} — rows ${first}..${last} scroll, the rest stands */`)
+  }
+
+  /**
+   * `UseMap "id"` → enter a world that may be wider than the screen (S1.B3.1). The
+   * counterpart to DrawMap: that one lays down a picture, this one opens a window onto
+   * a landscape you walk through.
+   *
+   * What gets baked (the model proven in `_preflight/scroll_t3.c` + `@shared/level-cost`):
+   *   - the level COLUMN-MAJOR — a coarse scroll step reveals one column, so a column's
+   *     band cells must sit next to each other. The editor stores rows; transposing is
+   *     build-time work and costs the running C64 nothing.
+   *   - its colours, either as a 256-byte tile→colour table (every tile keeps one
+   *     colour) or per cell (the painter used the C64's per-cell freedom, so the level
+   *     costs twice per column). Chosen by what was painted, never imposed.
+   * The window is filled at setup; moving it is `SetCameraX`/`Follow` (S1.B3.2).
+   */
+  private genUseMap(s: CommandStmt): void {
+    const id = this.stringArg(s.args[0])
+    if (!id) {
+      this.err(this.M.useMapName(), s)
+      return
+    }
+    if (!this.assets) {
+      this.err(this.M.useMapNoProject(id), s)
+      return
+    }
+    if (!this.activeTileset) {
+      this.err(this.M.useMapNoTileset(id), s)
+      return
+    }
+    if (!this.playField) {
+      this.err(this.M.useMapNoPlayField(id), s)
+      return
+    }
+    if (this.levelWorld) {
+      this.err(this.M.useMapTwice(this.levelWorld.id, id), s)
+      return
+    }
+
+    let map: ResolvedTilemap
+    try {
+      map = resolveTilemap(id, this.assets.manifest, this.assets.readFile, this.locale)
+    } catch (e) {
+      this.err(e instanceof AssetResolveError ? e.message : String(e), s)
+      return
+    }
+
+    // A map is exactly one screen tall today (vertical scrolling is deferred) and
+    // PlayField's rows are checked against that same screen, so the band always fits —
+    // no third check that could only ever rot unused.
+    const bandTop = this.playField.first
+    const bandRows = this.playField.last - this.playField.first + 1
+
+    const cost = levelCost(
+      { tiles: map.tiles, colors: map.colors, width: map.width, bandTop, bandRows },
+      map.height
+    )
+
+    // Column-major: for every map column, the band's tiles one after the other.
+    const cells = map.width * bandRows
+    const tiles = new Uint8Array(cells)
+    const colors = new Uint8Array(cells)
+    for (let col = 0; col < map.width; col++) {
+      for (let row = 0; row < bandRows; row++) {
+        const src = (bandTop + row) * map.width + col
+        tiles[col * bandRows + row] = map.tiles[src]
+        colors[col * bandRows + row] = (map.colors[src] & 0x0f) | 8
+      }
+    }
+
+    const name = safeAssetName(id)
+    this.bakedData.push(
+      `/* UseMap "${id}": ${map.width} columns × ${bandRows} band rows, column-major */`,
+      `static const unsigned char bc_lvl_${name}[${cells}] = {`,
+      byteRows(tiles),
+      '};'
+    )
+    if (cost.model === 'tileTable') {
+      // Colour belongs to the TILE here: one 256-byte table instead of a byte per cell.
+      // Baked with the multicolor bit already set, so the fill loop is a plain copy.
+      const table = new Uint8Array(256)
+      for (let t = 0; t < 256; t++) table[t] = (cost.tileColors![t] & 0x0f) | 8
+      this.bakedData.push(
+        `/* tile → colour (every tile keeps one colour: ${cells + 256} bytes instead of ${cells * 2}) */`,
+        `static const unsigned char bc_lvlcol_${name}[256] = {`,
+        byteRows(table),
+        '};'
+      )
+    } else {
+      this.bakedData.push(
+        `/* colour per cell — tiles ${cost.conflictTiles.join(', ')} are painted in more than ` +
+          `one colour, so the colour travels with the cell (${cells * 2} bytes) */`,
+        `static const unsigned char bc_lvlcol_${name}[${cells}] = {`,
+        byteRows(colors),
+        '};'
+      )
+    }
+    this.bakedData.push('')
+
+    this.levelWorld = { id, columns: map.width, model: cost.model }
+
+    // Setup: show the first window, then hand the beam to the split. `sei` is what makes
+    // the split reliable — a KERNAL interrupt during the raster wait would land the split
+    // a few lines off, and a split on the wrong line is a visible tear.
+    this.emit(`/* UseMap "${id}" */`)
+    this.emit('{ unsigned char _c; for (_c = 0; _c < BC_SCR_W; ++_c) bc_fill_col(_c, _c); }')
+    this.emit('VIC.ctrl2 = BC_D016_HUD;')
+    this.emit('__asm__("sei"); /* the raster split needs the beam to itself */')
   }
 
   /**
