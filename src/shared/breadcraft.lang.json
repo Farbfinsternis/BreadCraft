@@ -1277,7 +1277,7 @@
       "proven": true,
       "requiresMode": "TEXT",
       "transpile": "Raster-Split: $D016-Scrollwert an SPLIT_IN (Zeile über erster), HUD-Wert an SPLIT_OUT (Zeile über letzter+1). Höhe = last-first+1 Kachelzeilen. Referenz _preflight/scroll_t2c.c.",
-      "$note": "Das scrollende Band: die Bildschirmzeilen first..last scrollen, alles darüber/darunter steht (Platz für HUD). GEMESSENE Decke (T4): bis 10 Kachelzeilen scrollt es sanft, darüber reißt das Bild — NICHT verboten (der C64 kann es, nur nicht schön), die Perf-Bar quittiert die Überforderung. Setup-only (der Split wird einmal gestellt).",
+      "$note": "Das scrollende Band: die Bildschirmzeilen first..last scrollen, alles darüber/darunter steht (Platz für HUD). GEMESSENE Decke der HEUTIGEN Engine (T4, Einfachpuffer): bis 10 Kachelzeilen scrollt es sanft, darüber reißt das Bild — NICHT verboten, die Perf-Bar quittiert die Überforderung. Der C64 selbst kann mit Doppelpuffer ($D018-Flip, Kopie über 8 ruhige Frames verteilt, nur Farb-RAM wandert echt) den ganzen Schirm — geplante Ausbaustufe, siehe SCROLLING_PLAN Reserve. Setup-only (der Split wird einmal gestellt).",
       "params": [
         {
           "name": "first",
