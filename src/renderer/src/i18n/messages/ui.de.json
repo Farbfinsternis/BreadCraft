@@ -257,6 +257,8 @@
   "tilemap.levelScreens": "Bildschirme",
   "tilemap.levelRoomLeft": "noch Platz für ~{n}",
   "tilemap.levelSizeTitle": "So lang ist Dein Level. Ein Bildschirm Level kostet den C64 etwa 400 Byte — dieses hier {bytes} Byte. Male weiter rechts in den schraffierten Streifen, dann wächst das Level um einen Bildschirm.",
+  "tilemap.perCellColour": "Farbe je Zelle",
+  "tilemap.levelSizePerCell": "Dieses Level kostet {bytes} Byte — doppelt so viel je Spalte wie sonst. Grund: die Kachel(n) {tiles} hast Du in mehreren Farben gemalt. Solange jede Kachel EINE Farbe behält, genügt eine kleine Farbtabelle; sobald eine Kachel zwei Farben trägt, muss die Farbe zu jeder Zelle einzeln mitreisen. Verboten ist das nicht — der C64 kann es, es kostet nur.",
   "tilemap.fitView": "Ganz zeigen",
   "tilemap.fitViewTitle": "Die ganze Karte ins Fenster holen",
   "tilemap.zoomTitle": "Wie nah Du dran bist. Mausrad zoomt, mittlere Maustaste (oder Leertaste + ziehen) schiebt die Karte.",

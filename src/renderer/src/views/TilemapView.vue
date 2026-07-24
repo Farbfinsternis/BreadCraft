@@ -8,7 +8,8 @@ import { useTilemapStore, EMPTY_TILE } from '../stores/tilemap'
 import { useProjectStore } from '../stores/project'
 import { useMapViewStore, MIN_ZOOM, MAX_ZOOM } from '../stores/mapview'
 import { fitZoom, clampPan, viewOffset, zoomAt, rowEdgeAtScreenY } from './map-viewport'
-import { BAND_ROWS, levelBytes, levelScreens, screensLeft } from './level-budget'
+import { BAND_ROWS, levelScreens, screensLeft } from './level-budget'
+import { levelCost } from '@shared/level-cost'
 import { DEFAULT_COLOR_RAM, MAX_MAP_W } from '../stores/assetIo'
 import { SCREEN_W } from '@shared/asset-formats'
 import { drawChar } from '../pixel-engine/charsetRender'
@@ -523,8 +524,28 @@ const filledCount = computed(() => {
 // length in screens, and how many more would still fit. Same numbers the RAM bar will
 // show later — the cost is felt while painting, not discovered at build time.
 const levelLength = computed(() => levelScreens(mapW.value, SCREEN_W))
-const roomLeft = computed(() => screensLeft(mapW.value, SCREEN_W, bandRows.value))
-const levelCost = computed(() => levelBytes(mapW.value, bandRows.value))
+// Which colour model this painting needs — the same question the transpiler asks when it
+// bakes (@shared/level-cost), so the price shown here is the price the C64 pays. A tile
+// painted in two colours cannot be summed up by a tile→colour table; its colours have to
+// travel per cell, and the level costs twice as much per column.
+const cost = computed(() => {
+  void tilemap.version
+  return levelCost(
+    {
+      tiles: tilemap.tiles,
+      colors: tilemap.colors,
+      width: mapW.value,
+      bandTop: bandFirst.value,
+      bandRows: bandRows.value
+    },
+    mapH.value
+  )
+})
+const roomLeft = computed(() =>
+  screensLeft(mapW.value, SCREEN_W, bandRows.value, cost.value.model)
+)
+const levelCostBytes = computed(() => cost.value.bytes)
+const perCellColour = computed(() => cost.value.model === 'perCell')
 
 /** Empty the whole map (T1). Destructive + no undo, so confirm first. */
 function clearMap(): void {
@@ -626,10 +647,22 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
         <span class="tm-counter-val">{{ filledCount }}</span>
         {{ t('tilemap.counterSuffix', { n: mapW * mapH }) }}
       </span>
-      <span class="tm-counter" :title="t('tilemap.levelSizeTitle', { bytes: levelCost })">
+      <span
+        class="tm-counter"
+        :class="{ 'is-pricey': perCellColour }"
+        :title="
+          perCellColour
+            ? t('tilemap.levelSizePerCell', {
+                bytes: levelCostBytes,
+                tiles: cost.conflictTiles.join(', ')
+              })
+            : t('tilemap.levelSizeTitle', { bytes: levelCostBytes })
+        "
+      >
         <span class="tm-counter-val">{{ levelLength }}</span>
         {{ t('tilemap.levelScreens') }} ·
         {{ t('tilemap.levelRoomLeft', { n: roomLeft }) }}
+        <template v-if="perCellColour"> · {{ t('tilemap.perCellColour') }}</template>
       </span>
       <button class="tm-reset" :title="t('tilemap.fitViewTitle')" @click="fitView">
         <svg class="ico" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
@@ -1105,6 +1138,10 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
 }
 .tm-band-label.is-warn {
   color: rgba(255, 150, 120, 1);
+}
+/* A level paying per-cell colour costs twice per column — shown, never forbidden. */
+.tm-counter.is-pricey {
+  color: rgba(255, 196, 92, 0.95);
 }
 /* The hover-preview overlay lies on top of map AND new land, transparent — it is also
    the element that takes the pointer, so it must cover everything paintable. */

@@ -257,6 +257,8 @@
   "tilemap.levelScreens": "screens",
   "tilemap.levelRoomLeft": "room for ~{n} more",
   "tilemap.levelSizeTitle": "How long your level is. One screen of level costs the C64 about 400 bytes — this one costs {bytes}. Paint into the hatched strip on the right and the level grows by a screen.",
+  "tilemap.perCellColour": "colour per cell",
+  "tilemap.levelSizePerCell": "This level costs {bytes} bytes — twice as much per column as usual. The reason: you painted tile(s) {tiles} in more than one colour. As long as every tile keeps ONE colour, a small colour table says it all; the moment a tile carries two, the colour has to travel with every single cell. It isn't forbidden — the C64 can do it, it just costs.",
   "tilemap.fitView": "Show it all",
   "tilemap.fitViewTitle": "Bring the whole map into the window",
   "tilemap.zoomTitle": "How close you are. The wheel zooms, the middle mouse button (or Space + drag) pushes the map around.",

@@ -33,6 +33,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gibt es gar nicht. Ein Knopf „Ganz zeigen" holt das ganze Level zurück ins Fenster, und wo Du
   zuletzt gearbeitet hast, wird gemerkt.
 
+- **Der Level-Zähler sagt jetzt, warum Dein Level kostet, was es kostet.** Solange jede Kachel
+  *eine* Farbe behält, genügt dem C64 eine kleine Farbtabelle — ein Bildschirm Level kostet rund
+  400 Byte. Malst Du dieselbe Kachel in zwei Farben (der C64 erlaubt das, die Farbe sitzt in
+  jeder Zelle einzeln), muss die Farbe zu jeder Zelle mitreisen: **doppelter Preis je Spalte**.
+  Der Zähler zeigt dann „Farbe je Zelle", färbt sich und nennt im Tooltip genau die Kacheln, die
+  es auslösen. Verboten wird nichts — Du siehst nur, was Dein Pinsel kostet, und kannst es mit
+  einem Farbklick zurückholen.
 - **Der Karten-Editor zeigt, welcher Streifen scrollt.** Zwei Linien liegen über der Karte und
   lassen sich ziehen: dazwischen wandert die Welt, darüber und darunter steht das Bild still —
   genau dort lebt Dein Punktestand. Ein Etikett sagt „Spielfeld: 10 Zeilen"; ziehst Du es höher,
