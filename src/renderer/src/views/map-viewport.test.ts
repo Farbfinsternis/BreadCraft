@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { fitZoom, maxPan, clampPan, viewOffset, mapPixelAt, zoomAt } from './map-viewport'
+import {
+  fitZoom,
+  maxPan,
+  clampPan,
+  viewOffset,
+  mapPixelAt,
+  zoomAt,
+  rowEdgeAtScreenY
+} from './map-viewport'
 
 // S1.B2.T2, the free map canvas. The whole feel of the editor rides on this arithmetic:
 // a wrong sign and the level runs away under the cursor. One screen is 320×200 map
@@ -50,6 +58,23 @@ describe('map viewport: panning limits', () => {
     expect(mapPixelAt(500, 640, 960, 1, 200)).toBe(700)
     // Centred map: 160 px of margin, so the window's left edge is BEFORE the map.
     expect(mapPixelAt(160, 640, 320, 1, 0)).toBe(0)
+  })
+})
+
+// S1.B2.T4: the play-field ruler snaps to whole tile rows, because the C64 scrolls whole
+// character rows — a band on half a row does not exist.
+describe('map viewport: row edges for the play-field ruler', () => {
+  it('snaps to the nearest row edge', () => {
+    // 8 px per row at 2× = 16 screen px per row, map starting at y = 100.
+    expect(rowEdgeAtScreenY(100, 100, 2, 8, 25)).toBe(0)
+    expect(rowEdgeAtScreenY(105, 100, 2, 8, 25)).toBe(0) // nearer the top edge
+    expect(rowEdgeAtScreenY(112, 100, 2, 8, 25)).toBe(1) // nearer the next one
+    expect(rowEdgeAtScreenY(148, 100, 2, 8, 25)).toBe(3)
+  })
+
+  it('stays on the map, however far the hand travels', () => {
+    expect(rowEdgeAtScreenY(-9999, 100, 2, 8, 25)).toBe(0)
+    expect(rowEdgeAtScreenY(9999, 100, 2, 8, 25)).toBe(25) // the edge below the last row
   })
 })
 

@@ -49,6 +49,22 @@ export function mapPixelAt(
   return (screenPos - viewOffset(view, canvas, zoom, pan)) / zoom
 }
 
+/**
+ * Which tile-row EDGE a point in the window is nearest (S1.B2.T4) — the ruler for the
+ * play-field band snaps to whole rows, because the C64 scrolls whole character rows.
+ * Returns an edge index 0..rows: 0 is above the first row, `rows` below the last one.
+ */
+export function rowEdgeAtScreenY(
+  screenY: number,
+  offsetY: number,
+  zoom: number,
+  charPx: number,
+  rows: number
+): number {
+  const edge = Math.round((screenY - offsetY) / (charPx * zoom))
+  return Math.min(Math.max(0, edge), rows)
+}
+
 export interface ViewportBox {
   viewW: number
   viewH: number

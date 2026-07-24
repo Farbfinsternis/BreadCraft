@@ -19,20 +19,25 @@ export const TILE_COLOR_TABLE = 256
  *  charset (T4); this leaves the lion's share of it to the game itself. */
 export const LEVEL_BUDGET = 16 * 1024
 
-/** Bytes a level of `columns` columns costs on the C64. */
-export function levelBytes(columns: number): number {
-  return columns * BAND_ROWS + TILE_COLOR_TABLE
+/** Bytes a level of `columns` columns costs on the C64. A taller play field stores more
+ *  per column, so the band's height is what the level is really paid for (S1.B2.T4). */
+export function levelBytes(columns: number, bandRows: number = BAND_ROWS): number {
+  return columns * bandRows + TILE_COLOR_TABLE
 }
 
-/** Bytes one screen of level costs (~400) — the unit the counter counts in. */
-export function bytesPerScreen(screenW: number): number {
-  return screenW * BAND_ROWS
+/** Bytes one screen of level costs (~400 at the ten-row band) — the counter's unit. */
+export function bytesPerScreen(screenW: number, bandRows: number = BAND_ROWS): number {
+  return screenW * bandRows
 }
 
 /** How many further screens fit in the budget (never negative). */
-export function screensLeft(columns: number, screenW: number): number {
-  const left = LEVEL_BUDGET - levelBytes(columns)
-  return Math.max(0, Math.floor(left / bytesPerScreen(screenW)))
+export function screensLeft(
+  columns: number,
+  screenW: number,
+  bandRows: number = BAND_ROWS
+): number {
+  const left = LEVEL_BUDGET - levelBytes(columns, bandRows)
+  return Math.max(0, Math.floor(left / bytesPerScreen(screenW, bandRows)))
 }
 
 /** The level's length in screens, one decimal — "3.5 screens long" is how a level reads. */

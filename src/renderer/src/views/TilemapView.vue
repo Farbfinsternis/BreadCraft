@@ -7,8 +7,8 @@ import { useCharsetStore } from '../stores/charset'
 import { useTilemapStore, EMPTY_TILE } from '../stores/tilemap'
 import { useProjectStore } from '../stores/project'
 import { useMapViewStore, MIN_ZOOM, MAX_ZOOM } from '../stores/mapview'
-import { fitZoom, clampPan, viewOffset, zoomAt } from './map-viewport'
-import { levelBytes, levelScreens, screensLeft } from './level-budget'
+import { fitZoom, clampPan, viewOffset, zoomAt, rowEdgeAtScreenY } from './map-viewport'
+import { BAND_ROWS, levelBytes, levelScreens, screensLeft } from './level-budget'
 import { DEFAULT_COLOR_RAM, MAX_MAP_W } from '../stores/assetIo'
 import { SCREEN_W } from '@shared/asset-formats'
 import { drawChar } from '../pixel-engine/charsetRender'
@@ -93,6 +93,55 @@ const growCols = computed(() => (canGrow.value ? SCREEN_W : 0))
 /** Total columns the pointer may reach: the level plus the waiting land. */
 const reachW = computed(() => mapW.value + growCols.value)
 const stageW = computed(() => reachW.value * CHAR_PX)
+
+// ---- the play-field ruler (T4) ----
+// Which rows scroll, and which stand still. Drag either edge. This is a RULER, not a
+// rule: the source's `PlayField` alone decides what really scrolls (the editor knows
+// nothing about the source, and two truths would drift apart). Above ten tile rows the
+// C64 starts chasing the electron beam and loses — so the ruler says so, and still lets
+// you do it: forbidden is only what does not exist, being overtaxed gets SHOWN (B1a).
+const bandFirst = computed(() => Math.min(mapview.bandFirst, mapH.value - 1))
+const bandLast = computed(() => Math.min(mapview.bandLast, mapH.value - 1))
+const bandRows = computed(() => bandLast.value - bandFirst.value + 1)
+const bandTooTall = computed(() => bandRows.value > BAND_ROWS)
+/** Screen y of a row edge (0 = above the first row) — the ruler lives outside the
+ *  scaled stage, so its lines stay hairlines at any zoom. */
+function edgeY(edge: number): number {
+  return offsetY.value + edge * CHAR_PX * zoom.value
+}
+const bandTopY = computed(() => edgeY(bandFirst.value))
+const bandBottomY = computed(() => edgeY(bandLast.value + 1))
+const stageLeft = computed(() => offsetX.value)
+const stageRight = computed(() => offsetX.value + stageW.value * zoom.value)
+const mapTopY = computed(() => edgeY(0))
+const mapBottomY = computed(() => edgeY(mapH.value))
+
+/** Drag a band edge: the top one moves the first scrolling row, the bottom one the last. */
+let bandDrag: 'top' | 'bottom' | null = null
+function startBandDrag(which: 'top' | 'bottom', ev: PointerEvent): void {
+  ev.preventDefault()
+  ev.stopPropagation()
+  bandDrag = which
+  ;(ev.target as HTMLElement).setPointerCapture(ev.pointerId)
+}
+function onBandMove(ev: PointerEvent): void {
+  if (!bandDrag) return
+  const el = viewportRef.value
+  if (!el) return
+  const edge = rowEdgeAtScreenY(
+    ev.clientY - el.getBoundingClientRect().top,
+    offsetY.value,
+    zoom.value,
+    CHAR_PX,
+    mapH.value
+  )
+  // The top handle names a ROW, the bottom handle names the edge BELOW a row.
+  if (bandDrag === 'top') mapview.setBand(edge, bandLast.value, mapH.value)
+  else mapview.setBand(bandFirst.value, edge - 1, mapH.value)
+}
+function endBandDrag(): void {
+  bandDrag = null
+}
 
 /** The screen boundaries: a hairline every 40 columns. NOT frames around separate
  *  maps — the C64 scrolls straight through, so the level is one flowing strip and
@@ -474,8 +523,8 @@ const filledCount = computed(() => {
 // length in screens, and how many more would still fit. Same numbers the RAM bar will
 // show later — the cost is felt while painting, not discovered at build time.
 const levelLength = computed(() => levelScreens(mapW.value, SCREEN_W))
-const roomLeft = computed(() => screensLeft(mapW.value, SCREEN_W))
-const levelCost = computed(() => levelBytes(mapW.value))
+const roomLeft = computed(() => screensLeft(mapW.value, SCREEN_W, bandRows.value))
+const levelCost = computed(() => levelBytes(mapW.value, bandRows.value))
 
 /** Empty the whole map (T1). Destructive + no undo, so confirm first. */
 function clearMap(): void {
@@ -671,6 +720,53 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
           >
             <span v-if="!g.edge" class="tm-screen-num">{{ g.i + 1 }}</span>
           </div>
+
+          <!-- Spielfeld-Spur (T4): was scrollt, und was stehenbleibt (Platz fürs HUD).
+               Ein Lineal, keine Vorschrift — der Quelltext entscheidet mit PlayField. -->
+          <div
+            class="tm-hud-zone"
+            :style="{
+              left: `${stageLeft}px`,
+              width: `${stageRight - stageLeft}px`,
+              top: `${mapTopY}px`,
+              height: `${Math.max(0, bandTopY - mapTopY)}px`
+            }"
+          />
+          <div
+            class="tm-hud-zone"
+            :style="{
+              left: `${stageLeft}px`,
+              width: `${stageRight - stageLeft}px`,
+              top: `${bandBottomY}px`,
+              height: `${Math.max(0, mapBottomY - bandBottomY)}px`
+            }"
+          />
+          <div
+            class="tm-band-edge"
+            :class="{ 'is-warn': bandTooTall }"
+            :style="{ left: `${stageLeft}px`, width: `${stageRight - stageLeft}px`, top: `${bandTopY}px` }"
+            :title="t('tilemap.bandTitle', { max: BAND_ROWS })"
+            @pointerdown="startBandDrag('top', $event)"
+            @pointermove="onBandMove"
+            @pointerup="endBandDrag"
+          />
+          <div
+            class="tm-band-edge"
+            :class="{ 'is-warn': bandTooTall }"
+            :style="{ left: `${stageLeft}px`, width: `${stageRight - stageLeft}px`, top: `${bandBottomY}px` }"
+            :title="t('tilemap.bandTitle', { max: BAND_ROWS })"
+            @pointerdown="startBandDrag('bottom', $event)"
+            @pointermove="onBandMove"
+            @pointerup="endBandDrag"
+          />
+          <span
+            class="tm-band-label"
+            :class="{ 'is-warn': bandTooTall }"
+            :style="{ left: `${Math.max(stageLeft, 0) + 6}px`, top: `${bandTopY + 4}px` }"
+          >
+            {{ t('tilemap.bandLabel', { n: bandRows }) }}
+            <template v-if="bandTooTall"> — {{ t('tilemap.bandWarn', { max: BAND_ROWS }) }}</template>
+          </span>
         </div>
       </FloatPanel>
 
@@ -962,6 +1058,53 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
   line-height: 1;
   color: rgba(122, 176, 255, 0.75);
   user-select: none;
+}
+
+/* The play-field ruler (T4). The rows OUTSIDE the band stand still while the world
+   scrolls — that is where a score line lives, so they are dimmed rather than hidden. */
+.tm-hud-zone {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(6, 12, 24, 0.55);
+}
+/* A band edge: grab it and drag. Thin line, fat hit area — a hairline is impossible
+   to catch with a mouse. */
+.tm-band-edge {
+  position: absolute;
+  height: 11px;
+  margin-top: -5px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.tm-band-edge::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 5px;
+  height: 1px;
+  background: rgba(255, 196, 92, 0.85);
+}
+.tm-band-edge:hover::after {
+  height: 2px;
+  background: rgba(255, 214, 140, 1);
+}
+.tm-band-edge.is-warn::after {
+  background: rgba(255, 122, 92, 0.95);
+}
+.tm-band-label {
+  position: absolute;
+  padding: 2px 6px;
+  font: 600 10px/1.2 var(--bc-font-sans);
+  color: rgba(255, 214, 140, 0.95);
+  background: rgba(6, 12, 24, 0.75);
+  border-radius: var(--bc-radius-sm, 3px);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.tm-band-label.is-warn {
+  color: rgba(255, 150, 120, 1);
 }
 /* The hover-preview overlay lies on top of map AND new land, transparent — it is also
    the element that takes the pointer, so it must cover everything paintable. */

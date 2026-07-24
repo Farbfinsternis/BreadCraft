@@ -33,6 +33,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gibt es gar nicht. Ein Knopf „Ganz zeigen" holt das ganze Level zurück ins Fenster, und wo Du
   zuletzt gearbeitet hast, wird gemerkt.
 
+- **Der Karten-Editor zeigt, welcher Streifen scrollt.** Zwei Linien liegen über der Karte und
+  lassen sich ziehen: dazwischen wandert die Welt, darüber und darunter steht das Bild still —
+  genau dort lebt Dein Punktestand. Ein Etikett sagt „Spielfeld: 10 Zeilen"; ziehst Du es höher,
+  färbt es sich und warnt „über 10 Zeilen wird das Scrollen unruhig" — **verboten wird es nicht**,
+  denn der C64 kann es, er kann es nur nicht schön. Die Linien sind ein Lineal, keine Vorschrift:
+  was wirklich scrollt, sagt später Dein Programm mit `PlayField`. Und weil ein höheres Spielfeld
+  mehr Speicher je Spalte kostet, rechnet der Bildschirm-Zähler jetzt mit *Deiner* Bandhöhe.
 - **Die rechte Maustaste radiert** — im Karten-Editor löscht sie eine gesetzte Kachel, solange
   Du sie hältst, ohne dass Du zum Radierer wechseln musst. Der Griff des Malers: mit links malen,
   mit rechts zurücknehmen. Loslässt Du, hast Du wieder Deinen Stift in der Hand.

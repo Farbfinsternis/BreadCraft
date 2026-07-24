@@ -26,6 +26,14 @@ describe('level budget', () => {
     expect(levelScreens(140, 40)).toBe(3.5)
   })
 
+  // T4: the play field's height is what a level is really paid for — a shorter band
+  // stores fewer bytes per column, so the same level buys more length.
+  it("charges by the play field's height, not a flat rate", () => {
+    expect(levelBytes(40, 5)).toBe(40 * 5 + 256)
+    expect(bytesPerScreen(40, 5)).toBe(200)
+    expect(screensLeft(40, 40, 5)).toBeGreaterThan(screensLeft(40, 40, 10))
+  })
+
   it('says how much room is left, and never promises a negative amount', () => {
     // A fresh one-screen level: nearly the whole budget is still free.
     expect(screensLeft(40, 40)).toBe(Math.floor((LEVEL_BUDGET - levelBytes(40)) / 400))

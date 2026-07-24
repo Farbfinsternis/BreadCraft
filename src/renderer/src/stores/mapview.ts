@@ -22,10 +22,17 @@ const STORAGE_KEY = 'breadcraft.mapview'
 export const MIN_ZOOM = 0.25
 export const MAX_ZOOM = 16
 
+/** Where the scrolling band starts and ends by default — ten tile rows, the measured
+ *  ceiling for smooth scrolling (S1 T4), leaving room for a HUD above and below. */
+export const DEFAULT_BAND_FIRST = 3
+export const DEFAULT_BAND_LAST = 12
+
 interface PersistedMapView {
   zoom: number | null
   panX: number
   panY: number
+  bandFirst: number
+  bandLast: number
 }
 
 function loadPersisted(): Partial<PersistedMapView> {
@@ -44,6 +51,10 @@ export const useMapViewStore = defineStore(
     const zoom = ref<number | null>(typeof saved.zoom === 'number' ? saved.zoom : null)
     const panX = ref(typeof saved.panX === 'number' ? saved.panX : 0)
     const panY = ref(typeof saved.panY === 'number' ? saved.panY : 0)
+    const bandFirst = ref(
+      typeof saved.bandFirst === 'number' ? saved.bandFirst : DEFAULT_BAND_FIRST
+    )
+    const bandLast = ref(typeof saved.bandLast === 'number' ? saved.bandLast : DEFAULT_BAND_LAST)
 
     function setZoom(z: number): void {
       zoom.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
@@ -54,6 +65,21 @@ export const useMapViewStore = defineStore(
       panY.value = y
     }
 
+    /**
+     * Move the play-field ruler (S1.B2.T4): screen rows `first`..`last` are the strip
+     * that scrolls, everything outside it stands still (room for a score line).
+     *
+     * This is a VIEW setting, deliberately not part of the .tilemap: the source's
+     * `PlayField` alone decides what really scrolls. Two places claiming to know would
+     * drift apart, and the editor knows nothing about the source.
+     */
+    function setBand(first: number, last: number, rows: number): void {
+      const lo = Math.min(first, last)
+      const hi = Math.max(first, last)
+      bandFirst.value = Math.min(Math.max(0, lo), rows - 1)
+      bandLast.value = Math.min(Math.max(bandFirst.value, hi), rows - 1)
+    }
+
     /** Back to "fit the whole map into the panel" — the view a new map starts with. */
     function reset(): void {
       zoom.value = null
@@ -61,7 +87,7 @@ export const useMapViewStore = defineStore(
       panY.value = 0
     }
 
-    return { zoom, panX, panY, setZoom, setPan, reset }
+    return { zoom, panX, panY, bandFirst, bandLast, setZoom, setPan, setBand, reset }
   },
-  { persist: { key: STORAGE_KEY, paths: ['zoom', 'panX', 'panY'] } }
+  { persist: { key: STORAGE_KEY, paths: ['zoom', 'panX', 'panY', 'bandFirst', 'bandLast'] } }
 )
