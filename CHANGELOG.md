@@ -23,6 +23,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   voller Länge. Alte Karten bleiben, was sie waren: genau ein Schirm. (Malen kann man die Breite
   noch nicht — das ist der nächste Schritt.)
 
+- **Der Karten-Editor ist eine freie Leinwand geworden.** Die Karte klebt nicht mehr ins Panel
+  gequetscht — jetzt steht ein Fenster still und die Landschaft wandert darunter durch: **Mausrad
+  zoomt** (auf die Stelle unter dem Mauszeiger zu, sie bleibt liegen), **mittlere Maustaste zieht**
+  die Karte, und wer keine hat, hält **die Leertaste** und zieht. Bewusst zwei Arbeitshöhen: nah
+  malst Du einzelne Kacheln, weit siehst Du die Gestalt des ganzen Levels. Dünne Hilfslinien alle
+  40 Spalten zeigen, wo ein Bildschirm endet — **Markierungen auf einem durchgehenden Streifen,
+  keine Rahmen um getrennte Karten**: der C64 scrollt stufenlos hindurch, getrennte Bildschirme
+  gibt es gar nicht. Ein Knopf „Ganz zeigen" holt das ganze Level zurück ins Fenster, und wo Du
+  zuletzt gearbeitet hast, wird gemerkt.
+
 ### Geändert
 - **`DrawMap` sagt jetzt ehrlich, wenn eine Karte zu breit für den Bildschirm ist**, statt sie
   stillschweigend zu zerschneiden: „diese Karte ist 120 Spalten breit, auf den Bildschirm passen

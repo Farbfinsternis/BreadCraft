@@ -236,7 +236,7 @@
   "sprite.pen.s2": "Shared 2",
 
   "tilemap.panel.tiles": "Tiles",
-  "tilemap.panel.map": "Map (40×25)",
+  "tilemap.panel.map": "Map ({w}×{h})",
   "tilemap.panel.tools": "Tool",
   "tilemap.panel.colorRam": "Cell colour",
   "tilemap.colorRamHint": "The fourth, free colour — chosen per cell (Color-RAM).",
@@ -249,7 +249,11 @@
   "tilemap.noCharset": "Paint some characters in the PETSCII editor first — those are the tiles here.",
   "tilemap.tile": "Tile {n}",
   "tilemap.counterTitle": "Filled (non-empty) cells of the map",
-  "tilemap.counterSuffix": "/ 1000 cells",
+  "tilemap.counterSuffix": "/ {n} cells",
+  "tilemap.fitView": "Show it all",
+  "tilemap.fitViewTitle": "Bring the whole map into the window",
+  "tilemap.zoomTitle": "How close you are. The wheel zooms, the middle mouse button (or Space + drag) pushes the map around.",
+  "tilemap.panHint": "Wheel zooms · middle mouse button or Space + drag pushes",
   "tilemap.resetLayout": "Reset layout",
   "tilemap.resetLayoutTitle": "Tidy the panels back up",
 

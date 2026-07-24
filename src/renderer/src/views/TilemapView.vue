@@ -6,7 +6,10 @@ import { usePanelsStore } from '../stores/panels'
 import { useCharsetStore } from '../stores/charset'
 import { useTilemapStore, EMPTY_TILE } from '../stores/tilemap'
 import { useProjectStore } from '../stores/project'
+import { useMapViewStore, MIN_ZOOM, MAX_ZOOM } from '../stores/mapview'
+import { fitZoom, clampPan, viewOffset, zoomAt } from './map-viewport'
 import { DEFAULT_COLOR_RAM } from '../stores/assetIo'
+import { SCREEN_W } from '@shared/asset-formats'
 import { drawChar } from '../pixel-engine/charsetRender'
 import FloatPanel from '../components/FloatPanel.vue'
 import { FONT_SLOTS } from '@shared/font-slots'
@@ -26,6 +29,7 @@ const panels = usePanelsStore()
 const charset = useCharsetStore()
 const tilemap = useTilemapStore()
 const project = useProjectStore()
+const mapview = useMapViewStore()
 
 const SCOPE = 'tilemap'
 
@@ -43,12 +47,52 @@ panels.ensure(SCOPE, {
 
 const CHAR_PX = 8
 // The map's own size drives the canvas (S1.B2.T1) — one screen for a normal map, wider
-// for a scrolling world. Panning/zooming that wider canvas is the next slice (T2); for
-// now it simply renders at its true size.
+// for a scrolling world.
 const mapW = computed(() => tilemap.width)
 const mapH = computed(() => tilemap.height)
 const canvasW = computed(() => mapW.value * CHAR_PX)
 const canvasH = computed(() => mapH.value * CHAR_PX)
+
+// ---- the free canvas (T2): a window over the landscape ----
+// A level may be several screens wide, so the map stops being "one picture squeezed
+// into a panel" and becomes a viewport you move: middle-drag (or Space+drag, for mice
+// and trackpads without a middle button) pans, the wheel zooms toward the cursor.
+// Deliberately TWO working heights: close up you paint single tiles, far out you see
+// the shape of the level — where the rhythm is, where the cuts fall.
+const viewportRef = ref<HTMLElement | null>(null)
+const viewW = ref(0)
+const viewH = ref(0)
+
+/** The view fits the whole map into the panel until you turn the wheel — which is
+ *  exactly how a one-screen map has always looked. */
+const zoom = computed(
+  () => mapview.zoom ?? fitZoom(viewW.value, viewH.value, canvasW.value, canvasH.value)
+)
+const box = computed(() => ({
+  viewW: viewW.value,
+  viewH: viewH.value,
+  canvasW: canvasW.value,
+  canvasH: canvasH.value
+}))
+
+// The stored pan held inside what the map allows (never draggable out of sight).
+const panX = computed(() => clampPan(mapview.panX, viewW.value, canvasW.value, zoom.value))
+const panY = computed(() => clampPan(mapview.panY, viewH.value, canvasH.value, zoom.value))
+const offsetX = computed(() => viewOffset(viewW.value, canvasW.value, zoom.value, mapview.panX))
+const offsetY = computed(() => viewOffset(viewH.value, canvasH.value, zoom.value, mapview.panY))
+
+/** The screen boundaries: a hairline every 40 columns. NOT frames around separate
+ *  maps — the C64 scrolls straight through, so the level is one flowing strip and
+ *  these are only marks on it (the last one is the level's own end edge). */
+const screenGuides = computed(() => {
+  const step = SCREEN_W * CHAR_PX * zoom.value
+  const count = Math.ceil(mapW.value / SCREEN_W)
+  return Array.from({ length: count }, (_, i) => ({
+    i,
+    x: offsetX.value + (i + 1) * step,
+    edge: (i + 1) * SCREEN_W >= mapW.value
+  }))
+})
 
 // Index → hex for the 4 MC colour sources, same mapping the PETSCII editor uses
 // (0=bg, 1=shared1, 2=shared2, 3=free). A painted tile renders identically here.
@@ -210,25 +254,91 @@ function paintAt(ev: PointerEvent): void {
   }
 }
 
+// ---- panning the canvas (T2) ----
+// Middle mouse button drags the map. Space+drag is the second road in, for mice and
+// trackpads without a usable middle button. While either is active the pen holds off —
+// dragging must never leave a trail of paint behind it.
+const spaceDown = ref(false)
+const dragging = ref(false)
+let dragFromX = 0
+let dragFromY = 0
+let dragPanX = 0
+let dragPanY = 0
+
+function startDrag(ev: PointerEvent): void {
+  dragging.value = true
+  dragFromX = ev.clientX
+  dragFromY = ev.clientY
+  dragPanX = panX.value
+  dragPanY = panY.value
+  clearGhost()
+}
+
 function onPointerDown(ev: PointerEvent): void {
   ev.preventDefault()
   // Capture on the overlay (the element receiving the events) so a fast drag keeps
   // delivering moves even if the cursor briefly leaves the canvas.
   overlayRef.value?.setPointerCapture(ev.pointerId)
+  if (ev.button === 1 || spaceDown.value) {
+    startDrag(ev)
+    return
+  }
+  if (ev.button !== 0) return
   painting = true
   paintAt(ev)
 }
 function onPointerMove(ev: PointerEvent): void {
+  if (dragging.value) {
+    // The map follows the hand 1:1 on screen, so the pan (in map pixels) moves by the
+    // screen distance divided by the zoom.
+    mapview.setPan(
+      dragPanX - (ev.clientX - dragFromX) / zoom.value,
+      dragPanY - (ev.clientY - dragFromY) / zoom.value
+    )
+    return
+  }
   if (painting) paintAt(ev)
   const c = cellFromEvent(ev)
-  if (c) showGhost(c.col, c.row)
+  if (c && !spaceDown.value) showGhost(c.col, c.row)
   else clearGhost()
 }
 function onPointerUp(): void {
   painting = false
+  if (dragging.value) {
+    dragging.value = false
+    // Write back the CLAMPED pan, so a drag past the edge doesn't leave the stored
+    // position out in nowhere (the next zoom-out would then jump).
+    mapview.setPan(panX.value, panY.value)
+  }
 }
 function onPointerLeave(): void {
   clearGhost()
+}
+
+/** Wheel = zoom toward the cursor (the map pixel under it stays put — map-viewport.ts). */
+function onWheel(ev: WheelEvent): void {
+  const el = viewportRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const before = zoom.value
+  const wanted = before * (ev.deltaY < 0 ? 1.2 : 1 / 1.2)
+  const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, wanted))
+  if (next === before) return
+  const s = zoomAt(
+    box.value,
+    { zoom: before, panX: panX.value, panY: panY.value },
+    ev.clientX - rect.left,
+    ev.clientY - rect.top,
+    next
+  )
+  mapview.setZoom(s.zoom)
+  mapview.setPan(s.panX, s.panY)
+  clearGhost()
+}
+
+/** Back to "the whole level fits in the panel" — the way out of being lost at 16×. */
+function fitView(): void {
+  mapview.reset()
 }
 
 // Single-cell paints redraw their own cell (paintAt → scheduleDraw(false, …)), so
@@ -273,14 +383,33 @@ watch([canvasW, canvasH], () => {
   initCanvas()
 })
 
+// The viewport's size decides the fit-zoom and the pan limits, and it changes whenever
+// the map panel is dragged bigger — so we watch the element itself, not the window.
+let viewObserver: ResizeObserver | null = null
+function measureViewport(): void {
+  const el = viewportRef.value
+  if (!el) return
+  viewW.value = el.clientWidth
+  viewH.value = el.clientHeight
+}
+
 onMounted(async () => {
   await nextTick()
   initCanvas()
+  measureViewport()
+  if (viewportRef.value) {
+    viewObserver = new ResizeObserver(measureViewport)
+    viewObserver.observe(viewportRef.value)
+  }
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
   window.addEventListener('pointerup', onPointerUp)
 })
 onBeforeUnmount(() => {
+  viewObserver?.disconnect()
+  viewObserver = null
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keyup', onKeyup)
   window.removeEventListener('pointerup', onPointerUp)
 })
 
@@ -308,11 +437,31 @@ function saveAs(): void {
 }
 
 // Ctrl/Cmd+S saves the tilemap (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
+// Space arms the hand: hold it and a drag pans instead of painting (the second road in
+// for anyone without a middle mouse button). It must not also scroll the panel.
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void tilemap.save()
+    return
   }
+  // …but never while someone is typing a name into a field: there Space is a space.
+  if (e.code === 'Space' && !e.repeat && !isTyping(e.target)) {
+    e.preventDefault()
+    spaceDown.value = true
+    clearGhost()
+  }
+}
+
+/** Is the keystroke going into a text field (dialog, rename box)? */
+function isTyping(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el || !el.tagName) return false
+  const tag = el.tagName.toLowerCase()
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable
+}
+function onKeyup(e: KeyboardEvent): void {
+  if (e.code === 'Space') spaceDown.value = false
 }
 
 // ---- tile palette mini-previews (small canvases) ----
@@ -369,7 +518,15 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
         {{ t('asset.save') }}
       </button>
       <span class="tm-counter" :title="t('tilemap.counterTitle')">
-        <span class="tm-counter-val">{{ filledCount }}</span> {{ t('tilemap.counterSuffix') }}
+        <span class="tm-counter-val">{{ filledCount }}</span>
+        {{ t('tilemap.counterSuffix', { n: mapW * mapH }) }}
+      </span>
+      <button class="tm-reset" :title="t('tilemap.fitViewTitle')" @click="fitView">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+        {{ t('tilemap.fitView') }}
+      </button>
+      <span class="tm-counter" :title="t('tilemap.zoomTitle')">
+        <span class="tm-counter-val">{{ Math.round(zoom * 100) }}</span> %
       </span>
     </div>
 
@@ -394,9 +551,29 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
       </FloatPanel>
 
       <!-- Karte (canvas in Kartengröße — ein Schirm, oder breiter) -->
-      <FloatPanel :scope="SCOPE" id="map" :title="t('tilemap.panel.map')" :min-width="300" :min-height="240">
-        <div class="tm-map-wrap">
-          <div class="tm-map-stack" :style="{ aspectRatio: `${canvasW} / ${canvasH}` }">
+      <FloatPanel
+        :scope="SCOPE"
+        id="map"
+        :title="t('tilemap.panel.map', { w: mapW, h: mapH })"
+        :min-width="300"
+        :min-height="240"
+      >
+        <!-- Freie Leinwand (T2): das Fenster steht still, die Landschaft wandert
+             darunter durch — Mittelklick/Leertaste zieht, Mausrad zoomt. -->
+        <div
+          ref="viewportRef"
+          class="tm-map-wrap"
+          :class="{ 'is-grabbing': dragging, 'is-grab': spaceDown }"
+          @wheel.prevent="onWheel"
+        >
+          <div
+            class="tm-map-stack"
+            :style="{
+              width: `${canvasW}px`,
+              height: `${canvasH}px`,
+              transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`
+            }"
+          >
             <canvas ref="canvasRef" class="tm-map-canvas" />
             <!-- transparent hover-preview overlay; sits exactly on the map and takes
                  the pointer events (the map canvas underneath is purely the render) -->
@@ -408,6 +585,19 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
               @pointerleave="onPointerLeave"
               @contextmenu.prevent
             />
+          </div>
+          <!-- Bildschirm-Grenzen: dünne Hilfslinien alle 40 Spalten auf einer
+               FLIESSENDEN Landschaft — der C64 scrollt stufenlos, es gibt keine
+               getrennten Screens. Ausserhalb der Skalierung, damit sie in jedem
+               Zoom haarfein bleiben. -->
+          <div
+            v-for="g in screenGuides"
+            :key="g.i"
+            class="tm-screen-guide"
+            :class="{ 'is-edge': g.edge }"
+            :style="{ left: `${g.x}px`, top: `${offsetY}px`, height: `${canvasH * zoom}px` }"
+          >
+            <span v-if="!g.edge" class="tm-screen-num">{{ g.i + 1 }}</span>
           </div>
         </div>
       </FloatPanel>
@@ -626,27 +816,33 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
   image-rendering: pixelated;
 }
 
-/* ---- map canvas ---- */
+/* ---- map canvas: the free canvas (T2) ---- */
+/* The wrap is the WINDOW: it clips, and the map moves underneath it. */
 .tm-map-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  overflow: hidden;
   width: 100%;
   height: 100%;
   min-height: 0;
+  background: rgba(0, 0, 0, 0.25);
 }
-/* The stack shrinks to the (auto-sized) map canvas so the overlay can sit exactly
-   on top of it, same scaled rect. */
+.tm-map-wrap.is-grab {
+  cursor: grab;
+}
+.tm-map-wrap.is-grabbing {
+  cursor: grabbing;
+}
+/* The stack is the map at its TRUE pixel size, moved and scaled as one piece, so the
+   overlay always sits exactly on the map. */
 .tm-map-stack {
-  position: relative;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  aspect-ratio: 320 / 200;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
 }
-/* The canvas is the map's true pixel size internally (320×200 for one screen, wider
-   for a scrolling world); CSS scales it to fit the panel — the stack above carries the
-   map's own aspect ratio, so nothing is squeezed — and `pixelated` keeps edges crisp. */
+/* The canvas is the map's true pixel size (320×200 for one screen, wider for a
+   scrolling world); the stack's transform does the scaling, and `pixelated` keeps
+   tile edges crisp however far you lean in. */
 .tm-map-canvas {
   display: block;
   width: 100%;
@@ -656,6 +852,30 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
   cursor: crosshair;
   touch-action: none;
+  user-select: none;
+}
+.is-grab .tm-map-canvas,
+.is-grabbing .tm-map-canvas {
+  cursor: inherit;
+}
+/* A screen boundary: a hairline, drawn OUTSIDE the scaled stack so it stays one pixel
+   thin at any zoom. Marks on one flowing strip — not frames around separate maps. */
+.tm-screen-guide {
+  position: absolute;
+  width: 1px;
+  pointer-events: none;
+  background: rgba(122, 176, 255, 0.45);
+}
+.tm-screen-guide.is-edge {
+  background: rgba(122, 176, 255, 0.85);
+}
+.tm-screen-num {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(122, 176, 255, 0.75);
   user-select: none;
 }
 /* The hover-preview overlay lies on top of the map, transparent, same size. */

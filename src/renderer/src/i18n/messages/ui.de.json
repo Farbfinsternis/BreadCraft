@@ -236,7 +236,7 @@
   "sprite.pen.s2": "Geteilt 2",
 
   "tilemap.panel.tiles": "Kacheln",
-  "tilemap.panel.map": "Karte (40×25)",
+  "tilemap.panel.map": "Karte ({w}×{h})",
   "tilemap.panel.tools": "Werkzeug",
   "tilemap.panel.colorRam": "Zellfarbe",
   "tilemap.colorRamHint": "Die vierte, freie Farbe — pro Zelle einzeln wählbar (Color-RAM).",
@@ -249,7 +249,11 @@
   "tilemap.noCharset": "Erst im PETSCII-Editor Zeichen malen — die sind hier die Kacheln.",
   "tilemap.tile": "Kachel {n}",
   "tilemap.counterTitle": "Gesetzte (nicht leere) Zellen der Karte",
-  "tilemap.counterSuffix": "/ 1000 Zellen",
+  "tilemap.counterSuffix": "/ {n} Zellen",
+  "tilemap.fitView": "Ganz zeigen",
+  "tilemap.fitViewTitle": "Die ganze Karte ins Fenster holen",
+  "tilemap.zoomTitle": "Wie nah Du dran bist. Mausrad zoomt, mittlere Maustaste (oder Leertaste + ziehen) schiebt die Karte.",
+  "tilemap.panHint": "Mausrad zoomt · mittlere Maustaste oder Leertaste + ziehen schiebt",
   "tilemap.resetLayout": "Layout zurücksetzen",
   "tilemap.resetLayoutTitle": "Panels wieder ordentlich anordnen",
 
