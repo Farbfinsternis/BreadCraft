@@ -242,6 +242,7 @@
   "tilemap.colorRamHint": "The fourth, free colour — chosen per cell (Color-RAM).",
   "tilemap.tool.draw": "Pen",
   "tilemap.tool.erase": "Eraser",
+  "tilemap.eraseHint": "The right mouse button always erases — no need to switch tools.",
   "tilemap.clear": "Clear",
   "tilemap.clearTitle": "Empty the whole map (reset to blank Space)",
   "tilemap.clearConfirm": "Empty the whole map? This cannot be undone.",

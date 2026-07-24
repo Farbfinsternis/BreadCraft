@@ -252,21 +252,30 @@ function clearGhost(): void {
 // What a click stamps: the pen writes the selected tile + active Color-RAM colour;
 // the eraser writes Space (EMPTY_TILE) + the default colour (T3). Colour is moot for
 // a blank Space cell but we keep it tidy/consistent.
+//
+// The RIGHT mouse button erases for the length of one stroke, whatever tool is chosen
+// (the painter's reflex: draw with the left hand, take back with the right, without
+// walking over to the toolbox). `strokeErases` holds that for the running stroke, so
+// releasing the button hands the pen back unchanged.
+const strokeErases = ref(false)
+function erasing(): boolean {
+  return strokeErases.value || tool.value === 'erase'
+}
 function stampTile(): number {
-  return tool.value === 'erase' ? EMPTY_TILE : selectedTile.value
+  return erasing() ? EMPTY_TILE : selectedTile.value
 }
 function stampColor(): number {
-  return tool.value === 'erase' ? DEFAULT_COLOR_RAM : activeColor.value
+  return erasing() ? DEFAULT_COLOR_RAM : activeColor.value
 }
 
 function paintAt(ev: PointerEvent): void {
   const c = cellFromEvent(ev)
   if (!c) return
   // Painting in the new land takes it in — a whole screen at a time, so a level is
-  // always a round number of screens long. The eraser doesn't: rubbing at empty land
+  // always a round number of screens long. Erasing doesn't: rubbing at empty land
   // is not a wish for more of it.
   if (c.col >= mapW.value) {
-    if (tool.value === 'erase') return
+    if (erasing()) return
     tilemap.growTo((Math.floor(c.col / SCREEN_W) + 1) * SCREEN_W)
   }
   const beforeTile = tilemap.tileAt(c.col, c.row)
@@ -310,8 +319,11 @@ function onPointerDown(ev: PointerEvent): void {
     startDrag(ev)
     return
   }
-  if (ev.button !== 0) return
+  // Left = paint with the chosen tool, right = erase for this stroke only.
+  if (ev.button !== 0 && ev.button !== 2) return
+  strokeErases.value = ev.button === 2
   painting = true
+  clearGhost() // the ghost shows the pen; an erasing stroke must not leave it standing
   paintAt(ev)
 }
 function onPointerMove(ev: PointerEvent): void {
@@ -331,6 +343,7 @@ function onPointerMove(ev: PointerEvent): void {
 }
 function onPointerUp(): void {
   painting = false
+  strokeErases.value = false // the pen comes back as it was
   if (dragging.value) {
     dragging.value = false
     // Write back the CLAMPED pan, so a drag past the edge doesn't leave the stored
@@ -666,6 +679,7 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
             {{ t('tilemap.tool.erase') }}
           </button>
         </div>
+        <p class="tm-hint">{{ t('tilemap.eraseHint') }}</p>
       </FloatPanel>
 
       <!-- Color-RAM: the free 4th MC colour painted per cell (multicolor only) -->

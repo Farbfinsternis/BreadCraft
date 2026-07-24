@@ -33,6 +33,9 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gibt es gar nicht. Ein Knopf „Ganz zeigen" holt das ganze Level zurück ins Fenster, und wo Du
   zuletzt gearbeitet hast, wird gemerkt.
 
+- **Die rechte Maustaste radiert** — im Karten-Editor löscht sie eine gesetzte Kachel, solange
+  Du sie hältst, ohne dass Du zum Radierer wechseln musst. Der Griff des Malers: mit links malen,
+  mit rechts zurücknehmen. Loslässt Du, hast Du wieder Deinen Stift in der Hand.
 - **Ein Level wächst, indem Du weitermalst.** Rechts neben der Karte wartet ein schraffierter
   Streifen — malst Du hinein, nimmt das Level ihn auf, **einen ganzen Bildschirm auf einmal**
   (ein Level ist damit immer eine runde Zahl von Bildschirmen lang, nie krumme 47 Spalten). Der

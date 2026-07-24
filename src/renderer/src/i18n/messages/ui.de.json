@@ -242,6 +242,7 @@
   "tilemap.colorRamHint": "Die vierte, freie Farbe — pro Zelle einzeln wählbar (Color-RAM).",
   "tilemap.tool.draw": "Stift",
   "tilemap.tool.erase": "Radierer",
+  "tilemap.eraseHint": "Die rechte Maustaste radiert immer — ohne das Werkzeug zu wechseln.",
   "tilemap.clear": "Leeren",
   "tilemap.clearTitle": "Die ganze Karte leeren (auf Leerzeichen zurücksetzen)",
   "tilemap.clearConfirm": "Die ganze Karte leeren? Das lässt sich nicht rückgängig machen.",
