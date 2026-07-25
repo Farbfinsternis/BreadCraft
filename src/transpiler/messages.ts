@@ -104,6 +104,8 @@ export interface CodegenMessages {
   useMapNoTileset(id: string): string
   useMapNoPlayField(id: string): string
   useMapTwice(active: string, other: string): string
+  setCameraXArgs(): string
+  cameraNoWorld(word: string): string
   animateTileArgs(): string
   animateTileNoTileset(): string
   animateTileTooMany(max: number): string
@@ -376,6 +378,12 @@ const DE_CODEGEN: CodegenMessages = {
   useMapTwice: (active, other) =>
     `UseMap "${other}": das Programm betritt schon die Welt "${active}" — ein Programm hat heute ` +
     `EINE scrollende Welt (Levelwechsel braucht Nachladen von Diskette)`,
+  setCameraXArgs: () =>
+    `SetCameraX erwartet eine X-Position in Welt-Pixeln, z. B. SetCameraX 0 (Levelanfang) ` +
+    `oder SetCameraX CameraX() + 1 (die Welt wandert um ein Pixel)`,
+  cameraNoWorld: (word) =>
+    `${word}: es gibt keine Welt zum Anschauen — die Kamera ist das Fenster auf eine Karte, ` +
+    `die mit UseMap betreten wird (davor PlayField, damit klar ist, welcher Streifen scrollt)`,
   animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
   animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   animateTileTooMany: (max) =>
@@ -501,6 +509,12 @@ const EN_CODEGEN: CodegenMessages = {
   useMapTwice: (active, other) =>
     `UseMap "${other}": the program already enters the world "${active}" — a program has ONE ` +
     `scrolling world today (changing levels needs loading from disk)`,
+  setCameraXArgs: () =>
+    `SetCameraX expects an x position in world pixels, e.g. SetCameraX 0 (start of the level) ` +
+    `or SetCameraX CameraX() + 1 (the world travels by one pixel)`,
+  cameraNoWorld: (word) =>
+    `${word}: there is no world to look at — the camera is the window onto a map, and a map ` +
+    `is entered with UseMap (after PlayField, so it is clear which strip scrolls)`,
   animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
   animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
   animateTileTooMany: (max) =>

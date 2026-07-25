@@ -39,6 +39,18 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Level spaltenweise ein, stellt den Raster-Schnitt und zeigt das erste Fenster — darüber und
   darunter steht Dein HUD still. Auf einem echten C64 (VICE) nachgewiesen. Bewegen kann man das
   Fenster noch nicht (`SetCameraX`, `Follow` folgen), aber die Engine darunter läuft.
+- **Die Welt bewegt sich: `SetCameraX` und `CameraX()`.** Das Fenster auf Deine Welt lässt sich
+  jetzt setzen und auslesen — `SetCameraX 0` steht am Levelanfang, `SetCameraX CameraX() + 1`
+  lässt die Welt um ein Pixel weiterwandern. An den Levelenden **klemmt** die Kamera von selbst:
+  die Welt bleibt stehen, statt über den Rand hinauszurutschen (auch bei `CameraX() - 2` ganz
+  links — sie kippt nicht auf die andere Seite). Der Bildschirm scrollt dabei butterweich
+  Pixel für Pixel; alle acht Pixel schiebt BreadCraft im Verborgenen eine ganze Kachelspalte
+  nach, im richtigen Moment hinter dem Elektronenstrahl, damit kein Riss durchs Bild geht.
+  Springst Du dagegen weit (eine Zwischensequenz, ein Boss-Raum), wird das Fenster ehrlich neu
+  gezeichnet — ein Schnitt, kein Scrollen. Ein Spiel, das seine Kamera nie bewegt, zahlt für all
+  das **kein einziges Byte**. Auf echtem C64 (VICE) nachgemessen: das Band zeigt in jedem Moment
+  einen echten, zusammenhängenden Ausschnitt Deines Levels, Kacheln und Farben im Gleichschritt,
+  hin **und** zurück, während Punktestand und Text darüber und darunter bombenfest stehen.
 - **Der Level-Zähler sagt jetzt, warum Dein Level kostet, was es kostet.** Solange jede Kachel
   *eine* Farbe behält, genügt dem C64 eine kleine Farbtabelle — ein Bildschirm Level kostet rund
   400 Byte. Malst Du dieselbe Kachel in zwei Farben (der C64 erlaubt das, die Farbe sitzt in

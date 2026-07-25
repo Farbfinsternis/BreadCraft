@@ -1350,6 +1350,114 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       expect(code).toMatch(/colour per cell — tiles 80 are painted/)
       expect(code).toContain('COLOR_RAM[idx] = bc_lvlcol_bunt[_s];')
     })
+
+    // S1.B3.2: the window travels. The band lives at screen $7800 (VIC bank 1, because a
+    // tileset is baked) + 3 rows × 40 = $7878; Color-RAM is I/O and never moves: $D878.
+    describe('SetCameraX + CameraX() (the window travels)', () => {
+      const BAND = 0x7878
+      const CBAND = 0xd878
+      const hex = (n: number): string => '0x' + n.toString(16).toUpperCase().padStart(4, '0')
+
+      it('decides in the pocket and moves in the tail', () => {
+        const { code, errors } = gen(world('SetCameraX 8\nWhile 1\n  VWait\nWend'), fakeAssets())
+        expect(errors).toEqual([])
+        // The call itself only decides…
+        expect(code).toContain('bc_set_camx((int)(8));')
+        // …the movement sits behind the split, in the frame's tail.
+        expect(code).toMatch(/VIC\.ctrl2 = BC_D016_HUD;[\s\S]*?if \(bc_cut\)[\s\S]*?bc_shift_col_left\(\)/)
+        expect(code).toContain('bc_shown_col = bc_want_col;')
+      })
+
+      it('clamps at both level ends instead of wrapping', () => {
+        const { code } = gen(world('SetCameraX 0'), fakeAssets())
+        // 120 columns − 40 on screen = 80 columns × 8 pixels of travel.
+        expect(code).toContain('#define BC_CAM_MAX   640')
+        expect(code).toContain('if (x < 0) x = 0;')
+        expect(code).toContain('if (x > 640) x = 640;')
+        // Signed all the way in: `SetCameraX CameraX() - 2` at the start must clamp to 0,
+        // not wrap to the far end of the world.
+        expect(code).toContain('static void bc_set_camx(int x)')
+      })
+
+      it('splits the price: $D016 every frame, a column every 8 pixels', () => {
+        const { code } = gen(world('SetCameraX 8'), fakeAssets())
+        expect(code).toContain('bc_xscroll_next = 7 - (bc_camx & 7);')
+        expect(code).toContain('bc_want_col = bc_camx >> 3;')
+        // One column forward → shift left, reveal at the right edge; one back → mirrored.
+        expect(code).toContain('if (bc_want_col == bc_shown_col + 1) { bc_dir_col = 1;')
+        expect(code).toContain('else if (bc_want_col + 1 == bc_shown_col) { bc_dir_col = -1;')
+      })
+
+      it('shifts the band as ONE block: full pages on bne, a compare only on the rest', () => {
+        const { code } = gen(world('SetCameraX 8'), fakeAssets())
+        // 10 rows × 40 = 400 bytes, 399 of them travel (the last is the revealed column):
+        // one full 256-byte page, then 143 bytes.
+        expect(code).toContain(`__asm__("bcsl0: lda %w,x", ${hex(BAND + 1)}u);`)
+        expect(code).toContain('__asm__("bne bcsl0");')
+        expect(code).toContain(`__asm__("bcsl1: lda %w,x", ${hex(BAND + 257)}u);`)
+        expect(code).toContain('__asm__("cpx #%b", (unsigned char)143);')
+        // Colour travels with it — the VIC does not scroll $D800.
+        expect(code).toContain(`__asm__("bccl0: lda %w,x", ${hex(CBAND + 1)}u);`)
+      })
+
+      it('copies index 0 by hand on the way home (the measured tearing trap, T3)', () => {
+        const { code } = gen(world('SetCameraX 8'), fakeAssets())
+        // Descending: the loop must end on `dex / bne`, never `dex / cpx #$FF / bne` —
+        // two cycles a byte cost ~25 raster lines over the band and tore the way back.
+        expect(code).toMatch(/__asm__\("dex"\);\n\s*__asm__\("bne bcsr1"\);/)
+        // …so the descending helper itself must not compare a single byte (the comment
+        // above it quotes the trap, so read the function, not the prose).
+        const home = code.slice(
+          code.indexOf('static void bc_shift_scr_right(void) {'),
+          code.indexOf('static void bc_shift_col_right(void) {')
+        )
+        expect(home).not.toContain('cpx')
+        expect(code).toContain(`__asm__("lda %w", ${hex(BAND + 256)}u);`)
+        expect(code).toContain(`__asm__("sta %w", ${hex(BAND + 257)}u);`)
+      })
+
+      it('stamps the revealed column into the edge the shift vacated', () => {
+        const { code } = gen(world('SetCameraX 8'), fakeAssets())
+        // Walking right: column 39 of every band row. Walking back: column 0.
+        expect(code).toContain(`__asm__("sta %w", ${hex(BAND + 39)}u);`)
+        expect(code).toContain(`__asm__("sta %w", ${hex(CBAND + 39)}u);`)
+        expect(code).toContain(`__asm__("sta %w", ${hex(BAND)}u);`)
+        // …and the last band row is reached too (row 9 = 9 × 40).
+        expect(code).toContain(`__asm__("sta %w", ${hex(BAND + 9 * 40 + 39)}u);`)
+        expect(code).toContain('__asm__("lda %v+%b", bc_edge_t, (unsigned char)9);')
+      })
+
+      it('reads the window back with CameraX()', () => {
+        const { code, errors } = gen(world('x.w = CameraX()'), fakeAssets())
+        expect(errors).toEqual([])
+        expect(code).toContain('= bc_camx;')
+      })
+
+      it('redraws the whole window on a jump — a cut, not a scroll', () => {
+        const { code } = gen(world('SetCameraX 800'), fakeAssets())
+        expect(code).toContain('else { bc_dir_col = 0; bc_cut = 1; return; }')
+        expect(code).toContain('for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, bc_want_col + c);')
+      })
+
+      // A world that never moves must not pay for the machinery that moves it — the
+      // program proven on hardware in B3.1 stays exactly what it was.
+      it('costs a standing world nothing', () => {
+        const { code } = gen(world('While 1\n  VWait\nWend'), fakeAssets())
+        expect(code).toContain('static void bc_vwait(void)')
+        expect(code).not.toContain('bc_set_camx')
+        expect(code).not.toContain('BC_CAM_MAX')
+        expect(code).not.toContain('bcsl0')
+      })
+
+      it('says plainly that a camera needs a world', () => {
+        const noWorld = gen('UseTileset "main"\nSetCameraX 8', fakeAssets())
+        expect(noWorld.errors.some((e) => /keine Welt zum Anschauen/.test(e))).toBe(true)
+        const noWorldRead = gen('UseTileset "main"\nx.w = CameraX()', fakeAssets())
+        expect(noWorldRead.errors.some((e) => /keine Welt zum Anschauen/.test(e))).toBe(true)
+        const noArg = gen(world('SetCameraX'), fakeAssets())
+        expect(noArg.errors.some((e) => /X-Position in Welt-Pixeln/.test(e))).toBe(true)
+      })
+    })
   })
 
   // S1.B2.T1: a map wider than the screen is a world you walk through, not a picture.

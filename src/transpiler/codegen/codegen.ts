@@ -374,6 +374,9 @@ class Generator {
   /** The world entered by `UseMap`. A program has one (a second is an honest error): the
    *  level lives in RAM as one baked block, and swapping it means loading from disk. */
   private levelWorld: { id: string; columns: number; model: ColorModel } | undefined
+  /** `SetCameraX`/`CameraX()` used → emit the camera and the coarse shift that moves the
+   *  band (S1.B3.2). A world that never moves its window pays none of it. */
+  private usesCamera = false
 
   // ---- animated tiles (AnimateTile): animated-charset trick ----
   /** AnimateTile used → emit the bc_anim_* registry + tick (cycles a tile's 8 charset
@@ -815,8 +818,10 @@ class Generator {
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
 
-    // The scrolling engine (S1.B3), emitted only for a program that enters a world.
-    const scrollEngine = this.scrollEngineDecls()
+    // The scrolling engine (S1.B3), emitted only for a program that enters a world. It
+    // needs the planned screen address: the coarse shift is assembler over absolute
+    // addresses, so it must know where the band physically lives.
+    const scrollEngine = this.scrollEngineDecls(map.screenAddr)
 
     // Animated-tile registry + tick (AnimateTile), emitted only when used. Needs
     // BC_CHARSET, which the active tileset guarantees (genAnimateTile errors otherwise).
@@ -989,7 +994,7 @@ class Generator {
    *   after SPLIT_OUT       the beam is below the band — the only place the band may be
    *                         moved (S1.B3.2 puts the coarse shift here).
    */
-  private scrollEngineDecls(): string[] {
+  private scrollEngineDecls(screenAddr: number): string[] {
     if (!this.levelWorld || !this.playField) return []
     const name = safeAssetName(this.levelWorld.id)
     const rows = this.playField.last - this.playField.first + 1
@@ -997,7 +1002,7 @@ class Generator {
       this.levelWorld.model === 'tileTable'
         ? `bc_lvlcol_${name}[bc_lvl_${name}[_s]]`
         : `bc_lvlcol_${name}[_s]`
-    return [
+    const out = [
       '/* ---- the scrolling world (proven in _preflight/scroll_t3.c) ---- */',
       `#define BC_BAND_TOP  ${this.playField.first}   /* first scrolling screen row */`,
       `#define BC_BAND_H    ${rows}   /* tile rows that travel */`,
@@ -1011,8 +1016,6 @@ class Generator {
       `#define BC_D016_HUD  ${this.gfxColor === 'MULTICOLOR' ? '0xD0' : '0xC0'}   /* standing frame, ${this.gfxColor === 'MULTICOLOR' ? 'multicolor' : 'hires'} text */`,
       '#define BC_RASTER    (*(volatile unsigned char*)0xD012)',
       '',
-      // The camera itself arrives with the words that move it (S1.B3.2) — an unused
-      // variable is a promise the program does not keep yet.
       'static unsigned char bc_xscroll = 7;     /* $D016 fine scroll, this frame */',
       'static unsigned char bc_xscroll_next = 7;',
       '',
@@ -1028,19 +1031,214 @@ class Generator {
       '    ++_s;',
       '  }',
       '}',
-      '',
+      ''
+    ]
+    if (this.usesCamera) out.push(...this.cameraDecls(screenAddr, rows, name, colour))
+    out.push(
       '/* The frame turns over: end the one that was drawing, begin the next. Everything',
       '   the program does between two VWaits runs while the beam draws the band — the',
       '   pocket where thinking is free and the band must not be touched. */',
       'static void bc_vwait(void) {',
       '  while (BC_RASTER != BC_SPLIT_OUT) { }',
-      '  VIC.ctrl2 = BC_D016_HUD;               /* below the band the picture stands */',
+      '  VIC.ctrl2 = BC_D016_HUD;               /* below the band the picture stands */'
+    )
+    if (this.usesCamera) {
+      out.push(
+        '  /* THE TAIL. The beam is below the band, so this is the only place the band may',
+        '     be moved — and the coarse step eats most of it (measured: 211 of the ~232',
+        '     raster lines available, SCROLLING_PLAN T4). Colour first, then the screen,',
+        '     then the column that was decided in the pocket: the order proven in',
+        '     _preflight/scroll_t3.c. */',
+        '  if (bc_cut) { bc_fill_window(); bc_cut = 0; }',
+        '  else if (bc_dir_col > 0) { bc_shift_col_left(); bc_shift_scr_left(); bc_reveal_right(); }',
+        '  else if (bc_dir_col < 0) { bc_shift_col_right(); bc_shift_scr_right(); bc_reveal_left(); }',
+        '  bc_dir_col = 0;',
+        '  bc_shown_col = bc_want_col;',
+        '  /* Below the band the fine scroll may change: the new value is what the beam will',
+        '     meet at the top of the next band. */'
+      )
+    }
+    out.push(
       '  bc_xscroll = bc_xscroll_next;',
       '  while (BC_RASTER != BC_SPLIT_IN) { }',
       '  VIC.ctrl2 = BC_D016_HUD | bc_xscroll;  /* from here down the world scrolls */',
       '}',
       ''
+    )
+    return out
+  }
+
+  /**
+   * The camera (S1.B3.2): the window that travels over the world, and the coarse shift
+   * that makes it travel. Emitted only when the program actually moves the window
+   * (`SetCameraX`/`CameraX()`) — a standing world pays for none of it.
+   *
+   * THE SPLIT OF LABOUR IS THE WHOLE DESIGN (measured in SCROLLING_PLAN T2b–T4):
+   *   - `$D016` shifts the picture 0–7 pixels for one register write. That is the smooth
+   *     part, and it is free.
+   *   - Every 8th pixel the band must physically move one column: ~1.331 cycles per band
+   *     row for screen RAM, Color-RAM (the VIC does NOT scroll $D800) and the column that
+   *     appears at the edge. That is the price, and it is paid in the tail.
+   * So `SetCameraX` only DECIDES (in the pocket, where thinking is free) and `bc_vwait`
+   * MOVES (in the tail, below the band).
+   *
+   * WHY THE SHIFT IS ASSEMBLER — and only the shift. A cc65 loop costs ~67 cycles per
+   * byte pair; the band is 400 bytes twice over. In C the step took 1,4 frames (it did not
+   * just tear, it ate a whole frame every 8th step); as one indexed block copy in
+   * assembler it is ~11.200 cycles and fits. Mass memory movement is the one place the
+   * 6502 wants assembler — everything else here stays C.
+   */
+  private cameraDecls(screenAddr: number, rows: number, name: string, colour: string): string[] {
+    const world = this.levelWorld!
+    const camMax = Math.max(0, (world.columns - SCREEN_W) * 8)
+    // The band is ONE block (rows × 40 bytes), so one indexed copy walks it — no per-row
+    // setup. Shifting by a column moves every byte but the last, which the reveal writes.
+    const bytes = rows * SCREEN_W - 1
+    const scrBase = screenAddr + this.playField!.first * SCREEN_W
+    const colBase = 0xd800 + this.playField!.first * SCREEN_W
+    return [
+      '/* ---- the camera and the coarse step (S1.B3.2) ---- */',
+      `#define BC_CAM_MAX   ${camMax}   /* rightmost camera pixel — the level's right edge */`,
+      '',
+      'static unsigned int bc_camx = 0;        /* the window\'s left edge, in world pixels */',
+      'static unsigned int bc_shown_col = 0;   /* map column the band shows right now */',
+      'static unsigned int bc_want_col = 0;    /* map column the tail is to make it show */',
+      'static signed char  bc_dir_col = 0;     /* columns for the tail to travel: -1 / 0 / +1 */',
+      'static unsigned char bc_cut = 0;        /* the window jumped: redraw it whole */',
+      `static unsigned char bc_edge_t[${rows}];   /* the column about to appear: tiles */`,
+      `static unsigned char bc_edge_c[${rows}];   /* …and its colours */`,
+      '',
+      '/* the band travels one column LEFT (the world walks right) */',
+      'static void bc_shift_scr_left(void) {',
+      ...this.asmShiftLeft('bcsl', scrBase, bytes),
+      '}',
+      'static void bc_shift_col_left(void) {',
+      ...this.asmShiftLeft('bccl', colBase, bytes),
+      '}',
+      '',
+      '/* …and one column RIGHT (walking back), which is the mirror image: the copy must',
+      '   run downwards. MEASURED TRAP (T3): the obvious descending loop ends with',
+      '   "dex / cpx #$FF / bne", and those two cycles per byte cost ~25 raster lines over',
+      '   the band — more than the margin, so the way home tore while the way out did not.',
+      '   Hence "dex / bne" and index 0 copied by hand: one byte is cheaper than a compare',
+      '   on every byte. */',
+      'static void bc_shift_scr_right(void) {',
+      ...this.asmShiftRight('bcsr', scrBase, bytes),
+      '}',
+      'static void bc_shift_col_right(void) {',
+      ...this.asmShiftRight('bccr', colBase, bytes),
+      '}',
+      '',
+      '/* The column that was built in the pocket is stamped into the edge the shift just',
+      '   vacated — unrolled absolute stores, because the addresses are known at build time',
+      '   and a loop would cost more than the stores it saves. */',
+      'static void bc_reveal_right(void) {',
+      ...this.asmReveal(scrBase, colBase, rows, SCREEN_W - 1),
+      '}',
+      'static void bc_reveal_left(void) {',
+      ...this.asmReveal(scrBase, colBase, rows, 0),
+      '}',
+      '',
+      '/* A cut, not a scroll: the window landed somewhere else entirely, so the whole band',
+      '   is redrawn. Honest cost — that is a frame\'s worth of work and it may show one',
+      '   torn frame. Walking never does this; jumping does. */',
+      'static void bc_fill_window(void) {',
+      '  unsigned char c;',
+      '  for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, bc_want_col + c);',
+      '}',
+      '',
+      '/* Put the window at world pixel x. This only DECIDES — it runs in the pocket while',
+      '   the beam draws the band, where touching the band would tear it. The tail in',
+      '   bc_vwait does the moving. Signed on purpose: walking left past the start is the',
+      '   natural thing to write (SetCameraX CameraX() - 2), and it must clamp, not wrap. */',
+      'static void bc_set_camx(int x) {',
+      '  unsigned int mc, _s;',
+      '  unsigned char row;',
+      '  if (x < 0) x = 0;                     /* the level ends: the world stands still… */',
+      `  if (x > ${camMax}) x = ${camMax};${camMax === 0 ? '   /* a level no wider than the screen never travels */' : '  /* …while the player may walk on */'}`,
+      '  bc_camx = (unsigned int)x;',
+      '  bc_xscroll_next = 7 - (bc_camx & 7);  /* the free part: one $D016 write per frame */',
+      '  bc_want_col = bc_camx >> 3;',
+      '  if (bc_want_col == bc_shown_col) { bc_dir_col = 0; bc_cut = 0; return; }',
+      '  if (bc_want_col == bc_shown_col + 1) { bc_dir_col = 1; mc = bc_want_col + (BC_SCR_W - 1); }',
+      '  else if (bc_want_col + 1 == bc_shown_col) { bc_dir_col = -1; mc = bc_want_col; }',
+      '  else { bc_dir_col = 0; bc_cut = 1; return; }',
+      '  bc_cut = 0;',
+      '  _s = mc * BC_BAND_H;                  /* build the column that is about to appear */',
+      '  for (row = 0; row < BC_BAND_H; ++row) {',
+      `    bc_edge_t[row] = bc_lvl_${name}[_s];`,
+      `    bc_edge_c[row] = ${colour};`,
+      '    ++_s;',
+      '  }',
+      '}',
+      ''
     ]
+  }
+
+  /**
+   * Ascending block copy `base+1 → base`, `bytes` bytes: the band travels one column
+   * left. Full 256-byte blocks end on the index wrapping to zero (`bne`), so only the
+   * last, partial block pays for a compare.
+   */
+  private asmShiftLeft(tag: string, base: number, bytes: number): string[] {
+    const out = ['  __asm__("ldx #$00");']
+    const full = Math.floor(bytes / 256)
+    const rem = bytes % 256
+    for (let b = 0; b < full; b++) {
+      const blk = base + b * 256
+      out.push(
+        `  __asm__("${tag}${b}: lda %w,x", ${hx(blk + 1)}u);`,
+        `  __asm__("sta %w,x", ${hx(blk)}u);`,
+        '  __asm__("inx");',
+        `  __asm__("bne ${tag}${b}");`
+      )
+    }
+    if (rem > 0) {
+      const blk = base + full * 256
+      out.push(
+        `  __asm__("${tag}${full}: lda %w,x", ${hx(blk + 1)}u);`,
+        `  __asm__("sta %w,x", ${hx(blk)}u);`,
+        '  __asm__("inx");',
+        `  __asm__("cpx #%b", (unsigned char)${rem});`,
+        `  __asm__("bne ${tag}${full}");`
+      )
+    }
+    return out
+  }
+
+  /** Descending block copy `base → base+1`: the mirror image, walking back. */
+  private asmShiftRight(tag: string, base: number, bytes: number): string[] {
+    const out: string[] = []
+    const top = Math.floor((bytes - 1) / 256)
+    for (let b = top; b >= 0; b--) {
+      const count = b === top ? bytes - top * 256 : 256
+      const blk = base + b * 256
+      if (count > 1) {
+        out.push(
+          `  __asm__("ldx #%b", (unsigned char)${count - 1});`,
+          `  __asm__("${tag}${b}: lda %w,x", ${hx(blk)}u);`,
+          `  __asm__("sta %w,x", ${hx(blk + 1)}u);`,
+          '  __asm__("dex");',
+          `  __asm__("bne ${tag}${b}");`
+        )
+      }
+      out.push(`  __asm__("lda %w", ${hx(blk)}u);`, `  __asm__("sta %w", ${hx(blk + 1)}u);`)
+    }
+    return out
+  }
+
+  /** Stamp the prepared column into screen column `col` of every band row. */
+  private asmReveal(scrBase: number, colBase: number, rows: number, col: number): string[] {
+    const out: string[] = []
+    for (let r = 0; r < rows; r++) {
+      out.push(
+        `  __asm__("lda %v+%b", bc_edge_t, (unsigned char)${r});`,
+        `  __asm__("sta %w", ${hx(scrBase + r * SCREEN_W + col)}u);`,
+        `  __asm__("lda %v+%b", bc_edge_c, (unsigned char)${r});`,
+        `  __asm__("sta %w", ${hx(colBase + r * SCREEN_W + col)}u);`
+      )
+    }
+    return out
   }
 
   /**
@@ -1599,6 +1797,9 @@ class Generator {
       case 'usemap':
         this.genUseMap(s)
         break
+      case 'setcamerax':
+        this.genSetCameraX(s)
+        break
       case 'settile':
         this.genSetTile(s)
         break
@@ -2116,6 +2317,32 @@ class Generator {
     this.emit('{ unsigned char _c; for (_c = 0; _c < BC_SCR_W; ++_c) bc_fill_col(_c, _c); }')
     this.emit('VIC.ctrl2 = BC_D016_HUD;')
     this.emit('__asm__("sei"); /* the raster split needs the beam to itself */')
+  }
+
+  /**
+   * `SetCameraX x` → put the window at world pixel x (S1.B3.2). The door to direct camera
+   * control: a cut scene, a boss room, a screen shake.
+   *
+   * The call only decides — it runs between two VWaits, i.e. in the pocket where the beam
+   * is drawing the band and touching the band would tear it. The move happens at the next
+   * `VWait`. Two consequences a user can feel, both honest:
+   *   - moving by up to one column per frame is the smooth path (the proven coarse step);
+   *   - a bigger jump is a CUT: the whole window is redrawn, which costs a frame.
+   */
+  private genSetCameraX(s: CommandStmt): void {
+    if (!this.levelWorld) {
+      this.err(this.M.cameraNoWorld('SetCameraX'), s)
+      return
+    }
+    if (s.args.length < 1) {
+      this.err(this.M.setCameraXArgs(), s)
+      return
+    }
+    this.usesCamera = true
+    // Signed: `SetCameraX CameraX() - 2` at the left end must clamp, not wrap to the far
+    // right. The cast is safe for every level that can fit in RAM (a camera beyond 32767
+    // pixels would need a level ~41 KB wide, which cannot be linked into one .prg).
+    this.emit(`bc_set_camx((int)(${this.expr(s.args[0])}));`)
   }
 
   /**
@@ -2743,6 +2970,16 @@ class Generator {
         }
         return `BC_SCREEN[${off}]`
       }
+      case 'camerax':
+        // CameraX() → the window's left edge in world pixels. The counterpart to
+        // SetCameraX, and what turns a world position into a screen one:
+        // screen_x = world_x − CameraX() (until `Follow` does it for you, S1.B3.3).
+        if (!this.levelWorld) {
+          this.err(this.M.cameraNoWorld('CameraX'), e)
+          return '/* CameraX: keine Welt */ 0'
+        }
+        this.usesCamera = true
+        return 'bc_camx'
       case 'tileat':
         if (a.length < 2) {
           this.err(this.M.tileAtArgs(), e)

@@ -1346,7 +1346,7 @@
       "i18nKey": "cmd.setcamerax",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "later",
+      "since": "phase1",
       "proven": true,
       "transpile": "Setzt die Kamera-Fensterposition (Welt-Pixel, linke Kante); klemmt an den Map-Enden. Löst für den Frame ein Follow ab. Referenz _preflight/scroll_t3.c.",
       "$note": "Die TÜR für direkte Kamera-Kontrolle: setzt das Fenster auf eine Welt-X-Position — für Zwischensequenzen, Boss-Räume, ein Kamera-Rütteln. Ohne Follow bleibt die Kamera, wo man sie setzt. X-only (S1 ist horizontal). Gegenstück zum Lesen: CameraX().",
@@ -1366,7 +1366,7 @@
       "i18nKey": "fn.camerax",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "later",
+      "since": "phase1",
       "proven": true,
       "returns": {
         "type": ".w",
