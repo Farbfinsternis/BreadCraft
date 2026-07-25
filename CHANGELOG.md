@@ -8,6 +8,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Behoben
+- **Die Werkzeugfenster kletterten mit der Zeit über die Dialoge — daher das „tote" Namensfeld.**
+  Jedes Anfassen eines schwebenden Fensters hob es eine Stufe höher, ohne Obergrenze. Nach ein
+  paar Stunden Malen lagen die Fenster **über** dem „Speichern unter…"-Dialog: der war noch zu
+  sehen, aber ein Werkzeugfenster lag auf dem Namensfeld und schluckte jeden Klick und jeden
+  Tastendruck — es sah aus, als sei das Feld kaputt. Und weil die Stapel-Reihenfolge gespeichert
+  wird, blieb es auch nach einem Neustart kaputt. Jetzt werden die Fenster bei jedem Anheben
+  neu durchnummeriert: obenauf ist, was Du zuletzt angefasst hast, aber über einen Dialog kommt
+  keines mehr. **Eine über die Jahre verrutschte Ablage repariert sich beim nächsten Öffnen des
+  Editors von selbst** — Deine Anordnung bleibt, wie sie war.
 - **Beim Wechseln zu einer anderen Datei wurde die alte still gespeichert — das ist vorbei.**
   Wer eine Karte geleert und dann eine andere geöffnet hat, dem schrieb der Editor die leere
   Karte klammheimlich über die alte. Genau so ist einem Nutzer sein Level abhandengekommen.
