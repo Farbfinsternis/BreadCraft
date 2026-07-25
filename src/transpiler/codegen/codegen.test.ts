@@ -1534,6 +1534,81 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
         })
       })
 
+      // S1.B3.4: changing the world, and the one ruler every world question uses.
+      describe('SetMapTile (the world changes, and it stays changed)', () => {
+        it('writes the LEVEL, not just the picture — that is the whole point', () => {
+          const { code, errors } = gen(world('SetMapTile 320, 90, 64'), fakeAssets())
+          expect(errors).toEqual([])
+          expect(code).toContain('bc_set_map_tile(320, 90, 64);')
+          // The world in RAM: this is what survives the column scrolling out and back.
+          expect(code).toContain('bc_lvl_welt[mcol * BC_BAND_H + (row - BC_BAND_TOP)] = t;')
+          // …and the picture of it, only while that cell is inside the window.
+          expect(code).toContain('if (mcol < bc_shown_col) return;')
+          expect(code).toContain('BC_SCREEN[idx] = t;')
+        })
+
+        it('makes the level writable — a world that changes cannot be const', () => {
+          const changing = gen(world('SetMapTile 320, 90, 64'), fakeAssets())
+          expect(changing.code).toContain('static unsigned char bc_lvl_welt[1200] = {')
+          // A program that only reads it keeps it read-only.
+          const standing = gen(world(), fakeAssets())
+          expect(standing.code).toContain('static const unsigned char bc_lvl_welt[1200] = {')
+        })
+
+        it('takes the colour from the tile when the level stores colour per tile', () => {
+          const { code, errors } = gen(world('SetMapTile 320, 90, 64'), fakeAssets())
+          expect(errors).toEqual([])
+          expect(code).toContain('COLOR_RAM[idx] = bc_lvlcol_welt[t];')
+        })
+
+        it('warns instead of lying when a colour cannot be stored', () => {
+          const { errors, warnings } = gen(world('SetMapTile 320, 90, 64, RED'), fakeAssets())
+          // Not an error — it still does the sensible thing; but silence would unravel the
+          // moment the column scrolls back in.
+          expect(errors).toEqual([])
+          expect(warnings.some((e) => /gehört die Farbe zur KACHEL/.test(e))).toBe(true)
+        })
+
+        it('stores the colour when the painting made it per cell', () => {
+          const perCell = 'UseTileset "main"\nPlayField 3, 12\nUseMap "bunt"\nSetMapTile 320, 90, 64, RED'
+          const { code, errors } = gen(perCell, fakeAssets())
+          expect(errors).toEqual([])
+          expect(code).toContain('bc_lvlcol_bunt[mcol * BC_BAND_H + (row - BC_BAND_TOP)] = (c & 0x0F) | 8;')
+          expect(code).toContain('static unsigned char bc_lvlcol_bunt[1200] = {')
+          // Leaving the colour out keeps what was painted (0xFF = don't touch).
+          const noColour = gen(perCell.replace(', RED', ''), fakeAssets())
+          expect(noColour.code).toContain('bc_set_map_tile(320, 90, 64, 0xFF);')
+        })
+
+        it('refuses to change a world that was never entered', () => {
+          const { errors } = gen('UseTileset "main"\nSetMapTile 320, 90, 64', fakeAssets())
+          expect(errors.some((e) => /es gibt aber keine/.test(e))).toBe(true)
+          expect(errors.some((e) => /SetTile/.test(e))).toBe(true)
+        })
+      })
+
+      // The decision B3.3 deliberately deferred: inside a world, every question about the
+      // world speaks WORLD pixels — one ruler for the hero, for TileAt and for SetMapTile.
+      describe('TileAt in a world', () => {
+        it('asks in world pixels and answers from the window', () => {
+          const { code, errors } = gen(world('t.b = TileAt(320, 90)'), fakeAssets())
+          expect(errors).toEqual([])
+          expect(code).toContain('static unsigned char bc_tile_at(unsigned int wx, unsigned char wy)')
+          expect(code).toContain('if (col < bc_shown_col) return 0;')
+          expect(code).toContain('col -= bc_shown_col;')
+          // Cheap on purpose: a subtract, not the column × band-height multiply the level's
+          // own layout would need on every call.
+          expect(code).not.toContain('wx >> 3) * BC_BAND_H')
+        })
+
+        it('leaves a standing program asking in screen pixels, exactly as before', () => {
+          const { code } = gen('UseTileset "main"\nt.b = TileAt(200, 90)', fakeAssets())
+          expect(code).toContain('static unsigned char bc_tile_at(unsigned int px, unsigned char py)')
+          expect(code).toContain('if (px < BC_SPR_X0 || py < BC_SPR_Y0) return 0;')
+          expect(code).not.toContain('bc_shown_col')
+        })
+      })
+
       it('says plainly that a camera needs a world', () => {
         const noWorld = gen('UseTileset "main"\nSetCameraX 8', fakeAssets())
         expect(noWorld.errors.some((e) => /keine Welt zum Anschauen/.test(e))).toBe(true)

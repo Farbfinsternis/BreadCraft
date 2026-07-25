@@ -63,6 +63,17 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   sauber, statt auf der falschen Seite wieder aufzutauchen. Nachgemessen auf echtem C64 (VICE):
   während die Kamera frei ist, hängt der Taucher auf den Pixel genau an seiner Leine; an beiden
   Levelenden steht die Welt still, während er weitergeht.
+- **`SetMapTile` ändert die WELT — und sie bleibt geändert.** Der eingesammelte Schlüssel ist
+  wirklich weg: nicht nur vom Bildschirm gewischt, sondern aus dem Level entfernt. Scrollt seine
+  Spalte hinaus und später wieder herein, bleibt die Stelle leer. Das Wort nimmt **Pixel in
+  Welt-Koordinaten** — dieselben, in denen Dein Held steht und in denen `TileAt` fragt — und
+  rechnet die Zelle selbst aus; das händische Umrechnen von Pixeln in Zellen entfällt. **Damit
+  gibt es in einer scrollenden Welt nur noch EIN Lineal**: Held, Abfrage und Änderung sprechen
+  dieselbe Sprache. Eine Farbe darfst Du mitgeben, wenn Dein Level die Farbe je Zelle trägt; trägt
+  es sie je Kachel (der billige Normalfall), bekommt die Zelle die Farbe ihrer neuen Kachel und
+  BreadCraft sagt Dir das, statt eine Farbe zu versprechen, die beim Zurückscrollen umkippen
+  würde. Auf echtem C64 (VICE) nachgemessen: ein Taucher frisst den Boden weg, und **208 Spalten**
+  kamen nach einer Reise aus dem Bild und zurück mit ihrer Lücke wieder — keine einzige wuchs nach.
 - **Der Level-Zähler sagt jetzt, warum Dein Level kostet, was es kostet.** Solange jede Kachel
   *eine* Farbe behält, genügt dem C64 eine kleine Farbtabelle — ein Bildschirm Level kostet rund
   400 Byte. Malst Du dieselbe Kachel in zwei Farben (der C64 erlaubt das, die Farbe sitzt in

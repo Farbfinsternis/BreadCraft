@@ -373,7 +373,12 @@ class Generator {
   private playField: { first: number; last: number } | undefined
   /** The world entered by `UseMap`. A program has one (a second is an honest error): the
    *  level lives in RAM as one baked block, and swapping it means loading from disk. */
-  private levelWorld: { id: string; columns: number; model: ColorModel } | undefined
+  private levelWorld:
+    | { id: string; columns: number; model: ColorModel; tilesDecl: number; colorsDecl: number }
+    | undefined
+  /** `SetMapTile` used → the baked level stops being `const`: the program changes its own
+   *  world, and the change has to survive the column scrolling out and back (S1.B3.4). */
+  private usesSetMapTile = false
   /** `SetCameraX`/`CameraX()`/`Follow` used → emit the camera and the coarse shift that
    *  moves the band (S1.B3.2). A world that never moves its window pays none of it. */
   private usesCamera = false
@@ -679,6 +684,17 @@ class Generator {
       if (s.kind !== 'FunctionDecl') this.genStatement(s)
     }
 
+    // A world the program CHANGES (SetMapTile, S1.B3.4) cannot be `const` — and whether it
+    // does is only known once the whole program has been read, which is why the two
+    // declarations were remembered instead of decided when the level was baked.
+    if (this.usesSetMapTile && this.levelWorld) {
+      const unconst = (i: number): void => {
+        this.bakedData[i] = this.bakedData[i].replace('static const ', 'static ')
+      }
+      unconst(this.levelWorld.tilesDecl)
+      if (this.levelWorld.model === 'perCell') unconst(this.levelWorld.colorsDecl)
+    }
+
     // Plan the C64 memory map from what this project actually bakes (STAHL S1). The
     // addresses below come from this single plan — and so does the returned linker
     // config, so the cfg's reserved regions and the C's pointers can never drift.
@@ -821,6 +837,20 @@ class Generator {
       ? ['/* sprite slot → frame-0 base block (pointer-swap animation) */', 'static unsigned char bc_spr_base[8];', '']
       : []
 
+    // Where the window stands. It comes FIRST because it is what every world question is
+    // answered against — TileAt below reads it, and so does everything the scrolling
+    // engine does (S1.B3.4). Emitted only when something actually asks.
+    const worldWindow =
+      this.levelWorld &&
+      (this.usesCamera || this.spriteSlotsUsed > 0 || this.usesTileAt || this.usesSetMapTile)
+        ? [
+            '/* ---- where the window stands (S1.B3.2) ---- */',
+            "static unsigned int bc_camx = 0;        /* the window's left edge, in world pixels */",
+            'static unsigned int bc_shown_col = 0;   /* map column the band shows right now */',
+            ''
+          ]
+        : []
+
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
 
@@ -952,6 +982,7 @@ class Generator {
       ...arrayDecls,
       ...baked,
       ...spriteRuntime,
+      ...worldWindow,
       ...tileWorld,
       ...scrollEngine,
       ...animTiles,
@@ -1039,17 +1070,10 @@ class Generator {
       '}',
       ''
     ]
-    // The window's position is needed by anything that has to know WHERE the world is —
-    // the words that move it, and the sprites that ride on it (S1.B3.3).
-    if (this.usesCamera || this.spriteSlotsUsed > 0) {
-      out.push(
-        '/* ---- where the window stands (S1.B3.2) ---- */',
-        "static unsigned int bc_camx = 0;        /* the window's left edge, in world pixels */",
-        ''
-      )
-    }
+    // (bc_camx / bc_shown_col are emitted ahead of the tile world — see generate().)
     if (this.usesCamera) out.push(...this.cameraDecls(screenAddr, rows, name, colour))
     if (this.spriteSlotsUsed > 0) out.push(...this.spriteWorldDecls())
+    if (this.usesSetMapTile) out.push(...this.setMapTileDecls(name, rows))
     out.push(
       '/* The frame turns over: end the one that was drawing, begin the next. Everything',
       '   the program does between two VWaits runs while the beam draws the band — the',
@@ -1124,7 +1148,6 @@ class Generator {
       '/* ---- the camera and the coarse step (S1.B3.2) ---- */',
       `#define BC_CAM_MAX   ${camMax}   /* rightmost camera pixel — the level's right edge */`,
       '',
-      'static unsigned int bc_shown_col = 0;   /* map column the band shows right now */',
       'static unsigned int bc_want_col = 0;    /* map column the tail is to make it show */',
       'static signed char  bc_dir_col = 0;     /* columns for the tail to travel: -1 / 0 / +1 */',
       'static unsigned char bc_cut = 0;        /* the window jumped: redraw it whole */',
@@ -1279,6 +1302,56 @@ class Generator {
   }
 
   /**
+   * `SetMapTile` (S1.B3.4): change the world, and the picture of it.
+   *
+   * TWO WRITES, ON PURPOSE. The level in RAM is what makes the change LAST — the column
+   * may scroll out of the window and back, and the key must still be gone. Screen and
+   * Color-RAM are only the current view of it, written when the cell happens to be on
+   * screen. Writing just the screen would be the bug this word exists to prevent.
+   *
+   * This is the one place that pays the column multiply (`col × band height`), and it is
+   * the right place: changing the world is rare, asking about it is not — which is why
+   * `TileAt` reads the window instead (see tileWorldDecls).
+   */
+  private setMapTileDecls(name: string, rows: number): string[] {
+    const perCell = this.levelWorld!.model === 'perCell'
+    return [
+      '/* ---- changing the world (S1.B3.4) ---- */',
+      `static void bc_set_map_tile(unsigned int wx, unsigned char wy, unsigned char t${
+        perCell ? ', unsigned char c' : ''
+      }) {`,
+      '  unsigned int mcol = wx >> 3;',
+      '  unsigned char row, ry;',
+      '  unsigned int idx;',
+      '  if (wy < BC_SPR_Y0 || mcol >= BC_MAP_W) return;',
+      '  ry = wy;',
+      '  ry -= BC_SPR_Y0;',
+      '  row = ry >> 3;                        /* the screen row this pixel falls in */',
+      '  if (row < BC_BAND_TOP || row >= BC_BAND_TOP + BC_BAND_H) return; /* not the world */',
+      '  /* the world itself — this is what survives the column scrolling away and back */',
+      `  bc_lvl_${name}[mcol * BC_BAND_H + (row - BC_BAND_TOP)] = t;`,
+      ...(perCell
+        ? [
+            '  if (c != 0xFF) {                     /* 0xFF = leave the colour as painted */',
+            `    bc_lvlcol_${name}[mcol * BC_BAND_H + (row - BC_BAND_TOP)] = (c & 0x0F) | 8;`,
+            '  }'
+          ]
+        : []),
+      '  /* …and the picture of it, if that cell is inside the window right now */',
+      '  if (mcol < bc_shown_col) return;',
+      '  mcol -= bc_shown_col;',
+      '  if (mcol >= BC_SCR_W) return;',
+      '  idx = (unsigned int)row * BC_SCR_W + mcol;',
+      '  BC_SCREEN[idx] = t;',
+      perCell
+        ? `  COLOR_RAM[idx] = (c != 0xFF) ? ((c & 0x0F) | 8) : bc_lvlcol_${name}[(wx >> 3) * BC_BAND_H + (row - BC_BAND_TOP)];`
+        : `  COLOR_RAM[idx] = bc_lvlcol_${name}[t];`,
+      '}',
+      ''
+    ]
+  }
+
+  /**
    * Ascending block copy `base+1 → base`, `bytes` bytes: the band travels one column
    * left. Full 256-byte blocks end on the index wrapping to zero (`bne`), so only the
    * last, partial block pays for a compare.
@@ -1368,23 +1441,58 @@ class Generator {
       const row40 = Array.from({ length: 25 }, (_, r) => r * 40).join(', ')
       out.push(
         '/* row → Screen-RAM offset (row*40); a table beats a per-pixel 16-bit shift chain */',
-        `static const unsigned int bc_row40[25] = { ${row40} };`,
-        '/* pixel position → tile number at that cell (0 outside the field) */',
-        'static unsigned char bc_tile_at(unsigned int px, unsigned char py) {',
-        '  unsigned char col, row, ry;',
-        '  if (px < BC_SPR_X0 || py < BC_SPR_Y0) return 0;',
-        '  col = (unsigned char)((px - BC_SPR_X0) >> 3);',
-        // py is a byte and py >= BC_SPR_Y0 is guaranteed above, so keep the row math in
-        // 8 bits (byte local `ry`, compound `-=` cc65 reduces to an 8-bit sbc) instead of
-        // letting C promote it to a 16-bit subtract — the per-pixel hot path (STAHL S10).
-        '  ry = py;',
-        '  ry -= BC_SPR_Y0;',
-        '  row = ry >> 3;',
-        '  if (col >= BC_SCR_W || row >= 25) return 0;',
-        '  return BC_SCREEN[bc_row40[row] + col];',
-        '}',
-        ''
+        `static const unsigned int bc_row40[25] = { ${row40} };`
       )
+      if (this.levelWorld) {
+        // In a world the question is asked in WORLD pixels — the same coordinates the hero
+        // stands in (S1.B3.4), so a program never has to hold two rulers at once.
+        //
+        // WHY IT STILL READS THE SCREEN. The band IS the level's window: screen column j
+        // holds map column bc_shown_col + j, so the answer is identical to reading the
+        // level — and it costs a subtract instead of the `column × band height` multiply
+        // the level's layout would need on EVERY call (the record-array multiply trap).
+        // Reading is the hot path (a platformer samples several tiles per frame), changing
+        // the world is not: SetMapTile pays the multiply, TileAt does not.
+        //
+        // The honest edge: outside the window there is no answer, and 0 comes back. The
+        // world you can ask about is the world you can see.
+        out.push(
+          '/* world pixel → tile at that cell (0 outside the window — see the note above) */',
+          'static unsigned char bc_tile_at(unsigned int wx, unsigned char wy) {',
+          '  unsigned int col;',
+          '  unsigned char row, ry;',
+          '  if (wy < BC_SPR_Y0) return 0;',
+          '  col = wx >> 3;',
+          '  if (col < bc_shown_col) return 0;',
+          '  col -= bc_shown_col;',
+          '  if (col >= BC_SCR_W) return 0;',
+          '  ry = wy;',
+          '  ry -= BC_SPR_Y0;',
+          '  row = ry >> 3;',
+          '  if (row >= 25) return 0;',
+          '  return BC_SCREEN[bc_row40[row] + (unsigned char)col];',
+          '}',
+          ''
+        )
+      } else {
+        out.push(
+          '/* pixel position → tile number at that cell (0 outside the field) */',
+          'static unsigned char bc_tile_at(unsigned int px, unsigned char py) {',
+          '  unsigned char col, row, ry;',
+          '  if (px < BC_SPR_X0 || py < BC_SPR_Y0) return 0;',
+          '  col = (unsigned char)((px - BC_SPR_X0) >> 3);',
+          // py is a byte and py >= BC_SPR_Y0 is guaranteed above, so keep the row math in
+          // 8 bits (byte local `ry`, compound `-=` cc65 reduces to an 8-bit sbc) instead of
+          // letting C promote it to a 16-bit subtract — the per-pixel hot path (STAHL S10).
+          '  ry = py;',
+          '  ry -= BC_SPR_Y0;',
+          '  row = ry >> 3;',
+          '  if (col >= BC_SCR_W || row >= 25) return 0;',
+          '  return BC_SCREEN[bc_row40[row] + col];',
+          '}',
+          ''
+        )
+      }
     }
     if (this.usesTileSolid) {
       // Solidity is a property of the TILE (STAHL S11), not its map cell: TileSolid is
@@ -1906,6 +2014,9 @@ class Generator {
       case 'follow':
         this.genFollow(s)
         break
+      case 'setmaptile':
+        this.genSetMapTile(s)
+        break
       case 'settile':
         this.genSetTile(s)
         break
@@ -2386,19 +2497,29 @@ class Generator {
     }
 
     const name = safeAssetName(id)
+    // Remember where the two declarations land: `SetMapTile` changes the world, and a
+    // world that can change cannot be `const`. Which of them is only known further down
+    // the program, so the line is rewritten at the end (see generate()).
     this.bakedData.push(
-      `/* UseMap "${id}": ${map.width} columns × ${bandRows} band rows, column-major */`,
+      `/* UseMap "${id}": ${map.width} columns × ${bandRows} band rows, column-major */`
+    )
+    const tilesDecl = this.bakedData.length
+    this.bakedData.push(
       `static const unsigned char bc_lvl_${name}[${cells}] = {`,
       byteRows(tiles),
       '};'
     )
+    let colorsDecl: number
     if (cost.model === 'tileTable') {
       // Colour belongs to the TILE here: one 256-byte table instead of a byte per cell.
       // Baked with the multicolor bit already set, so the fill loop is a plain copy.
       const table = new Uint8Array(256)
       for (let t = 0; t < 256; t++) table[t] = (cost.tileColors![t] & 0x0f) | 8
       this.bakedData.push(
-        `/* tile → colour (every tile keeps one colour: ${cells + 256} bytes instead of ${cells * 2}) */`,
+        `/* tile → colour (every tile keeps one colour: ${cells + 256} bytes instead of ${cells * 2}) */`
+      )
+      colorsDecl = this.bakedData.length
+      this.bakedData.push(
         `static const unsigned char bc_lvlcol_${name}[256] = {`,
         byteRows(table),
         '};'
@@ -2406,7 +2527,10 @@ class Generator {
     } else {
       this.bakedData.push(
         `/* colour per cell — tiles ${cost.conflictTiles.join(', ')} are painted in more than ` +
-          `one colour, so the colour travels with the cell (${cells * 2} bytes) */`,
+          `one colour, so the colour travels with the cell (${cells * 2} bytes) */`
+      )
+      colorsDecl = this.bakedData.length
+      this.bakedData.push(
         `static const unsigned char bc_lvlcol_${name}[${cells}] = {`,
         byteRows(colors),
         '};'
@@ -2414,7 +2538,7 @@ class Generator {
     }
     this.bakedData.push('')
 
-    this.levelWorld = { id, columns: map.width, model: cost.model }
+    this.levelWorld = { id, columns: map.width, model: cost.model, tilesDecl, colorsDecl }
 
     // Setup: show the first window, then hand the beam to the split. `sei` is what makes
     // the split reliable — a KERNAL interrupt during the raster wait would land the split
@@ -2449,6 +2573,46 @@ class Generator {
     // right. The cast is safe for every level that can fit in RAM (a camera beyond 32767
     // pixels would need a level ~41 KB wide, which cannot be linked into one .prg).
     this.emit(`bc_set_camx((int)(${this.expr(s.args[0])}));`)
+  }
+
+  /**
+   * `SetMapTile x, y, tile[, colour]` → change the WORLD at a pixel position (S1.B3.4).
+   * The counterpart to `TileAt` for a scrolling world, and the reason it exists: it
+   * changes the LEVEL, not just the picture. A key picked up is gone for good — it does
+   * not come back when its column scrolls out of the window and in again.
+   *
+   * It takes PIXELS, in the same world coordinates as `TileAt` and `Sprite`, and works
+   * out the cell itself — the end of the hand-written `(px - SPR_X0) Shr 3` in ITD's
+   * world.crumb. (For a standing tile world without scrolling, `SetTile` stays the one
+   * that speaks cells.)
+   *
+   * THE COLOUR IS THE LEVEL'S OWN ANSWER. If the painting made colour a property of the
+   * TILE (the cheap 256-byte table), the level has nowhere to put a per-cell colour, so
+   * the cell shows that tile's colour and a colour argument is an honest warning rather
+   * than a silent lie that would unravel the moment the column scrolls back in. A level
+   * painted per cell stores it.
+   */
+  private genSetMapTile(s: CommandStmt): void {
+    const world = this.levelWorld
+    if (!world) {
+      this.err(this.M.setMapTileNoWorld(), s)
+      return
+    }
+    const a = s.args
+    if (a.length < 3) {
+      this.err(this.M.setMapTileArgs(), s)
+      return
+    }
+    if (a.length >= 4 && world.model === 'tileTable') {
+      this.err(this.M.setMapTileColourIsTiles(world.id), s, 'warn')
+    }
+    this.usesSetMapTile = true
+    // The shape of the call follows the LEVEL, not the call site: a per-cell level always
+    // carries a colour (0xFF = "leave the cell's colour alone"), a tile-table level never
+    // does, because there is nowhere to put it.
+    const args = [this.expr(a[0]), this.expr(a[1]), this.expr(a[2])]
+    if (world.model === 'perCell') args.push(a.length >= 4 ? this.colorArg(a[3]) : '0xFF')
+    this.emit(`bc_set_map_tile(${args.join(', ')});`)
   }
 
   /**

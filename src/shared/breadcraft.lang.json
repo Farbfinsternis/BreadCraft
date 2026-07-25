@@ -1383,7 +1383,7 @@
       "i18nKey": "cmd.setmaptile",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "later",
+      "since": "phase1",
       "proven": true,
       "requiresMode": "TEXT",
       "transpile": "Ändert die WELT an einer Pixel-Position (wie TileAt): schreibt in den Map-Speicher UND, falls die Zelle gerade im Fenster liegt, ins Screen-/Color-RAM. Referenz _preflight/scroll_t3.c.",
@@ -1407,7 +1407,9 @@
         {
           "name": "color",
           "type": "Color",
-          "i18nKey": "param.setmaptile.color"
+          "i18nKey": "param.setmaptile.color",
+          "optional": true,
+          "$note": "Optional, und nur speicherbar, wenn das Level die Farbe JE ZELLE trägt (im Editor dieselbe Kachel in zwei Farben gemalt). Trägt das Level die Farbe je KACHEL (der billige Normalfall), bekommt die Zelle die Farbe ihrer neuen Kachel und eine Farbangabe wird als Warnung quittiert — sonst würde sie beim Zurückscrollen umkippen."
         }
       ]
     },

@@ -107,6 +107,9 @@ export interface CodegenMessages {
   setCameraXArgs(): string
   cameraNoWorld(word: string): string
   followArgs(): string
+  setMapTileArgs(): string
+  setMapTileNoWorld(): string
+  setMapTileColourIsTiles(id: string): string
   animateTileArgs(): string
   animateTileNoTileset(): string
   animateTileTooMany(max: number): string
@@ -389,6 +392,18 @@ const DE_CODEGEN: CodegenMessages = {
     `Follow erwartet die Sprite-Nummer, der die Kamera folgen soll, z. B. Follow PLAYER — ` +
     `dahinter darf eine Leine stehen (Follow PLAYER, 20 = erst ab 20 Pixel Abstand zur ` +
     `Bildmitte zieht die Welt nach)`,
+  setMapTileArgs: () =>
+    `SetMapTile erwartet x, y, kachel — Pixel in Welt-Koordinaten wie bei TileAt, z. B. ` +
+    `SetMapTile px, py, LEER. Eine Farbe darf dahinter stehen, wenn das Level sie je Zelle trägt`,
+  setMapTileNoWorld: () =>
+    `SetMapTile ändert die WELT — es gibt aber keine: mit UseMap eine Karte betreten ` +
+    `(davor PlayField). Für die stehende Kachel-Welt ohne Scrolling ist SetTile das richtige ` +
+    `Wort (es rechnet in Zellen statt in Pixeln)`,
+  setMapTileColourIsTiles: (id) =>
+    `SetMapTile: in "${id}" gehört die Farbe zur KACHEL — jede Kachel ist dort in genau einer ` +
+    `Farbe gemalt, deshalb spart das Level die Farbe je Zelle (halber Platz). Die Zelle bekommt ` +
+    `die Farbe ihrer neuen Kachel; die angegebene Farbe wird nicht gespeichert. Soll die Farbe ` +
+    `je Zelle zählen, male dieselbe Kachel im Editor in zwei Farben — dann trägt das Level sie mit`,
   animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
   animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   animateTileTooMany: (max) =>
@@ -524,6 +539,18 @@ const EN_CODEGEN: CodegenMessages = {
     `Follow expects the sprite the camera should follow, e.g. Follow PLAYER — a leash may ` +
     `come after it (Follow PLAYER, 20 = the world only follows once he is 20 pixels off ` +
     `the middle of the window)`,
+  setMapTileArgs: () =>
+    `SetMapTile expects x, y, tile — pixels in world coordinates just like TileAt, e.g. ` +
+    `SetMapTile px, py, EMPTY. A colour may follow if the level carries colour per cell`,
+  setMapTileNoWorld: () =>
+    `SetMapTile changes the WORLD — but there is none: enter a map with UseMap (after ` +
+    `PlayField). For a standing tile world without scrolling, SetTile is the right word ` +
+    `(it speaks cells instead of pixels)`,
+  setMapTileColourIsTiles: (id) =>
+    `SetMapTile: in "${id}" colour belongs to the TILE — every tile there is painted in exactly ` +
+    `one colour, which is how the level saves a colour per cell (half the space). The cell gets ` +
+    `its new tile's colour; the colour given here is not stored. To make colour count per cell, ` +
+    `paint the same tile in two colours in the editor — then the level carries it along`,
   animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
   animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
   animateTileTooMany: (max) =>
