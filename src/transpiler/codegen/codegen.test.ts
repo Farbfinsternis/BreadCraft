@@ -1449,6 +1449,91 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
         expect(code).not.toContain('bcsl0')
       })
 
+      // S1.B3.3: the hero rides on the world. $D016 never moves a sprite, so its screen
+      // position is our sum — and the registers may only be written below the band.
+      describe('Follow (the camera hangs on the hero)', () => {
+        it('remembers the sprite in MAP pixels and lets the tail write the VIC', () => {
+          const { code, errors } = gen(world('Sprite 0, 200, 100'), fakeAssets())
+          expect(errors).toEqual([])
+          expect(code).toContain('bc_sprite(0, 200, 100);')
+          // …not the register poke a standing program gets.
+          expect(code).not.toContain('VIC.spr_pos[0].x = (unsigned char)((200) & 0xFF);')
+          expect(code).toMatch(/VIC\.ctrl2 = BC_D016_HUD;[\s\S]*?bc_spr_flush\(\);/)
+        })
+
+        it('turns a world position into a screen one, and hides what is outside', () => {
+          const { code } = gen(world('Sprite 0, 200, 100'), fakeAssets())
+          expect(code).toContain('sx = (int)bc_spr_mx[i] - (int)bc_camx + 24;')
+          expect(code).toContain('if (sx < 0 || sx > 343) continue;')
+          expect(code).toContain('VIC.spr_ena = ena;')
+        })
+
+        it('decides the camera where the hero is known — in the pocket, inside Sprite', () => {
+          const { code, errors } = gen(
+            world('Follow 0, 20\nWhile 1\n  VWait\n  Sprite 0, 200, 100\nWend'),
+            fakeAssets()
+          )
+          expect(errors).toEqual([])
+          expect(code).toContain('bc_follow_spr = 0;')
+          expect(code).toContain('bc_follow_dead = 20;')
+          expect(code).toContain('if (n == bc_follow_spr) bc_follow_now(mx);')
+          // The leash: outside it the world is pulled to the hero's edge, inside it nothing
+          // moves at all.
+          expect(code).toContain('int mid = (int)mx - BC_SPR_MID;')
+          expect(code).toContain('if (mid > cam + (int)bc_follow_dead) cam = mid - (int)bc_follow_dead;')
+          expect(code).toContain('else return;')
+          expect(code).toContain('bc_set_camx(cam);')
+        })
+
+        it('keeps him dead centre when no leash is given', () => {
+          const { code } = gen(world('Follow 0'), fakeAssets())
+          expect(code).toContain('bc_follow_spr = 0;')
+          // …and no leash is set: the only mention is the declaration, which starts at 0.
+          expect(code).not.toMatch(/^\s+bc_follow_dead = /m)
+          // 148 = half the window (160) minus half a 24-pixel sprite.
+          expect(code).toContain('#define BC_SPR_MID   148')
+        })
+
+        it('serves only the slots the program names', () => {
+          const one = gen(world('Sprite 0, 200, 100'), fakeAssets())
+          expect(one.code).toContain('#define BC_SPR_N     1')
+          const three = gen(world('Sprite 2, 200, 100'), fakeAssets())
+          expect(three.code).toContain('#define BC_SPR_N     3')
+          // A slot only known at runtime means all eight have to be considered.
+          const any = gen(world('i.b = 1\nSprite i, 200, 100'), fakeAssets())
+          expect(any.code).toContain('#define BC_SPR_N     8')
+        })
+
+        it('flips a wish, not the register — the tail decides what is really shown', () => {
+          const { code } = gen(world('Sprite 0, 200, 100\nShowSprite 0\nHideSprite 0'), fakeAssets())
+          expect(code).toContain('bc_spr_want |= (1 << (0));')
+          expect(code).toContain('bc_spr_want &= ~(1 << (0));')
+          expect(code).not.toContain('VIC.spr_ena |= (1 << (0));')
+        })
+
+        it('shadows the shape swap too, so a sprite is never half old and half new', () => {
+          const { code } = gen(world('Sprite 0, 200, 100, 1'), fakeAssets())
+          expect(code).toContain('bc_spr_ptr[0] = bc_spr_base[0] + (1);')
+          expect(code).toContain('BC_SPR_PTR[i] = bc_spr_ptr[i];')
+        })
+
+        // A game without a world writes the registers on the spot, exactly as before.
+        it('leaves the sprites of a standing program exactly as they were', () => {
+          const { code } = gen('UseTileset "main"\nSprite 0, 200, 100\nShowSprite 0', fakeAssets())
+          expect(code).toContain('VIC.spr_pos[0].x = (unsigned char)((200) & 0xFF);')
+          expect(code).toContain('VIC.spr_ena |= (1 << (0));')
+          expect(code).not.toContain('bc_sprite')
+          expect(code).not.toContain('bc_spr_flush')
+        })
+
+        it('says plainly that Follow needs a world, and a sprite', () => {
+          const noWorld = gen('UseTileset "main"\nFollow 0', fakeAssets())
+          expect(noWorld.errors.some((e) => /keine Welt zum Anschauen/.test(e))).toBe(true)
+          const noArg = gen(world('Follow'), fakeAssets())
+          expect(noArg.errors.some((e) => /Sprite-Nummer, der die Kamera folgen soll/.test(e))).toBe(true)
+        })
+      })
+
       it('says plainly that a camera needs a world', () => {
         const noWorld = gen('UseTileset "main"\nSetCameraX 8', fakeAssets())
         expect(noWorld.errors.some((e) => /keine Welt zum Anschauen/.test(e))).toBe(true)

@@ -106,6 +106,7 @@ export interface CodegenMessages {
   useMapTwice(active: string, other: string): string
   setCameraXArgs(): string
   cameraNoWorld(word: string): string
+  followArgs(): string
   animateTileArgs(): string
   animateTileNoTileset(): string
   animateTileTooMany(max: number): string
@@ -384,6 +385,10 @@ const DE_CODEGEN: CodegenMessages = {
   cameraNoWorld: (word) =>
     `${word}: es gibt keine Welt zum Anschauen — die Kamera ist das Fenster auf eine Karte, ` +
     `die mit UseMap betreten wird (davor PlayField, damit klar ist, welcher Streifen scrollt)`,
+  followArgs: () =>
+    `Follow erwartet die Sprite-Nummer, der die Kamera folgen soll, z. B. Follow PLAYER — ` +
+    `dahinter darf eine Leine stehen (Follow PLAYER, 20 = erst ab 20 Pixel Abstand zur ` +
+    `Bildmitte zieht die Welt nach)`,
   animateTileArgs: () => `AnimateTile erwartet kachel, erster_frame, anzahl_frames, tempo`,
   animateTileNoTileset: () => `AnimateTile: kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
   animateTileTooMany: (max) =>
@@ -515,6 +520,10 @@ const EN_CODEGEN: CodegenMessages = {
   cameraNoWorld: (word) =>
     `${word}: there is no world to look at — the camera is the window onto a map, and a map ` +
     `is entered with UseMap (after PlayField, so it is clear which strip scrolls)`,
+  followArgs: () =>
+    `Follow expects the sprite the camera should follow, e.g. Follow PLAYER — a leash may ` +
+    `come after it (Follow PLAYER, 20 = the world only follows once he is 20 pixels off ` +
+    `the middle of the window)`,
   animateTileArgs: () => `AnimateTile expects tile, first_frame, frame_count, tempo`,
   animateTileNoTileset: () => `AnimateTile: no tileset active — call UseTileset "…" first`,
   animateTileTooMany: (max) =>

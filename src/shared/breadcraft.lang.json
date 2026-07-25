@@ -1320,7 +1320,7 @@
       "i18nKey": "cmd.follow",
       "frameSafe": true,
       "cost": "cheap",
-      "since": "later",
+      "since": "phase1",
       "proven": true,
       "transpile": "Bindet die Kamera an einen Sprite; threshold = toter Bereich um die Mitte (Pixel), in dem der Spieler läuft, ohne dass die Welt nachzieht. Klemmt an den Map-Enden. Referenz _preflight/scroll_t3.c.",
       "$note": "Die Kamera folgt dem Sprite. threshold ist der tote Bereich um die Bildmitte: erst wenn der Spieler weiter als threshold Pixel von der Mitte weg ist, zieht die Welt nach (Follow PLAYER ohne threshold = immer mittig). An den Level-Enden steht die Welt, der Spieler läuft weiter. Darf umgesetzt werden (anderer Sprite in einer Zwischensequenz).",

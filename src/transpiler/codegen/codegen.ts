@@ -374,9 +374,15 @@ class Generator {
   /** The world entered by `UseMap`. A program has one (a second is an honest error): the
    *  level lives in RAM as one baked block, and swapping it means loading from disk. */
   private levelWorld: { id: string; columns: number; model: ColorModel } | undefined
-  /** `SetCameraX`/`CameraX()` used → emit the camera and the coarse shift that moves the
-   *  band (S1.B3.2). A world that never moves its window pays none of it. */
+  /** `SetCameraX`/`CameraX()`/`Follow` used → emit the camera and the coarse shift that
+   *  moves the band (S1.B3.2). A world that never moves its window pays none of it. */
   private usesCamera = false
+  /** Highest sprite slot the program names, or 8 when a slot is a runtime expression —
+   *  how many slots the frame's tail has to hand to the VIC (S1.B3.3). */
+  private spriteSlotsUsed = 0
+  /** A `Sprite n,x,y,frame` appeared → in a world the pointer swap is shadowed too, so a
+   *  shape can never change while the beam is drawing that sprite. */
+  private usesSpriteFrames = false
 
   // ---- animated tiles (AnimateTile): animated-charset trick ----
   /** AnimateTile used → emit the bc_anim_* registry + tick (cycles a tile's 8 charset
@@ -1033,7 +1039,17 @@ class Generator {
       '}',
       ''
     ]
+    // The window's position is needed by anything that has to know WHERE the world is —
+    // the words that move it, and the sprites that ride on it (S1.B3.3).
+    if (this.usesCamera || this.spriteSlotsUsed > 0) {
+      out.push(
+        '/* ---- where the window stands (S1.B3.2) ---- */',
+        "static unsigned int bc_camx = 0;        /* the window's left edge, in world pixels */",
+        ''
+      )
+    }
     if (this.usesCamera) out.push(...this.cameraDecls(screenAddr, rows, name, colour))
+    if (this.spriteSlotsUsed > 0) out.push(...this.spriteWorldDecls())
     out.push(
       '/* The frame turns over: end the one that was drawing, begin the next. Everything',
       '   the program does between two VWaits runs while the beam draws the band — the',
@@ -1042,6 +1058,14 @@ class Generator {
       '  while (BC_RASTER != BC_SPLIT_OUT) { }',
       '  VIC.ctrl2 = BC_D016_HUD;               /* below the band the picture stands */'
     )
+    if (this.spriteSlotsUsed > 0) {
+      out.push(
+        '  /* Sprites first: $D016 never moves a sprite, so where it appears on screen is',
+        '     our sum — and the registers must be written here, below the band. Writing',
+        '     them while the beam is inside the band would tear the sprite itself. */',
+        '  bc_spr_flush();'
+      )
+    }
     if (this.usesCamera) {
       out.push(
         '  /* THE TAIL. The beam is below the band, so this is the only place the band may',
@@ -1100,7 +1124,6 @@ class Generator {
       '/* ---- the camera and the coarse step (S1.B3.2) ---- */',
       `#define BC_CAM_MAX   ${camMax}   /* rightmost camera pixel — the level's right edge */`,
       '',
-      'static unsigned int bc_camx = 0;        /* the window\'s left edge, in world pixels */',
       'static unsigned int bc_shown_col = 0;   /* map column the band shows right now */',
       'static unsigned int bc_want_col = 0;    /* map column the tail is to make it show */',
       'static signed char  bc_dir_col = 0;     /* columns for the tail to travel: -1 / 0 / +1 */',
@@ -1170,6 +1193,86 @@ class Generator {
       `    bc_edge_c[row] = ${colour};`,
       '    ++_s;',
       '  }',
+      '}',
+      ''
+    ]
+  }
+
+  /**
+   * Sprites inside a world (S1.B3.3). Two things change the moment a program enters a
+   * world with `UseMap`, and both are the honest consequence of one hardware fact:
+   * **`$D016` moves the character matrix, never sprites.**
+   *
+   *   1. A SPRITE'S X IS A MAP PIXEL. It belongs to the level, so it speaks the level's
+   *      coordinates — `Sprite PLAYER, px, py` puts the hero where he stands in the
+   *      WORLD, and BreadCraft works out where that is on the screen
+   *      (`screen = world − CameraX() + 24`). Walk far enough right and he leaves the
+   *      window; the sprite is then switched off rather than wrapped around the screen.
+   *   2. THE REGISTERS ARE WRITTEN IN THE TAIL, below the band. Writing a sprite's
+   *      position while the beam is drawing it tears the sprite in half — so `Sprite`
+   *      only remembers, and `VWait` hands the whole set to the VIC at once.
+   *
+   * `Follow` then needs no loop of its own: the camera is decided the moment the hero's
+   * position is known, i.e. inside `Sprite`, which runs in the pocket where thinking is
+   * free. A frame in which nobody moves the hero simply does not move the camera.
+   */
+  private spriteWorldDecls(): string[] {
+    const n = this.spriteSlotsUsed
+    return [
+      '/* ---- sprites riding on the world (S1.B3.3) ---- */',
+      `#define BC_SPR_N     ${n}   /* slots this program names */`,
+      '#define BC_SPR_MID   148   /* camera at which the hero stands in the middle',
+      '                             (160 = half the window, minus half a 24-pixel sprite) */',
+      '',
+      `static unsigned int bc_spr_mx[${n}];    /* where each sprite stands in the WORLD */`,
+      `static unsigned char bc_spr_my[${n}];`,
+      ...(this.usesSpriteFrames ? [`static unsigned char bc_spr_ptr[${n}];   /* shape block, swapped in the tail */`] : []),
+      'static unsigned char bc_spr_want = 0;   /* which sprites the program wants shown */',
+      '',
+      ...(this.usesCamera
+        ? [
+            'static unsigned char bc_follow_spr = 0xFF;  /* the sprite the camera hangs on */',
+            'static unsigned int bc_follow_dead = 0;     /* how far it may stray from the middle */',
+            '',
+            '/* The camera reacts where the hero is known: in the pocket, one frame before it',
+            '   matters. Inside the dead zone the world stands still and he walks; outside it,',
+            '   the world is pulled along until he is back on its edge. */',
+            'static void bc_follow_now(unsigned int mx) {',
+            '  int mid = (int)mx - BC_SPR_MID;       /* the camera that would centre him */',
+            '  int cam = (int)bc_camx;',
+            '  if (mid > cam + (int)bc_follow_dead) cam = mid - (int)bc_follow_dead;',
+            '  else if (mid < cam - (int)bc_follow_dead) cam = mid + (int)bc_follow_dead;',
+            '  else return;                          /* still on his leash: nothing moves */',
+            '  bc_set_camx(cam);',
+            '}',
+            ''
+          ]
+        : []),
+      '/* `Sprite n, x, y` in a world: remember, decide, and let the tail do the writing. */',
+      'static void bc_sprite(unsigned char n, unsigned int mx, unsigned char my) {',
+      '  bc_spr_mx[n] = mx;',
+      '  bc_spr_my[n] = my;',
+      ...(this.usesCamera ? ['  if (n == bc_follow_spr) bc_follow_now(mx);'] : []),
+      '}',
+      '',
+      '/* The tail hands the whole set to the VIC at once. A sprite whose world position is',
+      "   outside the window is switched OFF — the VIC's X is 9 bits and cannot express",
+      '   "left of the screen", so it would otherwise reappear on the wrong side. */',
+      'static void bc_spr_flush(void) {',
+      '  unsigned char i, ena = 0, hi = 0;',
+      '  int sx;',
+      '  for (i = 0; i < BC_SPR_N; ++i) {',
+      '    if (!(bc_spr_want & (1 << i))) continue;',
+      '    sx = (int)bc_spr_mx[i] - (int)bc_camx + 24;   /* 24 = the first visible pixel */',
+      '    if (sx < 0 || sx > 343) continue;',
+      '    VIC.spr_pos[i].x = (unsigned char)sx;',
+      '    VIC.spr_pos[i].y = bc_spr_my[i];',
+      ...(this.usesSpriteFrames ? ['    BC_SPR_PTR[i] = bc_spr_ptr[i];'] : []),
+      '    if (sx > 255) hi |= (1 << i);',
+      '    ena |= (1 << i);',
+      '  }',
+      '  VIC.spr_hi_x = hi;',
+      '  VIC.spr_ena = ena;',
       '}',
       ''
     ]
@@ -1800,6 +1903,9 @@ class Generator {
       case 'setcamerax':
         this.genSetCameraX(s)
         break
+      case 'follow':
+        this.genFollow(s)
+        break
       case 'settile':
         this.genSetTile(s)
         break
@@ -2346,6 +2452,32 @@ class Generator {
   }
 
   /**
+   * `Follow sprite[, threshold]` → hang the camera on a sprite (S1.B3.3). Said ONCE, not
+   * every frame: from then on the world pulls itself along whenever that sprite moves.
+   *
+   * `threshold` is the leash — the dead zone around the middle of the window in which the
+   * hero may walk without the world following. `Follow PLAYER` (no threshold) keeps him
+   * dead centre; `Follow PLAYER, 20` lets him wander 20 pixels either way first, which is
+   * what makes a platformer feel less like a treadmill. At the level's ends the camera
+   * clamps and the hero simply walks on — that is `SetCameraX`'s doing, and it is the
+   * moment a scroller becomes a level.
+   */
+  private genFollow(s: CommandStmt): void {
+    if (!this.levelWorld) {
+      this.err(this.M.cameraNoWorld('Follow'), s)
+      return
+    }
+    if (s.args.length < 1) {
+      this.err(this.M.followArgs(), s)
+      return
+    }
+    this.usesCamera = true
+    this.noteSpriteSlot(s.args[0])
+    this.emit(`bc_follow_spr = ${this.expr(s.args[0])};`)
+    if (s.args.length >= 2) this.emit(`bc_follow_dead = ${this.expr(s.args[1])};`)
+  }
+
+  /**
    * `SetTile col, row, tile, color` → poke one cell: the tile number into Screen-RAM
    * and the colour into Color-RAM at offset row*40+col (Sprachdef §E, the proven
    * single-cell write of _preflight/sokoban_push.c). Multicolor-text needs bit 3 set
@@ -2425,6 +2557,7 @@ class Generator {
     const a = s.args
     // Off-variant: `Sprite n, OFF` — 2nd arg is the OFF constant, not an x value.
     if (a.length === 2 && a[1].kind === 'ConstantRef' && a[1].name.toUpperCase() === 'OFF') {
+      this.noteSpriteSlot(a[0])
       this.emitSpriteEnable(this.expr(a[0]), false)
       return
     }
@@ -2434,13 +2567,20 @@ class Generator {
       return
     }
     this.usesSprites = true
+    this.noteSpriteSlot(a[0])
     const n = this.expr(a[0])
     const x = this.expr(a[1])
     const y = this.expr(a[2])
-    // Position; the 9th X bit (X >= 256) is carried into spr_hi_x bit n by hand.
-    this.emit(`VIC.spr_pos[${n}].x = (unsigned char)((${x}) & 0xFF);`)
-    this.emit(`if ((${x}) & 0x100) VIC.spr_hi_x |= (1 << (${n})); else VIC.spr_hi_x &= ~(1 << (${n}));`)
-    this.emit(`VIC.spr_pos[${n}].y = (${y});`)
+    if (this.levelWorld) {
+      // In a world the position is a MAP pixel and the VIC is written in the frame's
+      // tail (S1.B3.3): remember it, and let `Follow` decide the camera from it.
+      this.emit(`bc_sprite(${n}, ${x}, ${y});`)
+    } else {
+      // Position; the 9th X bit (X >= 256) is carried into spr_hi_x bit n by hand.
+      this.emit(`VIC.spr_pos[${n}].x = (unsigned char)((${x}) & 0xFF);`)
+      this.emit(`if ((${x}) & 0x100) VIC.spr_hi_x |= (1 << (${n})); else VIC.spr_hi_x &= ~(1 << (${n}));`)
+      this.emit(`VIC.spr_pos[${n}].y = (${y});`)
+    }
     // 4th param `frame` (SA4): bend the sprite pointer to that frame's block — one byte
     // written, no compare, no tick. Setting it every call is cheaper than a "changed?"
     // guard (Sprite is called every frame to position anyway). Frame is NOT clamped (open
@@ -2449,6 +2589,7 @@ class Generator {
     // 4-arg Sprite appears without a UseSprite (then bc_spr_base is 0 → block 0 + frame).
     if (a.length >= 4) {
       this.usesSpriteData = true
+      this.usesSpriteFrames = true
       const frame = this.expr(a[3])
       // Best-effort warn: constant slot + constant frame past the slot's baked frame count.
       if (a[0].kind === 'NumberLit' && a[3].kind === 'NumberLit') {
@@ -2459,7 +2600,13 @@ class Generator {
           this.err(this.M.spriteFrameTooHigh(slotNum, frameNum, count), s, 'warn')
         }
       }
-      this.emit(`BC_SPR_PTR[${n}] = bc_spr_base[${n}] + (${frame});`)
+      // In a world the shape swap is shadowed like the position: a pointer changed while
+      // the beam is inside the sprite would show it half old, half new for one frame.
+      this.emit(
+        this.levelWorld
+          ? `bc_spr_ptr[${n}] = bc_spr_base[${n}] + (${frame});`
+          : `BC_SPR_PTR[${n}] = bc_spr_base[${n}] + (${frame});`
+      )
     }
   }
 
@@ -2471,14 +2618,36 @@ class Generator {
       this.emit(`/* ${s.name}: fehlende Sprite-Nummer */`)
       return
     }
+    this.noteSpriteSlot(a[0])
     this.emitSpriteEnable(this.expr(a[0]), on)
   }
 
-  /** Emit the enable-bit poke for sprite n (shared by ShowSprite/HideSprite/Sprite n,OFF). */
+  /**
+   * Remember how many sprite slots the frame's tail has to serve in a world (S1.B3.3).
+   * A constant slot raises the count to just past it; a slot that is only known at
+   * runtime means all eight have to be considered — honest, and it costs the tail time,
+   * which is the sort of thing the perf bar is for.
+   */
+  private noteSpriteSlot(e: Expr | undefined): void {
+    if (!this.levelWorld) return
+    if (e && e.kind === 'NumberLit') {
+      const slot = Number(e.raw)
+      if (Number.isInteger(slot) && slot >= 0 && slot < 8) {
+        this.spriteSlotsUsed = Math.max(this.spriteSlotsUsed, slot + 1)
+        return
+      }
+    }
+    this.spriteSlotsUsed = 8
+  }
+
+  /** Emit the enable-bit poke for sprite n (shared by ShowSprite/HideSprite/Sprite n,OFF).
+   *  In a world it flips a WISH instead of the register: the tail decides what the VIC
+   *  actually gets, because a sprite outside the window has to stay dark (S1.B3.3). */
   private emitSpriteEnable(n: string, on: boolean): void {
     this.usesSprites = true
-    if (on) this.emit(`VIC.spr_ena |= (1 << (${n}));`)
-    else this.emit(`VIC.spr_ena &= ~(1 << (${n}));`)
+    const reg = this.levelWorld ? 'bc_spr_want' : 'VIC.spr_ena'
+    if (on) this.emit(`${reg} |= (1 << (${n}));`)
+    else this.emit(`${reg} &= ~(1 << (${n}));`)
   }
 
   /**
@@ -2551,6 +2720,7 @@ class Generator {
 
     this.usesSprites = true
     this.usesSpriteData = true
+    this.noteSpriteSlot(a[0])
     const slot = this.expr(a[0])
     const dataName = `sprite_${safeAssetName(id)}`
     // Bake EVERY frame, not just frame 0 (SA3): all frames must live in RAM at once so the

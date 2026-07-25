@@ -51,6 +51,18 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   das **kein einziges Byte**. Auf echtem C64 (VICE) nachgemessen: das Band zeigt in jedem Moment
   einen echten, zusammenhängenden Ausschnitt Deines Levels, Kacheln und Farben im Gleichschritt,
   hin **und** zurück, während Punktestand und Text darüber und darunter bombenfest stehen.
+- **`Follow` — die Kamera hängt sich an Deinen Helden.** Einmal `Follow PLAYER, 20` gesagt, und
+  die Welt zieht von selbst nach, sobald er sich mehr als 20 Pixel aus der Bildmitte
+  herausbewegt. Die Zahl ist seine **Leine**: ohne sie bleibt er starr in der Mitte kleben, mit
+  ihr darf er ein Stück laufen, bevor die Landschaft folgt — das ist der Unterschied zwischen
+  einem Laufband und einem Level. **An den Levelenden bleibt die Welt stehen und er läuft
+  weiter**, so wie es sich gehört. Zwei Dinge ändern sich damit in einer scrollenden Welt, beide
+  zu Deinen Gunsten: **die Position eines Sprites ist jetzt eine Stelle in der WELT**, nicht auf
+  dem Bildschirm (`Sprite PLAYER, px, py` setzt ihn dorthin, wo er im Level steht — wo das gerade
+  auf dem Schirm ist, rechnet BreadCraft aus), und wer aus dem Fenster hinausläuft, verschwindet
+  sauber, statt auf der falschen Seite wieder aufzutauchen. Nachgemessen auf echtem C64 (VICE):
+  während die Kamera frei ist, hängt der Taucher auf den Pixel genau an seiner Leine; an beiden
+  Levelenden steht die Welt still, während er weitergeht.
 - **Der Level-Zähler sagt jetzt, warum Dein Level kostet, was es kostet.** Solange jede Kachel
   *eine* Farbe behält, genügt dem C64 eine kleine Farbtabelle — ein Bildschirm Level kostet rund
   400 Byte. Malst Du dieselbe Kachel in zwei Farben (der C64 erlaubt das, die Farbe sitzt in
