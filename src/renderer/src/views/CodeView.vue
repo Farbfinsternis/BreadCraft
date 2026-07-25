@@ -2,11 +2,13 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useProjectStore } from '@renderer/stores/project'
 import { useOutputStore } from '@renderer/stores/output'
+import { useUiStore } from '@renderer/stores/ui'
 import { markersForFile } from '@renderer/monaco/markers'
 import MonacoEditor from '@renderer/components/MonacoEditor.vue'
 
 const project = useProjectStore()
 const output = useOutputStore()
+const ui = useUiStore()
 
 // Build diagnostics that live in the file currently on screen (B3.T4). The editor is
 // single-model, so we only ever hand it the markers for the active file.
@@ -15,6 +17,9 @@ const activeMarkers = computed(() =>
 )
 
 function onKeydown(e: KeyboardEvent): void {
+  // A dialog owns the keyboard while it is up: a Ctrl+S that still fired here
+  // would save the OLD file behind an open "save as…" (user, 2026-07-25).
+  if (ui.modalOpen) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void project.saveActive()

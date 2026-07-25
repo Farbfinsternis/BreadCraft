@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useUiStore } from '@renderer/stores/ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePaletteStore, C64_PALETTE } from '../stores/palette'
@@ -32,6 +33,7 @@ const charset = useCharsetStore()
 const tilemap = useTilemapStore()
 const project = useProjectStore()
 const mapview = useMapViewStore()
+const ui = useUiStore()
 
 const SCOPE = 'tilemap'
 
@@ -566,6 +568,9 @@ function saveAs(): void {
 // Space arms the hand: hold it and a drag pans instead of painting (the second road in
 // for anyone without a middle mouse button). It must not also scroll the panel.
 function onKeydown(e: KeyboardEvent): void {
+  // A dialog owns the keyboard while it is up: a Ctrl+S that still fired here
+  // would save the OLD file behind an open "save as…" (user, 2026-07-25).
+  if (ui.modalOpen) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void tilemap.save()

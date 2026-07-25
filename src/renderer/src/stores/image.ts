@@ -105,13 +105,15 @@ export const useImageStore = defineStore('image', () => {
 
   /** Switch the editor to another image file (save pending edits first, then load). */
   async function switchAsset(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
+    // NO silent save. Saving is EXPLICIT (ASSET_DOCUMENTS.md §2.5), and writing the
+    // file the user is LEAVING is how an emptied map once overwrote a real level
+    // (user, 2026-07-25). Unsaved work is discarded here — the caller (project
+    // store) asks first, so nothing is thrown away or written behind anyone's back.
     await loadForProject(dir, rel)
   }
 
   /** Create a NEW blank image file at `rel` and bind to it (registers it in .bread). */
   async function createBlank(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
     pixels.value = blank(background())

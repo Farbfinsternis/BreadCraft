@@ -182,6 +182,9 @@ const islandState = computed<'ok' | 'warn' | 'over'>(() => {
 })
 
 function onKeydown(e: KeyboardEvent): void {
+  // A dialog owns the keyboard while it is up: a Ctrl+S that still fired here
+  // would save the OLD file behind an open "save as…" (user, 2026-07-25).
+  if (ui.modalOpen) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void sprite.save()

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useUiStore } from '@renderer/stores/ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -13,6 +14,7 @@ import { useProjectStore } from '../stores/project'
 const { t } = useI18n()
 const palette = usePaletteStore()
 const project = useProjectStore()
+const ui = useUiStore()
 
 // Slots shown follow the project's graphics mode (PALETTE_EDITOR.md §4): hi-res
 // uses only the background; multicolor uses all three shared registers.
@@ -21,6 +23,9 @@ const isHires = computed(() => project.graphicsMode === 'TEXT_HIRES')
 
 // Ctrl/Cmd+S saves the palette (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
 function onKeydown(e: KeyboardEvent): void {
+  // A dialog owns the keyboard while it is up: a Ctrl+S that still fired here
+  // would save the OLD file behind an open "save as…" (user, 2026-07-25).
+  if (ui.modalOpen) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
     void palette.save()

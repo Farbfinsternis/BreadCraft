@@ -2,6 +2,9 @@
   "dialog.confirm": "Anlegen",
   "dialog.cancel": "Abbrechen",
   "dialog.ok": "Verstanden",
+  "asset.unsaved.title": "Ungespeicherte Änderungen",
+  "asset.unsaved.message": "An dem, was gerade offen ist, hast Du seit dem letzten Speichern gearbeitet. Wenn Du jetzt etwas anderes öffnest, ist diese Arbeit weg — gespeichert wird nur, wenn Du es sagst.",
+  "asset.unsaved.discard": "Verwerfen und wechseln",
   "dialog.error": "Das ging schief",
 
   "newproject.title": "Ein neues Projekt entsteht",

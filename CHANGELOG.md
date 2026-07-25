@@ -7,6 +7,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben
+- **Beim Wechseln zu einer anderen Datei wurde die alte still gespeichert — das ist vorbei.**
+  Wer eine Karte geleert und dann eine andere geöffnet hat, dem schrieb der Editor die leere
+  Karte klammheimlich über die alte. Genau so ist einem Nutzer sein Level abhandengekommen.
+  Ab jetzt gilt die Regel wieder, auf der die Editoren gebaut sind: **gespeichert wird nur,
+  wenn Du es sagst.** Hast Du ungespeicherte Arbeit und öffnest etwas anderes, wird gefragt —
+  und was auf der Platte liegt, bleibt unangetastet, bis Du auf Speichern drückst. (Gilt für
+  Karten, Zeichensätze, Sprites, Paletten und Bilder gleichermaßen.)
+- **Tastenkürzel halten still, solange ein Dialog offen ist.** Ein Strg+S, das mitten im
+  „Speichern unter…"-Fenster noch durchschlug, speicherte die *alte* Datei — also genau das,
+  was man mit „Speichern unter" gerade vermeiden wollte. Solange ein Fenster offen ist, gehört
+  ihm die Tastatur.
+- **„Map leeren" gibt die Bildschirme zurück.** Eine geleerte Karte behielt ihre Breite: ein
+  leeres Level, das den C64 weiter für fünf Bildschirme zahlen ließ und im Editor aussah wie
+  eine frische Karte. Jetzt ist nach dem Leeren wieder genau ein Bildschirm da.
+
 ### Hinzugefügt
 - **Die Wörter fürs Scrollen stehen fest — sichtbar, aber noch als „geplant" markiert.** In der
   Referenz und im Highlighting tauchen sechs neue Wörter für seitwärts scrollende Level auf:

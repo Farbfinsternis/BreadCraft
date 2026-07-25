@@ -39,6 +39,24 @@ describe('tilemap store: clear() / empty default', () => {
     expect(tm.version).toBeGreaterThan(v)
   })
 
+  // User, 2026-07-25: emptying a level must hand back the screens too. A blank map that
+  // is still five screens wide charges the C64 for five screens of nothing, and looks in
+  // the editor exactly like a fresh one — "empty" has to mean empty in both senses.
+  it('clear() gives the screens back: a wide level is one screen again', () => {
+    const tm = useTilemapStore()
+    tm.growTo(MAP_W * 3)
+    tm.setTile(MAP_W * 2 + 5, 4, 130, 5)
+    expect(tm.width).toBe(MAP_W * 3)
+
+    tm.clear()
+
+    expect(tm.width).toBe(MAP_W)
+    expect(tm.height).toBe(MAP_H)
+    expect(tm.tiles.length).toBe(CELLS)
+    expect(tm.tiles.every((t) => t === EMPTY_TILE)).toBe(true)
+    expect(tm.dirty).toBe(true)
+  })
+
   it('out-of-bounds reads as empty (Space), not slot 0', () => {
     const tm = useTilemapStore()
     expect(tm.tileAt(-1, 0)).toBe(EMPTY_TILE)

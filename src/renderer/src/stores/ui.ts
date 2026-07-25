@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { Region } from '@shared/ipc'
 
@@ -165,6 +165,14 @@ export const useUiStore = defineStore(
       })
     }
 
+    /**
+     * Is a dialog on screen? An editor's global keyboard shortcuts must stand down while
+     * one is (user, 2026-07-25): a Ctrl+S that still fires while the "save as…" dialog is
+     * open writes the OLD file — exactly the surprise that word was chosen to avoid. A
+     * dialog owns the keyboard for as long as it is up.
+     */
+    const modalOpen = computed(() => prompt.value !== null || saveAs.value !== null || newProject.value !== null)
+
     /** Confirm the prompt with a value (the modal calls this). */
     function resolvePrompt(value: string): void {
       const r = resolver
@@ -262,6 +270,7 @@ export const useUiStore = defineStore(
       prompt,
       newProject,
       saveAs,
+      modalOpen,
       collapse,
       expand,
       setSize,

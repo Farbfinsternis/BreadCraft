@@ -132,13 +132,15 @@ export const useCharsetStore = defineStore('charset', () => {
 
   /** Switch the editor to another charset file (P2.T0): save pending, then load. */
   async function switchAsset(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
+    // NO silent save. Saving is EXPLICIT (ASSET_DOCUMENTS.md §2.5), and writing the
+    // file the user is LEAVING is how an emptied map once overwrote a real level
+    // (user, 2026-07-25). Unsaved work is discarded here — the caller (project
+    // store) asks first, so nothing is thrown away or written behind anyone's back.
     await loadForProject(dir, rel)
   }
 
   /** Create a NEW empty charset file at `rel` and bind to it (P2.T0). */
   async function createBlank(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
     for (const key of Object.keys(chars)) delete chars[Number(key)]

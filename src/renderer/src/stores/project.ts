@@ -132,12 +132,34 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   /**
+   * Leaving an editor that holds unsaved work: ask, never decide (2026-07-25).
+   *
+   * This used to save the file the user was LEAVING, silently. That is how an emptied
+   * map came to overwrite a real level — and it contradicts the one rule the asset
+   * editors are built on: saving is EXPLICIT (ASSET_DOCUMENTS.md §2.5). Nothing is
+   * written that was not asked for, and nothing is thrown away without a plain question.
+   */
+  async function mayLeave(store: { dirty: boolean }): Promise<boolean> {
+    if (!store.dirty) return true
+    const { useUiStore } = await import('./ui')
+    const { t } = await import('@renderer/i18n')
+    const ui = useUiStore()
+    return ui.confirm({
+      title: t('asset.unsaved.title'),
+      message: t('asset.unsaved.message'),
+      confirmLabel: t('asset.unsaved.discard')
+    })
+  }
+
+  /**
    * Open an existing asset in its editor (P2.T0): switch the matching store to that
-   * rel (saving any pending edit first), mark it active. The caller routes the view.
+   * rel, mark it active. Unsaved work in the editor being left is the user's to keep
+   * or drop — mayLeave asks. The caller routes the view.
    */
   async function openAsset(kind: AssetEditorKind, rel: string): Promise<void> {
     if (!dir.value) return
     const store = await assetStore(kind)
+    if (!(await mayLeave(store))) return
     await store.switchAsset(dir.value, rel)
     activeAsset[kind] = rel
   }
@@ -150,6 +172,7 @@ export const useProjectStore = defineStore('project', () => {
   async function createAsset(kind: AssetEditorKind, rel: string): Promise<void> {
     if (!dir.value) return
     const store = await assetStore(kind)
+    if (!(await mayLeave(store))) return
     await store.createBlank(dir.value, rel)
     await refreshAssets()
     activeAsset[kind] = rel
@@ -161,6 +184,8 @@ export const useProjectStore = defineStore('project', () => {
     createBlank(dir: string, rel: string): Promise<void>
     saveTo(dir: string, rel: string): Promise<void>
     currentRel(): string
+    /** Unsaved work in this editor — the reason to ask before leaving it. */
+    readonly dirty: boolean
   }> {
     if (kind === 'sprite') return (await import('./sprite')).useSpriteStore()
     if (kind === 'charset') return (await import('./charset')).useCharsetStore()

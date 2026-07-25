@@ -159,13 +159,15 @@ export const usePaletteStore = defineStore('palette', () => {
   /** Switch to another palette file (P2.T0): save pending, then load. (The project
    *  palette is normally singular, but the explorer treats all kinds uniformly.) */
   async function switchAsset(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
+    // NO silent save. Saving is EXPLICIT (ASSET_DOCUMENTS.md §2.5), and writing the
+    // file the user is LEAVING is how an emptied map once overwrote a real level
+    // (user, 2026-07-25). Unsaved work is discarded here — the caller (project
+    // store) asks first, so nothing is thrown away or written behind anyone's back.
     await loadForProject(dir, rel)
   }
 
   /** Create a NEW palette file at `rel` (current colours) and bind to it (P2.T0). */
   async function createBlank(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
     dirty.value = false

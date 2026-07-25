@@ -135,14 +135,16 @@ export const useSpriteStore = defineStore('sprite', () => {
   /** Switch the editor to another sprite file (P2.T0): save pending edits, then load
    *  the new rel. The explorer calls this when the user picks a different sprite. */
   async function switchAsset(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
+    // NO silent save. Saving is EXPLICIT (ASSET_DOCUMENTS.md §2.5), and writing the
+    // file the user is LEAVING is how an emptied map once overwrote a real level
+    // (user, 2026-07-25). Unsaved work is discarded here — the caller (project
+    // store) asks first, so nothing is thrown away or written behind anyone's back.
     await loadForProject(dir, rel)
   }
 
   /** Create a NEW empty sprite file at `rel` (one blank frame) and bind to it (P2.T0).
    *  Writing registers it in the .bread manifest (writeAsset appends). */
   async function createBlank(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
     frames.splice(0, frames.length)

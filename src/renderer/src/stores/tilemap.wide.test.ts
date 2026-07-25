@@ -131,17 +131,13 @@ describe('tilemap store: a level wider than the screen', () => {
     expect(tm.tileAt(MAP_W * 3 - 1, 0)).toBe(55)
   })
 
-  it('keeps the width when the map is emptied and when it is saved', async () => {
+  // The width a level was PAINTED to survives a save (that is what makes a wide level a
+  // file property). Emptying it is the deliberate exception — see below.
+  it('keeps the painted width when the map is saved', async () => {
     const { json, markCol, markRow } = wideMapJson()
     const { written } = stubAssets(json)
     const tm = useTilemapStore()
     await tm.loadForProject('C:/proj', 'assets/level01.tilemap')
-
-    // clear() empties the level, it does not shrink it back to one screen.
-    tm.clear()
-    expect(tm.width).toBe(WIDE_W)
-    expect(tm.tiles.length).toBe(WIDE_W * MAP_H)
-    expect(tm.tileAt(markCol, markRow)).toBe(EMPTY_TILE)
 
     tm.setTile(markCol, markRow, 42, 6)
     await tm.save()
@@ -150,5 +146,22 @@ describe('tilemap store: a level wider than the screen', () => {
     expect(back.width).toBe(WIDE_W)
     expect(back.height).toBe(MAP_H)
     expect(back.layers[0].tiles[markRow * WIDE_W + markCol]).toBe(42)
+  })
+
+  // Changed on the user's call, 2026-07-25 (it used to keep the width): emptying a level
+  // hands the screens back too. A blank five-screen map charges the C64 for five screens
+  // of nothing and is indistinguishable from a fresh map in the editor.
+  it('gives the screens back when the map is emptied', async () => {
+    const { json, markCol, markRow } = wideMapJson()
+    stubAssets(json)
+    const tm = useTilemapStore()
+    await tm.loadForProject('C:/proj', 'assets/level01.tilemap')
+    expect(tm.width).toBe(WIDE_W)
+
+    tm.clear()
+
+    expect(tm.width).toBe(MAP_W)
+    expect(tm.tiles.length).toBe(MAP_W * MAP_H)
+    expect(tm.tileAt(markCol % MAP_W, markRow)).toBe(EMPTY_TILE)
   })
 })

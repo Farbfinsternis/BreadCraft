@@ -2,6 +2,9 @@
   "dialog.confirm": "Create",
   "dialog.cancel": "Cancel",
   "dialog.ok": "Got it",
+  "asset.unsaved.title": "Unsaved changes",
+  "asset.unsaved.message": "You have worked on what is open since the last save. Opening something else now throws that work away — nothing is ever saved unless you say so.",
+  "asset.unsaved.discard": "Discard and switch",
   "dialog.error": "That went sideways",
 
   "newproject.title": "A new project takes shape",

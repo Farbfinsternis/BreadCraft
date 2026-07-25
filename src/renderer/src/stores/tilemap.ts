@@ -210,13 +210,15 @@ export const useTilemapStore = defineStore('tilemap', () => {
 
   /** Switch the editor to another map file (P2.T0): save pending, then load. */
   async function switchAsset(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
+    // NO silent save. Saving is EXPLICIT (ASSET_DOCUMENTS.md §2.5), and writing the
+    // file the user is LEAVING is how an emptied map once overwrote a real level
+    // (user, 2026-07-25). Unsaved work is discarded here — the caller (project
+    // store) asks first, so nothing is thrown away or written behind anyone's back.
     await loadForProject(dir, rel)
   }
 
   /** Create a NEW empty map file at `rel` and bind to it (P2.T0). */
   async function createBlank(dir: string, rel: string): Promise<void> {
-    if (dirty.value) await save()
     projectDir = dir
     assetRel = rel
     resetTo(NEW_MAP_W, NEW_MAP_H)
@@ -229,8 +231,11 @@ export const useTilemapStore = defineStore('tilemap', () => {
    *  the default Color-RAM colour. Destructive and there is no undo yet, so the editor
    *  guards this behind a confirm dialog. A new array identity triggers a full redraw. */
   function clear(): void {
-    // Empties the map, does NOT resize it — a five-screen level stays five screens wide.
-    resetTo(width.value, height.value)
+    // Back to ONE screen, not just blank cells (user, 2026-07-25). An emptied map that
+    // stays five screens wide is a level with nothing in it that still charges the C64
+    // for five screens of RAM — and it looks, in the editor, exactly like a fresh map.
+    // "Empty" has to mean empty in both senses, or the screen counter lies.
+    resetTo(NEW_MAP_W, height.value)
     dirty.value = true
   }
 
