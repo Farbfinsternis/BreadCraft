@@ -41,7 +41,8 @@ import { levelCost, type ColorModel } from '@shared/level-cost'
 import { planMemory, type MemoryMap } from './memory-map'
 import { messages, DEFAULT_LOCALE, type CodegenMessages } from '../messages'
 import { seedFontRegion } from '@shared/font-slots'
-import type { Locale } from '@shared/ipc'
+import type { EngineCost } from './perf-estimate'
+import type { Locale, LevelInfo } from '@shared/ipc'
 
 /** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
  *  The project palette stores indices; the generated C reads as named colours. */
@@ -115,6 +116,13 @@ export interface CodeGenResult {
   highBase: number | null
   /** Top of the high BSS pool ($C800). */
   highCeiling: number
+  /** What the emitted scrolling engine adds to a frame (S1.B4) — band height, whether the
+   *  window travels, sprite slots the tail writes. null for a program without `UseMap`;
+   *  the perf estimate then talks about the program's own code alone. */
+  engine: EngineCost | null
+  /** What the baked level costs in RAM (S1.B4), or null without `UseMap` — so the RAM bar
+   *  can name the world's bytes instead of leaving them anonymous inside a full pool. */
+  level: LevelInfo | null
 }
 
 /**
@@ -374,7 +382,17 @@ class Generator {
   /** The world entered by `UseMap`. A program has one (a second is an honest error): the
    *  level lives in RAM as one baked block, and swapping it means loading from disk. */
   private levelWorld:
-    | { id: string; columns: number; model: ColorModel; tilesDecl: number; colorsDecl: number }
+    | {
+        id: string
+        columns: number
+        model: ColorModel
+        /** Band rows stored per column, and the bytes the whole level occupies — reported
+         *  out so the RAM bar can name the world's share of a full pool (S1.B4). */
+        bandRows: number
+        bytes: number
+        tilesDecl: number
+        colorsDecl: number
+      }
     | undefined
   /** `SetMapTile` used → the baked level stops being `const`: the program changes its own
    *  world, and the change has to survive the column scrolling out and back (S1.B3.4). */
@@ -1011,7 +1029,28 @@ class Generator {
       linkerConfig: map.cfg,
       mainCeiling: map.mainCeiling,
       highBase: map.highBase,
-      highCeiling: map.highCeiling
+      highCeiling: map.highCeiling,
+      // What the scrolling engine costs, from the side that KNOWS (S1.B4): the band's
+      // height, whether the window travels, how many sprite slots the tail writes. The
+      // perf estimate reads these instead of guessing them a second time from the AST,
+      // and the RAM bar gets the level's byte figure the bake actually produced.
+      engine: this.levelWorld
+        ? {
+            usesCamera: this.usesCamera,
+            bandRows: this.levelWorld.bandRows,
+            spriteSlots: this.spriteSlotsUsed,
+            colorModel: this.levelWorld.model
+          }
+        : null,
+      level: this.levelWorld
+        ? {
+            id: this.levelWorld.id,
+            columns: this.levelWorld.columns,
+            bandRows: this.levelWorld.bandRows,
+            bytes: this.levelWorld.bytes,
+            model: this.levelWorld.model
+          }
+        : null
     }
   }
 
@@ -2538,7 +2577,15 @@ class Generator {
     }
     this.bakedData.push('')
 
-    this.levelWorld = { id, columns: map.width, model: cost.model, tilesDecl, colorsDecl }
+    this.levelWorld = {
+      id,
+      columns: map.width,
+      model: cost.model,
+      bandRows,
+      bytes: cost.bytes,
+      tilesDecl,
+      colorsDecl
+    }
 
     // Setup: show the first window, then hand the beam to the split. `sei` is what makes
     // the split reliable — a KERNAL interrupt during the raster wait would land the split

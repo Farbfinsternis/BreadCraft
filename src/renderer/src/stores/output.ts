@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { BuildLogLine, RamInfo, PerfInfo } from '@shared/ipc'
+import type { BuildLogLine, RamInfo, PerfInfo, LevelInfo } from '@shared/ipc'
 
 /**
  * The Output console's line buffer. Deliberately NOT persisted (build/run logs
@@ -15,6 +15,9 @@ export const useOutputStore = defineStore('output', () => {
   const ram = ref<RamInfo | null>(null)
   /** Estimated per-frame CPU cost from the most recent build (a guess from the code). */
   const perf = ref<PerfInfo | null>(null)
+  /** The scrolling level the most recent build baked, or null when it baked none — lets
+   *  the RAM bar say how much of the RAM is the world (S1.B4). */
+  const level = ref<LevelInfo | null>(null)
 
   function clear(): void {
     lines.value = []
@@ -28,5 +31,5 @@ export const useOutputStore = defineStore('output', () => {
     lines.value.push(...more)
   }
 
-  return { lines, busy, ram, perf, clear, append, appendMany }
+  return { lines, busy, ram, perf, level, clear, append, appendMany }
 })

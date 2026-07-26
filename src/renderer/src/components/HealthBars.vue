@@ -9,6 +9,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { RamPool } from '@shared/ipc'
+import { SCREEN_W } from '@shared/asset-formats'
+import { levelScreens, bytesPerScreen } from '@renderer/views/level-budget'
 import { useOutputStore } from '@renderer/stores/output'
 import { useProjectStore } from '@renderer/stores/project'
 
@@ -39,10 +41,37 @@ const hex = (addr: number): string => '$' + addr.toString(16).toUpperCase()
 const fillClassOf = (p: RamPool): string =>
   p.state === 'over' ? 'hb-fill-over' : p.state === 'warn' ? 'hb-fill-warn' : 'hb-fill-arc'
 
+// The scrolling level's share of the low pool (S1.B4). A wide world is usually the
+// biggest single thing in a C64 game's RAM, so the bar NAMES it: "of that, level: 8 KB,
+// 5 screens" answers "what do I shorten?" where a bare percentage only says "it's full".
+const level = computed(() => output.level)
+const levelKb = computed(() => (level.value ? (level.value.bytes / 1024).toFixed(1) : '0'))
+// Screens = the unit a level designer thinks in — the same reckoning the map editor's
+// counter uses while painting (views/level-budget), so both tell one story.
+const levelScreenCount = computed(() =>
+  level.value ? levelScreens(level.value.columns, SCREEN_W) : 0
+)
+// …and how many MORE would fit. While painting, the map editor reckons against a reserved
+// 16 KB (it cannot know the program); after a build the free bytes are MEASURED, so this
+// is the same question answered exactly — "how much level do I still have room for?"
+const screensLeft = computed(() => {
+  if (!level.value || !ram.value) return 0
+  const perScreen = bytesPerScreen(SCREEN_W, level.value.bandRows, level.value.model)
+  return Math.max(0, Math.floor(ram.value.freeBytes / perScreen))
+})
+
 // PERF bar: an ESTIMATE of the frame-loop cost extrapolated from the code (a guess,
 // never a runtime measurement — the `~` says so). It climbs as the .crumb does more
 // expensive work, so the cost is visible while you write.
 const perf = computed(() => output.perf)
+// A scrolling frame is TWO ROOMS with separate deadlines (S1.B4): the program's code runs
+// while the beam draws the band, the band is moved below it. The bar shows the fuller room
+// of the HEAVY frame — every 8th pixel the band physically moves a column, and an average
+// over the eight would hide the only frame that can tear (SCROLLING_PLAN T2c/T4).
+const world = computed(() => perf.value?.world ?? null)
+// A world whose window travels has that heavy frame; a standing one does not — but it has
+// the pocket deadline all the same, which is the surprise scrolling brings.
+const scrolls = computed(() => (world.value?.everyFrames ?? 0) > 0)
 // STAHL S6: "over" is the one state a newbie must READ, not just see as red — the
 // logic no longer fits one frame, so VWait silently halves the game to 25 fps.
 const perfOver = computed(() => perf.value?.state === 'over')
@@ -72,6 +101,12 @@ const perfFillClass = computed(() => {
         <div class="hb-meta">
           <template v-if="ram">
             {{ t('health.ram.line', { used: ram.usedBytes, budget: ram.budgetBytes, free: ram.freeBytes, ceiling: hex(ram.ceilingAddr) }) }}
+            <!-- Name the world's bytes (S1.B4): the level is usually the biggest single
+                 item in the pool, and "shorten the level" is a lever the user has. -->
+            <span class="hb-level" v-if="level">
+              · {{ t('health.ram.level', { kb: levelKb, screens: levelScreenCount, model: t('health.ram.model.' + level.model) }) }}
+              · {{ t('health.ram.levelRoom', { screens: screensLeft }) }}
+            </span>
           </template>
           <template v-else>{{ t('health.ram.meta') }}</template>
         </div>
@@ -99,7 +134,10 @@ const perfFillClass = computed(() => {
 
       <div class="hb">
         <div class="hb-top">
-          <span class="bc-label">PERF · FRAME</span>
+          <!-- With a travelling window the bar speaks about the HEAVY frame, and says so —
+               a bar that quietly averaged the eight frames would read as far safer than
+               the machine is. -->
+          <span class="bc-label">{{ scrolls ? t('health.perf.labelPeak') : t('health.perf.label') }}</span>
           <span class="hb-val" :class="{ 'hb-nodata': !perf, 'hb-val-over': perfOver }">{{ perf ? '~' + perfPct + ' %' : '—' }}</span>
         </div>
         <div class="hb-track">
@@ -107,7 +145,19 @@ const perfFillClass = computed(() => {
         </div>
         <div class="hb-meta" :class="{ 'hb-meta-over': perfOver }">
           <template v-if="perfOver">
-            <strong>{{ t('health.perf.full') }}</strong> — {{ t('health.perf.fullHint') }}
+            <strong>{{ t('health.perf.full') }}</strong> —
+            <!-- WHICH room is full decides the lever, so the hint names it: the band's
+                 height (ours, not the C64's — this engine pays per band row) or the
+                 program's own work between two VWaits. -->
+            <template v-if="world && world.wall === 'tail'">{{ t('health.perf.fullScroll', { rows: world.bandRows, tail: world.tailCycles }) }}</template>
+            <template v-else-if="world">{{ t('health.perf.fullPocket', { pocket: world.pocketCycles }) }}</template>
+            <template v-else>{{ t('health.perf.fullHint') }}</template>
+          </template>
+          <template v-else-if="world && scrolls">
+            {{ t('health.perf.peak', { every: world.everyFrames, tailUsed: world.tailUsed, tail: world.tailCycles, pocketUsed: world.pocketUsed, pocket: world.pocketCycles }) }}
+          </template>
+          <template v-else-if="world">
+            {{ t('health.perf.world', { rows: world.bandRows, pocket: world.pocketCycles, pocketUsed: world.pocketUsed }) }}
           </template>
           <template v-else-if="perf">{{ t('health.perf.estimate', { cycles: perf.cyclesPerFrame, budget: perf.budgetCycles, region: perf.region }) }}</template>
           <template v-else>{{ t('health.perf.meta') }}</template>
@@ -119,6 +169,11 @@ const perfFillClass = computed(() => {
 
 <style scoped>
 .hb-nodata {
+  color: var(--bc-text-500);
+}
+/* The level's share sits in the same meta line but reads as an aside, not as a second
+   figure competing with the pool's own numbers (S1.B4). */
+.hb-level {
   color: var(--bc-text-500);
 }
 /* STAHL S1c: amber near the ceiling, red at/over it — cost-honest at a glance. */

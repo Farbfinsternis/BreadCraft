@@ -1,6 +1,7 @@
 import type { Program, Statement, Expr, FunctionDecl, ForStmt, WhileStmt } from '../parser/ast'
-import type { PerfInfo, Region } from '@shared/ipc'
+import type { PerfInfo, PerfWorld, Region } from '@shared/ipc'
 import { DEFAULT_REGION } from '@shared/ipc'
+import type { ColorModel } from '@shared/level-cost'
 
 // Per-frame CPU-cost ESTIMATE, extrapolated from the .crumb AST — a guess, never a
 // runtime measurement (the BASSM approach the user chose). The point is the RELATIVE
@@ -17,6 +18,16 @@ const FRAME_CYCLES: Record<Region, number> = {
   PAL: 19656,
   NTSC: 17095
 }
+
+/** Cycles in ONE raster line — the unit the raster split measures a scrolling frame's two
+ *  rooms in (S1.B4). PAL's line is 63 cycles, NTSC's 65. */
+const LINE_CYCLES: Record<Region, number> = {
+  PAL: 63,
+  NTSC: 65
+}
+
+/** Raster lines one tile row of the band takes to draw. */
+const LINES_PER_BAND_ROW = 8
 
 // Coarse cc65-on-6502 cost guesses. Only the orders of magnitude matter (mul ≫ add,
 // a call has overhead, a loop multiplies its body).
@@ -69,14 +80,73 @@ const DEFAULT_CALL = 25
 const LOOP_GUESS = 4 // unknown While/Repeat iteration count → a flat guess
 
 /**
+ * What the SCROLLING ENGINE costs on top of the user's own code (S1.B4). Unlike the
+ * guesses above, these numbers were MEASURED on the finished engine in VICE (CIA2 timer
+ * around each block of work, `_intern/SCROLLING_PLAN.md` T4) — so what the bar shows for a
+ * scrolling game is hardware truth, not extrapolation.
+ *
+ * TWO THINGS MAKE A SCROLLING FRAME DIFFERENT, and the bar would lie without either:
+ *
+ *   1. IT IS NOT AN AVERAGE. `$D016` shifts the picture 0–7 pixels for one register write
+ *      (free), and every 8th pixel the band must physically move one column — screen RAM,
+ *      Color-RAM (the VIC does not scroll $D800) and the column appearing at the edge.
+ *      One heavy frame among eight light ones: 15.886 cycles measured against 4.240 on
+ *      average at a ten-row band. An average hides the only frame that can tear.
+ *   2. IT IS NOT ONE ROOM. The raster split gives the program's code the band's drawing
+ *      time (the POCKET) and the shift what is left below the band (the TAIL, `312 − 8·H`
+ *      raster lines). A taller band grows the work AND shrinks the room it must fit —
+ *      which is exactly why H = 12 tore where H = 10 stands, and why the ceiling belongs
+ *      to this engine rather than to the machine (see PerfWorld in @shared/ipc).
+ */
+const ENGINE = {
+  /** Cycles the coarse step costs PER BAND ROW — copy plus revealed column (T4: 13.309
+   *  cycles at ten rows, of the ~14.600 the tail then offers). */
+  shiftPerBandRow: 1331,
+  /** Building the column about to appear (`bc_set_camx`'s loop), per band row. Lands on
+   *  the same frame as the shift — the pocket decides, the tail moves. */
+  edgePerBandRow: 90,
+  /** …plus its fixed part: clamping, the fine-scroll value, deciding which way to travel. */
+  edgeFixed: 60,
+  /** Colour per TILE needs a second indexed load per row (tile → colour table) where
+   *  colour per CELL reads straight. The cheap RAM model costs a hair of time — the
+   *  honest other side of halving the level's bytes. */
+  edgeTileTable: 15,
+  /** Handing the sprite set to the VIC in the tail (`bc_spr_flush`), per named slot: the
+   *  world→screen sum, the window test, two register writes. Every frame. */
+  sprFlushPerSlot: 90,
+  /** …and the flush's own loop/register overhead. */
+  sprFlushFixed: 40,
+  /** Frames between two coarse steps at full camera speed: eight pixels to a character. */
+  stepEveryFrames: 8
+}
+
+/** What the emitted scrolling engine adds to a frame — facts only the codegen knows, so
+ *  it hands them over rather than the estimator re-deriving them from the AST (one truth
+ *  about the band, memory: breadcraft-ssot-langjson). */
+export interface EngineCost {
+  /** The program moves the window (`SetCameraX`/`Follow`) → the band physically shifts. */
+  usesCamera: boolean
+  /** Tile rows that travel (`PlayField`). */
+  bandRows: number
+  /** Sprite slots the program names (`BC_SPR_N`) — the tail writes their registers. */
+  spriteSlots: number
+  /** How the baked level carries colour. */
+  colorModel: ColorModel
+}
+
+/**
  * Estimate the CPU cost of ONE iteration of the main frame loop (the `While` that
  * contains `VWait`), including the functions it calls. Returns null when there is no
  * frame loop to talk about. A guess, surfaced honestly as the PERF health-bar.
  * `region` picks the cycle budget (STAHL S5c); defaults to PAL for callers/old projects.
+ * `engine` (S1.B4) adds what the scrolling engine costs underneath the program, and turns
+ * the single frame budget into the split frame's two rooms (`world`) — the heavy frame's
+ * fuller room is then what the bar is held to. Without it, a frame is a frame.
  */
 export function estimateFramePerf(
   program: Program,
-  region: Region = DEFAULT_REGION
+  region: Region = DEFAULT_REGION,
+  engine?: EngineCost
 ): PerfInfo | null {
   const consts = new Map<string, Expr>()
   const funcs = new Map<string, FunctionDecl>()
@@ -217,10 +287,61 @@ export function estimateFramePerf(
   const frame = findFrameLoop(program.body)
   if (!frame) return null
   const budgetCycles = FRAME_CYCLES[region]
-  const cyclesPerFrame = costStmts(frame.body)
-  const fraction = cyclesPerFrame / budgetCycles
+  const ownCode = costStmts(frame.body)
+  const sprTail = spriteTail(engine)
+  // The frame's total work, heavy frame included — the "what does this cost" figure.
+  const world = worldFrame(ownCode, sprTail, region, engine)
+  const cyclesPerFrame = ownCode + sprTail
+  // Inside a world the bar is held to the fuller ROOM of the heavy frame; outside one a
+  // frame is a frame (S1.B4).
+  const fraction = world
+    ? Math.max(world.pocketUsed / world.pocketCycles, world.tailUsed / world.tailCycles)
+    : cyclesPerFrame / budgetCycles
   const state = fraction >= 1 ? 'over' : fraction >= 0.75 ? 'warn' : 'ok'
-  return { cyclesPerFrame, budgetCycles, fraction, state, region }
+  return { cyclesPerFrame, budgetCycles, fraction, state, region, ...(world ? { world } : {}) }
+}
+
+/** What handing the sprite set to the VIC costs in the tail — every frame, because a
+ *  sprite's registers may only be written below the band (S1.B3.3). */
+function spriteTail(engine?: EngineCost): number {
+  if (!engine || engine.spriteSlots <= 0) return 0
+  return ENGINE.sprFlushFixed + engine.spriteSlots * ENGINE.sprFlushPerSlot
+}
+
+/**
+ * The two rooms of a scrolling frame, filled for the HEAVY frame — the one in eight on
+ * which the band physically moves a column. A world whose window never travels has no
+ * heavy frame (it pays nothing for a move it never makes), but it still has the split, so
+ * its pocket deadline is reported all the same: that deadline is the surprise a scrolling
+ * game brings, and hiding it until something stutters would be the dishonest half.
+ */
+function worldFrame(
+  ownCode: number,
+  sprTail: number,
+  region: Region,
+  engine?: EngineCost
+): PerfWorld | undefined {
+  if (!engine || engine.bandRows <= 0) return undefined
+  const pocketCycles = engine.bandRows * LINES_PER_BAND_ROW * LINE_CYCLES[region]
+  const tailCycles = FRAME_CYCLES[region] - pocketCycles
+  // The column about to appear is built in the POCKET of the very frame whose tail moves
+  // the band — the two always land together, so the heavy frame carries both.
+  const perRow =
+    ENGINE.edgePerBandRow + (engine.colorModel === 'tileTable' ? ENGINE.edgeTileTable : 0)
+  const edgeCycles = engine.usesCamera ? ENGINE.edgeFixed + engine.bandRows * perRow : 0
+  const shiftCycles = engine.usesCamera ? engine.bandRows * ENGINE.shiftPerBandRow : 0
+  const pocketUsed = ownCode + edgeCycles
+  const tailUsed = sprTail + shiftCycles
+  return {
+    bandRows: engine.bandRows,
+    pocketCycles,
+    pocketUsed,
+    tailCycles,
+    tailUsed,
+    shiftCycles,
+    everyFrames: engine.usesCamera ? ENGINE.stepEveryFrames : 0,
+    wall: tailUsed / tailCycles > pocketUsed / pocketCycles ? 'tail' : 'pocket'
+  }
 }
 
 /** The main loop = the first top-level `While` whose body runs `VWait` (the frame sync). */

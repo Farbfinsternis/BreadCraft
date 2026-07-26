@@ -1,5 +1,5 @@
 import type { VocabItem } from '@shared/ssot-types'
-import type { PerfInfo, Locale, Region } from '@shared/ipc'
+import type { PerfInfo, LevelInfo, Locale, Region } from '@shared/ipc'
 import { DEFAULT_REGION } from '@shared/ipc'
 import { tokenize } from './lexer'
 import { parse } from './parser'
@@ -47,6 +47,9 @@ export interface CompileResult {
   /** Estimated per-frame CPU cost (a guess from the code) for the PERF health-bar, or
    *  null when the program has no frame loop to talk about. */
   perf: PerfInfo | null
+  /** What the scrolling level costs in RAM (S1.B4), or null without `UseMap` — the RAM
+   *  bar names the world's bytes with it. */
+  level: LevelInfo | null
 }
 
 /** Compile .crumb source to cc65-C using the given SSOT vocabulary. `assets` lets
@@ -83,11 +86,16 @@ export function compile(
     tokens = tokenize(source, vocabulary, locale, entryName)
   }
   const { program, errors: parseErrors } = parse(tokens, vocabulary, locale)
-  const { code, errors: codegenErrors, linkerConfig, mainCeiling, highBase, highCeiling } = generate(
-    program,
-    assets,
-    locale
-  )
+  const {
+    code,
+    errors: codegenErrors,
+    linkerConfig,
+    mainCeiling,
+    highBase,
+    highCeiling,
+    engine,
+    level
+  } = generate(program, assets, locale)
 
   const errors: CompileError[] = [
     ...includeErrors,
@@ -101,7 +109,10 @@ export function compile(
     mainCeiling,
     highBase,
     highCeiling,
-    perf: estimateFramePerf(program, region)
+    // The estimate is told what the engine underneath costs (S1.B4) — with a moving
+    // camera that turns the single number into "light frames plus one heavy one".
+    perf: estimateFramePerf(program, region, engine ?? undefined),
+    level
   }
 }
 

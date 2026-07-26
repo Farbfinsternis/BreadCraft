@@ -99,6 +99,24 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   BreadCraft sagt Dir das, statt eine Farbe zu versprechen, die beim Zurückscrollen umkippen
   würde. Auf echtem C64 (VICE) nachgemessen: ein Taucher frisst den Boden weg, und **208 Spalten**
   kamen nach einer Reise aus dem Bild und zurück mit ihrer Lücke wieder — keine einzige wuchs nach.
+- **Die Balken kennen jetzt das Scrollen — und zeigen den Frame, der reißen würde.** Ein
+  scrollendes Bild kostet nicht jedes Frame gleich viel: sieben Frames lang schiebt der C64 das
+  Bild fast umsonst ein paar Pixel weiter, und **jedes achte** muss er das ganze Band eine Spalte
+  weiterrücken — das ist der teure Frame. Der PERF-Balken zeigt ab jetzt **genau diesen** Frame
+  (er heißt dann „SPITZEN-FRAME"): ein Durchschnitt über alle acht sähe gemütlich aus und würde
+  ausgerechnet den einen Frame verschweigen, der ruckeln kann. Dazu lernt der Balken, dass ein
+  scrollendes Frame **zwei Zimmer** hat: Dein eigener Code läuft, während das Band gemalt wird,
+  das Nachrücken passiert darunter. Beide haben ihre eigene Uhr — und wird eine voll, sagt
+  BreadCraft, **welche**: entweder „Dein Code wird nicht fertig" oder „das Band ist zu hoch,
+  nimm Zeilen aus dem `PlayField`". Der zweite Fall ist der interessante: ein höheres Spielfeld
+  macht die Arbeit größer *und* die Zeit dafür kleiner, deshalb geht bei etwa zehn Zeilen die
+  Schere zu. Diese Grenze steht nirgends als Zahl im Programm — der Balken rechnet sie aus, und
+  er trifft damit auf den Takt genau, was auf dem echten C64 gemessen wurde.
+- **Der RAM-Balken sagt, wie viel davon Dein Level ist.** Nach dem Bauen steht in der Zeile
+  nicht mehr nur „so voll ist der Speicher", sondern auch „davon Level: 8,0 KB · 20 Bildschirme"
+  — und, aus dem wirklich freien Platz gerechnet, **wie viele Bildschirme noch hineinpassen**.
+  Beim Malen schätzt der Karten-Editor das noch (er kann Dein Programm nicht kennen); nach einem
+  Build ist es gemessen.
 - **Der Level-Zähler sagt jetzt, warum Dein Level kostet, was es kostet.** Solange jede Kachel
   *eine* Farbe behält, genügt dem C64 eine kleine Farbtabelle — ein Bildschirm Level kostet rund
   400 Byte. Malst Du dieselbe Kachel in zwei Farben (der C64 erlaubt das, die Farbe sitzt in

@@ -71,18 +71,21 @@ export async function buildAndRun(
     const p = join(projectDir, rel)
     return existsSync(p) ? readFileSync(p, 'utf8') : null
   }
-  const { code, errors, linkerConfig, mainCeiling, highBase, highCeiling, perf } = compile(
-    source,
-    vocabulary,
-    assets,
-    locale,
-    region,
-    entryName,
-    readSource
-  )
-  // The per-frame cost estimate is valid as soon as the code parsed — feed it to the
-  // PERF health-bar on every outcome where we actually compiled something.
-  const perfInfo = perf ?? undefined
+  const {
+    code,
+    errors,
+    linkerConfig,
+    mainCeiling,
+    highBase,
+    highCeiling,
+    perf,
+    level: levelInfo
+  } = compile(source, vocabulary, assets, locale, region, entryName, readSource)
+  // What the code COSTS is known as soon as it compiled — the per-frame estimate and the
+  // scrolling level's bytes (S1.B4). Both feed the health bars on every outcome where we
+  // got that far, including the failures: a build that died in cc65 still has a story to
+  // tell about what it would have cost.
+  const cost = { perf: perf ?? undefined, level: levelInfo ?? undefined }
   for (const e of errors) {
     const level = e.severity === 'warn' ? 'warn' : 'error'
     // Name the file when known (B3 Include) so a multi-file error is unambiguous, and
@@ -97,13 +100,13 @@ export async function buildAndRun(
   // Warnings (e.g. narrowing) are honest hints, not blockers; only real errors stop the build.
   if (errors.some((e) => e.severity === 'error')) {
     add('error', M.transpileFailed)
-    return { ok: false, stage: 'compile', log, cCode: code, perf: perfInfo }
+    return { ok: false, stage: 'compile', log, cCode: code, ...cost }
   }
 
   // 2) write C, invoke bundled cl65 → .prg
   if (!cc65Available()) {
     add('error', M.cc65Missing)
-    return { ok: false, stage: 'compile', log, cCode: code, perf: perfInfo }
+    return { ok: false, stage: 'compile', log, cCode: code, ...cost }
   }
   mkdirSync(buildDir, { recursive: true })
   const cPath = join(buildDir, 'main.c')
@@ -137,10 +140,10 @@ export async function buildAndRun(
       // pool, anything else = the low code/data pool. Blaming the low pool for a HIGH
       // overflow pointed the user at the wrong fix.
       const ram = ramInfoOverflow(area, over, mainCeiling, highBase, highCeiling)
-      return { ok: false, stage: 'cc65', log, cCode: code, ram, perf: perfInfo }
+      return { ok: false, stage: 'cc65', log, cCode: code, ram, ...cost }
     }
     add('error', M.cc65Failed)
-    return { ok: false, stage: 'cc65', log, cCode: code, perf: perfInfo }
+    return { ok: false, stage: 'cc65', log, cCode: code, ...cost }
   }
   add('ok', M.buildOk(prgPath))
 
@@ -170,7 +173,7 @@ export async function buildAndRun(
   // clean success at stage 'cc65', NOT a needsVicePath case (don't nudge Settings).
   if (!runAfterBuild) {
     add('info', M.buildOnlySkipped)
-    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, ram, perf: perfInfo }
+    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, ram, ...cost }
   }
 
   let vicePath = readSettings().vicePath
@@ -187,7 +190,7 @@ export async function buildAndRun(
   }
   if (!vicePath || !existsSync(vicePath)) {
     add('info', M.noVicePath)
-    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram, perf: perfInfo }
+    return { ok: true, stage: 'cc65', log, cCode: code, prgPath, needsVicePath: true, ram, ...cost }
   }
 
   // Boot VICE in the project's region (STAHL S5c) — `-pal`/`-ntsc` so what the user sees
@@ -210,13 +213,13 @@ export async function buildAndRun(
     })
     if (!child.pid) {
       add('error', M.viceStartFailed(M.viceStartNoPid(vicePath)))
-      return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
+      return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, ...cost }
     }
     child.unref()
     add('ok', M.viceStarted)
-    return { ok: true, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
+    return { ok: true, stage: 'run', log, cCode: code, prgPath, ram, ...cost }
   } catch (e) {
     add('error', M.viceStartFailed(String((e as Error).message ?? e)))
-    return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, perf: perfInfo }
+    return { ok: false, stage: 'run', log, cCode: code, prgPath, ram, ...cost }
   }
 }

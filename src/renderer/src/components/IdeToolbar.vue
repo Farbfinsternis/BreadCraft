@@ -75,6 +75,7 @@ async function runBuild(runAfterBuild: boolean): Promise<void> {
     output.appendMany(result.log)
     output.ram = result.ram ?? null // feed the RAM health-bar (STAHL S1c)
     output.perf = result.perf ?? null // feed the PERF health-bar (estimated cost)
+    output.level = result.level ?? null // …and the level's share of the RAM bar (S1.B4)
     // Building never needs VICE — only *running* does (T5). The .prg is already built;
     // instead of silently popping Settings, explain that and offer to set VICE up.
     // When the first-run onboarding (T2) lands, point this at it instead of the modal.

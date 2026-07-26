@@ -232,18 +232,82 @@ export interface RamInfo extends RamPool {
  *  cross it and the game drops from 50 to 25 fps. The bar shows roughly how full the
  *  frame is from what the .crumb does, so the cost is visible WHILE you write. */
 export interface PerfInfo {
-  /** Estimated 6502 cycles for ONE iteration of the main frame loop (incl. the
+  /** Estimated 6502 cycles for an ORDINARY iteration of the main frame loop (incl. the
    *  functions it calls). A coarse guess — its value is the relative signal. */
   cyclesPerFrame: number
   /** One PAL frame's cycle budget (the wall: more than this halves the frame rate). */
   budgetCycles: number
-  /** cyclesPerFrame / budgetCycles (≥ 1 means the frame would overrun). */
+  /** How full the fullest ROOM of the worst frame is — ≥ 1 means that frame would overrun.
+   *  Without a scrolling world that is simply cyclesPerFrame / budgetCycles; inside one it
+   *  is the fuller of the frame's two rooms on the heavy frame (see `world`), because a
+   *  mean over eight frames hides exactly the frame that tears (S1.B4). */
   fraction: number
   /** 'ok' (room), 'warn' (getting tight), 'over' (would overrun → 25fps). */
   state: 'ok' | 'warn' | 'over'
   /** Which video standard the budget is measured against (STAHL S5c) — so the bar can
    *  say "of PAL" / "of NTSC" and the number is never silently one region. */
   region: Region
+  /** Set when the program scrolls a world (`UseMap`): the frame then has two rooms with
+   *  separate deadlines, and one figure spanning the whole frame would flatter it. */
+  world?: PerfWorld
+}
+
+/** A SCROLLING FRAME IS TWO ROOMS, not one budget (S1.B4 — measured, SCROLLING_PLAN
+ *  T2c/T4). The raster split cuts every frame in two:
+ *
+ *    - THE POCKET — while the beam draws the band, the band must not be touched, but
+ *      thinking is free. This is where the program's own frame code runs, and its deadline
+ *      is the band's own drawing time: 8 raster lines per band row. Overrun it and `VWait`
+ *      misses the split, waits a whole frame → 25 fps.
+ *    - THE TAIL — below the band, the only place the band may be moved. The coarse shift
+ *      lives here and its room is what is LEFT of the frame: `312 − 8·H` raster lines.
+ *
+ *  So a taller play field cuts both ways at once: the shift's work grows per band row while
+ *  the room it must fit shrinks. That scissor — this engine's, not the C64's — is why the
+ *  honest ceiling sits near ten band rows, and why the bar can DERIVE that ceiling instead
+ *  of being told it.
+ *
+ *  Only every 8th pixel does the band physically move (`$D016` shifts the picture 0–7
+ *  pixels for one register write, for free), so with a moving camera one frame in eight is
+ *  the heavy one — and that is the frame these figures describe. */
+export interface PerfWorld {
+  /** Tile rows that travel (`PlayField`) — the driver of both rooms' sizes. */
+  bandRows: number
+  /** Cycles the pocket offers the program's own code (bandRows × 8 raster lines). */
+  pocketCycles: number
+  /** Estimated cycles used there on the heavy frame: the program's own code, plus building
+   *  the column about to appear. */
+  pocketUsed: number
+  /** Cycles the tail offers below the band (the rest of the frame). */
+  tailCycles: number
+  /** Estimated cycles used there on the heavy frame: the coarse shift, plus handing the
+   *  sprite set to the VIC. */
+  tailUsed: number
+  /** What the coarse shift alone costs — 0 for a world whose window never travels (it pays
+   *  nothing for a move it never makes). */
+  shiftCycles: number
+  /** How often the heavy frame lands: every Nth frame at full camera speed (8 = one pixel
+   *  per frame, eight pixels to a character). 0 for a standing world — all frames alike. */
+  everyFrames: number
+  /** Which room is the fuller one, i.e. what `fraction` is about. The lever differs:
+   *  'pocket' → the program does too much per frame; 'tail' → the band is too tall. */
+  wall: 'pocket' | 'tail'
+}
+
+/** What the scrolling level itself costs in RAM (S1.B4) — reported by the compiler so the
+ *  RAM bar can NAME the world's bytes instead of leaving a designer to guess which part of
+ *  a full bar is the map. Absent for a program without `UseMap`. */
+export interface LevelInfo {
+  /** The tilemap asset id that was baked. */
+  id: string
+  /** Level columns (a screen is 40). */
+  columns: number
+  /** Band rows stored per column (from `PlayField`). */
+  bandRows: number
+  /** Bytes the baked level occupies (column data plus the tile→colour table, if any). */
+  bytes: number
+  /** Whether colour came per TILE (cheap) or per CELL (twice the column data). */
+  model: 'tileTable' | 'perCell'
 }
 
 /** Result of a Build & Run: which stage reached, logs, and what to show. */
@@ -263,4 +327,7 @@ export interface BuildResult {
   ram?: RamInfo
   /** Estimated per-frame CPU cost (a guess from the code) — feeds the PERF health-bar. */
   perf?: PerfInfo
+  /** The scrolling level baked into this build (S1.B4) — lets the RAM bar say how much of
+   *  the RAM is the world. Absent for a program without `UseMap`. */
+  level?: LevelInfo
 }

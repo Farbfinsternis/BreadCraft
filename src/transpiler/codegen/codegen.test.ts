@@ -2,10 +2,17 @@ import { describe, it, expect } from 'vitest'
 import rawSsot from '@shared/breadcraft.lang.json'
 import { buildVocabulary } from '@shared/vocabulary'
 import type { Ssot, VocabItem } from '@shared/ssot-types'
-import { compile } from '../index'
+import { compile, tokenize, parse, generate } from '../index'
 import type { AssetContext } from '../codegen'
 
 const vocab: VocabItem[] = buildVocabulary(rawSsot as unknown as Ssot)
+
+/** What the CODEGEN reports about a program besides its C (S1.B4): the engine's cost facts
+ *  and the baked level's bytes. They sit on the codegen result rather than the compile
+ *  front door, because their only consumers are the health bars downstream. */
+function genFacts(src: string, assets?: AssetContext): ReturnType<typeof generate> {
+  return generate(parse(tokenize(src, vocab), vocab).program, assets)
+}
 
 function gen(
   src: string,
@@ -1349,6 +1356,51 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       expect(code).toContain('static const unsigned char bc_lvlcol_bunt[1200]')
       expect(code).toMatch(/colour per cell — tiles 80 are painted/)
       expect(code).toContain('COLOR_RAM[idx] = bc_lvlcol_bunt[_s];')
+    })
+
+    // S1.B4: the codegen is the only side that KNOWS what the band and the engine are, so
+    // it reports it — the health bars read those figures instead of guessing them a second
+    // time from the source (one truth about the world).
+    describe('reports what the world costs (S1.B4)', () => {
+      it('hands out the band, the camera and the level bytes', () => {
+        const { engine, level } = genFacts(world('SetCameraX 8\nSprite 0, 100, 80'), fakeAssets())
+        expect(engine).toEqual({
+          usesCamera: true,
+          bandRows: 10,
+          spriteSlots: 1,
+          colorModel: 'tileTable'
+        })
+        // 120 columns × 10 band rows + the 256-byte tile→colour table = what was baked.
+        expect(level).toEqual({
+          id: 'welt',
+          columns: 120,
+          bandRows: 10,
+          bytes: 120 * 10 + 256,
+          model: 'tileTable'
+        })
+      })
+
+      it('says the window stands still when nothing moves it', () => {
+        const { engine } = genFacts(world(), fakeAssets())
+        expect(engine!.usesCamera).toBe(false)
+      })
+
+      it('counts the per-cell level at twice the column data (no table)', () => {
+        const { level } = genFacts('UseTileset "main"\nPlayField 3, 12\nUseMap "bunt"', fakeAssets())
+        expect(level).toEqual({
+          id: 'bunt',
+          columns: 120,
+          bandRows: 10,
+          bytes: 120 * 10 * 2,
+          model: 'perCell'
+        })
+      })
+
+      it('reports nothing for a program that has no world (there is nothing to report)', () => {
+        const { engine, level } = genFacts('UseTileset "main"\nWhile 1\n  VWait\nWend', fakeAssets())
+        expect(engine).toBeNull()
+        expect(level).toBeNull()
+      })
     })
 
     // S1.B3.2: the window travels. The band lives at screen $7800 (VIC bank 1, because a
