@@ -1,10 +1,9 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import {
   MAP_W,
   MAP_H,
   MAX_MAP_W,
-  TILEMAP_FILE,
   DEFAULT_COLOR_RAM,
   parseTilemap,
   serializeTilemap
@@ -135,7 +134,19 @@ export const useTilemapStore = defineStore('tilemap', () => {
 
   // The project this map belongs to (set on load). Saves target this dir.
   let projectDir: string | null = null
-  let assetRel: string = TILEMAP_FILE
+  /**
+   * The file this map IS, or null while it is not any file yet ("Neu", or a project that
+   * has no map at all). The unbound state is the point, not an oversight: a map without a
+   * name must not be written anywhere, and until it has one only "Save as…" can help.
+   * Reactive, because the Save button's enabled state hangs off it.
+   *
+   * The old default (always `TILEMAP_FILE`) meant Ctrl+S on a nameless map quietly created
+   * a file nobody asked for — the same family as the silent save that once cost a level
+   * (user, 2026-07-25, memory: breadcraft-ui-layering).
+   */
+  const assetRel = ref<string | null>(null)
+  /** Is this map bound to a file? (false = only "Save as…" can save it.) */
+  const bound = computed(() => assetRel.value !== null)
 
   /** Is this cell inside the map? */
   function inside(col: number, row: number): boolean {
@@ -169,10 +180,10 @@ export const useTilemapStore = defineStore('tilemap', () => {
   /** Load the project's tilemap asset from disk (called on project open). */
   async function loadForProject(dir: string, rel: string | null): Promise<void> {
     projectDir = dir
-    assetRel = rel ?? TILEMAP_FILE
+    assetRel.value = rel
     resetTo(NEW_MAP_W, NEW_MAP_H)
     dirty.value = false
-    if (!rel) return // no tilemap asset yet — start empty
+    if (!rel) return // no tilemap asset yet — an empty map that is not any file yet
     const text = await window.breadcraft.assets.read(dir, rel)
     if (!text) return
     const parsed = parseTilemap(text)
@@ -196,16 +207,20 @@ export const useTilemapStore = defineStore('tilemap', () => {
     return { tiles: tiles.value, colors: colors.value, width: width.value, height: height.value }
   }
 
-  /** Write the tilemap to disk (explicit save: button / Ctrl+S). */
+  /** Write the tilemap to disk (explicit save: button / Ctrl+S). A map with no name is
+   *  NOT written anywhere — the caller offers "Save as…" instead. The guard lives here
+   *  and not only on the button, because Ctrl+S walks straight past a disabled button. */
   async function save(): Promise<void> {
-    if (!projectDir) return
+    if (!projectDir || assetRel.value === null) return
     const text = serializeTilemap(snapshot())
-    await window.breadcraft.assets.write(projectDir, 'tilemap', assetRel, text)
+    await window.breadcraft.assets.write(projectDir, 'tilemap', assetRel.value, text)
     dirty.value = false
   }
 
+  /** The file this map is, or '' while it has no name (the Save-As dialog then opens with
+   *  an empty name instead of suggesting one the user never chose). */
   function currentRel(): string {
-    return assetRel
+    return assetRel.value ?? ''
   }
 
   /** Switch the editor to another map file (P2.T0): save pending, then load. */
@@ -220,11 +235,27 @@ export const useTilemapStore = defineStore('tilemap', () => {
   /** Create a NEW empty map file at `rel` and bind to it (P2.T0). */
   async function createBlank(dir: string, rel: string): Promise<void> {
     projectDir = dir
-    assetRel = rel
+    assetRel.value = rel
     resetTo(NEW_MAP_W, NEW_MAP_H)
     dirty.value = false
     const text = serializeTilemap(snapshot())
     await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
+  }
+
+  /**
+   * A brand-new map, WITHOUT a file (the "New" button). The loaded map leaves memory, a
+   * fresh screen takes its place — and it belongs to no file, so "Save" stays off until
+   * "Save as…" gives it a name. That is the whole idea: naming is a decision, and nothing
+   * is written before it is made (memory: breadcraft-asset-documents).
+   *
+   * Unsaved work in the map being replaced is the caller's business to ask about
+   * (`project.newAsset` → `mayLeave`) — this store never decides that for anyone.
+   */
+  function newBlank(dir: string): void {
+    projectDir = dir
+    assetRel.value = null
+    resetTo(NEW_MAP_W, NEW_MAP_H)
+    dirty.value = false
   }
 
   /** Empty the whole map in one step (T1): every cell back to Space (EMPTY_TILE) +
@@ -239,10 +270,11 @@ export const useTilemapStore = defineStore('tilemap', () => {
     dirty.value = true
   }
 
-  /** "Save as" (P2.T0b): bind to a new rel and write the CURRENT map there. */
+  /** "Save as" (P2.T0b): bind to a new rel and write the CURRENT map there — the one way
+   *  a nameless map gets a name. */
   async function saveTo(dir: string, rel: string): Promise<void> {
     projectDir = dir
-    assetRel = rel
+    assetRel.value = rel
     const text = serializeTilemap(snapshot())
     await window.breadcraft.assets.write(dir, 'tilemap', rel, text)
     dirty.value = false
@@ -255,6 +287,7 @@ export const useTilemapStore = defineStore('tilemap', () => {
     colors,
     version,
     dirty,
+    bound,
     tileAt,
     colorAt,
     setTile,
@@ -266,6 +299,7 @@ export const useTilemapStore = defineStore('tilemap', () => {
     currentRel,
     switchAsset,
     createBlank,
+    newBlank,
     saveTo
   }
 })

@@ -178,10 +178,32 @@ export const useProjectStore = defineStore('project', () => {
     activeAsset[kind] = rel
   }
 
+  /**
+   * A brand-new, NAMELESS asset in its editor: the open one leaves memory, a blank one
+   * takes its place, and it belongs to no file until "Save as…" gives it one. Nothing is
+   * written here — that is the difference to `createAsset`, which is the explorer's "new
+   * file" and puts a real file on disk straight away.
+   *
+   * Only editors that offer a "New" button implement `newBlank` (the tilemap does; the
+   * others keep their old flow until we know it should be one pattern).
+   */
+  async function newAsset(kind: AssetEditorKind): Promise<boolean> {
+    if (!dir.value) return false
+    const store = await assetStore(kind)
+    if (!store.newBlank) return false
+    if (!(await mayLeave(store))) return false
+    store.newBlank(dir.value)
+    // No file → nothing for the explorer to mark as open.
+    activeAsset[kind] = ''
+    return true
+  }
+
   /** Lazy-load the asset store for a kind (avoids an import cycle). */
   async function assetStore(kind: AssetEditorKind): Promise<{
     switchAsset(dir: string, rel: string): Promise<void>
     createBlank(dir: string, rel: string): Promise<void>
+    /** Present only where the editor has a "New" button (S1.B2 follow-up). */
+    newBlank?(dir: string): void
     saveTo(dir: string, rel: string): Promise<void>
     currentRel(): string
     /** Unsaved work in this editor — the reason to ask before leaving it. */
@@ -334,6 +356,7 @@ export const useProjectStore = defineStore('project', () => {
     assetsOf,
     openAsset,
     createAsset,
+    newAsset,
     saveAssetAs
   }
 }, { persist: { key: STORAGE_KEY, paths: ['debugMode'] } })

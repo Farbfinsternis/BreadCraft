@@ -38,6 +38,9 @@ import * as fmt from '@shared/asset-formats'
 /** Default file names for the single-per-project assets. */
 export const PALETTE_FILE = 'project.palette'
 export const CHARSET_FILE = 'main.petscii'
+/** Kept for new projects / templates only: since "New" (2026-07-26) the tilemap editor no
+ *  longer falls back to this name — a map with no name is not written at all, it is saved
+ *  through "Save as…". The other editors still default. */
 export const TILEMAP_FILE = 'main.tilemap'
 export const SPRITE_FILE = 'main.sprite'
 export const IMAGE_FILE = 'main.image'

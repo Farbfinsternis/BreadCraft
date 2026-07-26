@@ -549,6 +549,17 @@ const roomLeft = computed(() =>
 const levelCostBytes = computed(() => cost.value.bytes)
 const perCellColour = computed(() => cost.value.model === 'perCell')
 
+// WHICH map am I painting? The panel says so — a nameless one says that too, rather than
+// looking exactly like a loaded level (important project state must be VISIBLE,
+// memory: breadcraft-ux-railing).
+const mapPanelTitle = computed(() => {
+  const size = { w: mapW.value, h: mapH.value }
+  if (!tilemap.bound) return t('tilemap.panel.mapUnnamed', size)
+  const rel = tilemap.currentRel().replace(/\\/g, '/')
+  const name = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.tilemap$/, '')
+  return t('tilemap.panel.mapNamed', { ...size, name })
+})
+
 /** Empty the whole map (T1). Destructive + no undo, so confirm first. */
 function clearMap(): void {
   if (!window.confirm(t('tilemap.clearConfirm'))) return
@@ -564,6 +575,22 @@ function saveAs(): void {
   void project.saveAssetAs('tilemap', '.tilemap', t('saveas.title.tilemap'))
 }
 
+/**
+ * "New" — a blank map that is not any file yet (user wish, 2026-07-25). Unsaved work in
+ * the map being replaced is asked about first (project.newAsset → mayLeave); after this
+ * "Save" is off and only "Save as…" can help, because the map has no name to save to.
+ */
+function newMap(): void {
+  void project.newAsset('tilemap')
+}
+
+/** Saving a map that has no name yet can only mean one thing: ask for the name. So the
+ *  Save button is disabled but never dead-ends — the railing leads on (UX_RAILING). */
+function saveOrAskName(): void {
+  if (tilemap.bound) void tilemap.save()
+  else saveAs()
+}
+
 // Ctrl/Cmd+S saves the tilemap (explicit save — no auto-save, ASSET_DOCUMENTS.md §2.5).
 // Space arms the hand: hold it and a drag pans instead of painting (the second road in
 // for anyone without a middle mouse button). It must not also scroll the panel.
@@ -573,7 +600,9 @@ function onKeydown(e: KeyboardEvent): void {
   if (ui.modalOpen) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
-    void tilemap.save()
+    // Ctrl+S on a map with no name asks for one instead of doing nothing quietly (and
+    // instead of the old behaviour: writing a default file nobody named).
+    saveOrAskName()
     return
   }
   // …but never while someone is typing a name into a field: there Space is a space.
@@ -634,15 +663,23 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
         <svg class="ico" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
         {{ t('tilemap.clear') }}
       </button>
+      <!-- "New": a blank map that is not any file yet. Deliberately next to Save-as,
+           because that is where it hands over — a nameless map can only be saved there. -->
+      <button class="tm-reset" :title="t('tilemap.newTitle')" @click="newMap">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M12 12v6M9 15h6" /></svg>
+        {{ t('tilemap.new') }}
+      </button>
       <button class="tm-reset" :title="t('saveas.title.tilemap')" @click="saveAs">
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M12 11v6M9 14l3 3 3-3" /></svg>
         {{ t('saveas.save') }}
       </button>
+      <!-- Two different reasons for a grey Save button — the tooltip says WHICH: nothing
+           changed, or this map has no name yet (then Save-as is the way). -->
       <button
         class="tm-save"
-        :disabled="!tilemap.dirty"
-        :title="tilemap.dirty ? t('asset.unsaved') : t('asset.saved')"
-        @click="tilemap.save()"
+        :disabled="!tilemap.dirty || !tilemap.bound"
+        :title="!tilemap.bound ? t('asset.unnamed') : tilemap.dirty ? t('asset.unsaved') : t('asset.saved')"
+        @click="saveOrAskName()"
       >
         <span class="tm-save-dot" :class="{ 'is-dirty': tilemap.dirty }" />
         <svg class="ico" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8M7 3v5h8" /></svg>
@@ -702,7 +739,7 @@ watch([indexPalette, () => charset.chars, activeColor], () => previewVersion.val
       <FloatPanel
         :scope="SCOPE"
         id="map"
-        :title="t('tilemap.panel.map', { w: mapW, h: mapH })"
+        :title="mapPanelTitle"
         :min-width="300"
         :min-height="240"
       >

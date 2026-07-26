@@ -99,6 +99,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   BreadCraft sagt Dir das, statt eine Farbe zu versprechen, die beim Zurückscrollen umkippen
   würde. Auf echtem C64 (VICE) nachgemessen: ein Taucher frisst den Boden weg, und **208 Spalten**
   kamen nach einer Reise aus dem Bild und zurück mit ihrer Lücke wieder — keine einzige wuchs nach.
+- **Der Karten-Editor hat einen Knopf „Neu" — und die neue Karte hat noch keinen Namen.**
+  Ein Klick, und Du hast einen frischen Bildschirm zum Malen; die alte Karte fliegt aus dem
+  Speicher (hattest Du dort ungespeicherte Arbeit, wird vorher gefragt). Das Besondere: die
+  neue Karte gehört noch zu **keiner Datei**. Solange das so ist, bleibt „Speichern" grau —
+  und sagt im Tooltip auch, warum — und nur **„Speichern unter…"** kann helfen. So bekommt
+  keine Karte klammheimlich einen Dateinamen, den Du nie gewählt hast. Drückst Du Strg+S,
+  läuft das nicht ins Leere, sondern fragt genau danach: nach dem Namen. Und der Panel-Titel
+  sagt jederzeit, welche Karte da liegt („Karte: level01" bzw. „Karte: noch ohne Namen"),
+  damit eine namenlose Karte nicht aussieht wie ein geladenes Level.
 - **Die Balken kennen jetzt das Scrollen — und zeigen den Frame, der reißen würde.** Ein
   scrollendes Bild kostet nicht jedes Frame gleich viel: sieben Frames lang schiebt der C64 das
   Bild fast umsonst ein paar Pixel weiter, und **jedes achte** muss er das ganze Band eine Spalte
