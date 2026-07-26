@@ -394,6 +394,14 @@ class Generator {
         colorsDecl: number
       }
     | undefined
+  /** Record-array elements this FUNCTION holds a pointer to: `array#index` → C pointer
+   *  name (S1.B5.T3). Filled per function by planRecordPointers, empty at top level. */
+  private recordPtrs = new Map<string, string>()
+  /** The `UseMap` STATEMENT has been walked — the world is entered from here ON. Separate
+   *  from `levelWorld`, which the pre-scan sets before the walk (S1.B5): the two order
+   *  diagnostics ("PlayField comes too late", "a second world") are about the statement
+   *  order in the file, not about what the pre-scan already knows. */
+  private useMapSeen = false
   /** `SetMapTile` used → the baked level stops being `const`: the program changes its own
    *  world, and the change has to survive the column scrolling out and back (S1.B3.4). */
   private usesSetMapTile = false
@@ -606,6 +614,82 @@ class Generator {
     return id
   }
 
+  /**
+   * The world this program enters, found BEFORE the walk (S1.B5) — the same medicine
+   * `UseImage` already takes, and for the same illness.
+   *
+   * WHY IT MUST BE UP FRONT. Functions are emitted before the top-level code, but they RUN
+   * after it. A game's `DrawPlayer()` is written above the `UseMap` that enters the world
+   * and called from the frame loop below it — so a walk-order check sees no world yet and
+   * emits the PRE-WORLD shape into a scrolling program: `Sprite` writing the VIC registers
+   * directly instead of handing them to the frame's tail. The hero would then not ride on
+   * the world (no camera conversion) and his registers would be written while the beam
+   * draws the band. Wrong, and — worse — silent. Found while porting Into The Deep, which
+   * is exactly what porting a real game is for (memory: breadcraft-verify-in-project).
+   *
+   * So the bake happens here, and every later decision ("does this statement speak the
+   * world's language?") is simply right, wherever the statement stands. What stays at the
+   * statement is everything about ORDER, because order is what the diagnostics are about:
+   * a tileset must be active, `PlayField` must come first, a second world is an error.
+   */
+  private prescanWorld(program: Program): void {
+    const band = this.prescanPlayField(program)
+    const id = this.prescanCommandString(program, 'usemap')
+    // Without a band we cannot cut the level (which rows travel?), and without assets we
+    // cannot read the map. Both are honest errors — raised by the statement, where the
+    // user's cursor is; here we simply leave the world unbaked and let the walk report.
+    if (!band || !id || !this.assets) return
+    this.playField = band
+    this.bakeWorld(id)
+  }
+
+  /** The first `PlayField first, last` with compile-time rows, or undefined. Range/constant
+   *  complaints belong to the statement — this only reads what is already sound. */
+  private prescanPlayField(program: Program): { first: number; last: number } | undefined {
+    let band: { first: number; last: number } | undefined
+    const visit = (node: unknown): void => {
+      if (band || node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === 'playfield') {
+        const args = rec.args as Expr[] | undefined
+        const first = this.constInt(args?.[0])
+        const last = this.constInt(args?.[1])
+        if (first !== undefined && last !== undefined && first >= 0 && last <= SCREEN_H - 1 && first <= last) {
+          band = { first, last }
+        }
+        return
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+    return band
+  }
+
+  /** The first string argument of command `name` anywhere in the program. */
+  private prescanCommandString(program: Program, name: string): string | undefined {
+    let id: string | undefined
+    const visit = (node: unknown): void => {
+      if (id !== undefined || node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === name) {
+        const first = (rec.args as Expr[] | undefined)?.[0]
+        if (first && first.kind === 'StringLit') id = first.value
+        return
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+    return id
+  }
+
   /** Is `name` (lower-case) used as a command anywhere in the program? */
   private programUsesCommand(program: Program, name: string): boolean {
     let found = false
@@ -690,6 +774,12 @@ class Generator {
       if (s.kind === 'FunctionDecl') this.collectFunction(s)
       else this.collect(s)
     }
+
+    // Does this program enter a scrolling world? Answered BEFORE any function body is
+    // emitted (S1.B5) — a function written above the `UseMap` still runs after it, and
+    // `Sprite` inside it must hand the VIC to the frame's tail like every other sprite
+    // in a world. Needs the consts collected just above (PlayField takes them).
+    this.prescanWorld(program)
 
     // Emit each function definition into its own buffer (placed before main). Done
     // before the main body so call sites see resolved signatures.
@@ -1836,7 +1926,12 @@ class Generator {
       else if (l.type === 'string') this.emit(`char ${l.cName}[${l.strSize ?? DEFAULT_STR_CAP}];`)
       else this.emit(`${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
     }
+    // Find repeatedly-visited record-array elements ONCE (S1.B5.T3) — the declarations go
+    // above the body, and every field access below reads through them.
+    this.recordPtrs.clear()
+    for (const d of this.planRecordPointers(s.body)) this.emit(d)
     for (const st of s.body) this.genStatement(st)
+    this.recordPtrs.clear()
 
     // Assemble the function and append to funcDefs.
     this.funcDefs.push(`${retC} ${info.cName}(${params}) {`, ...buf, '}', '')
@@ -2458,8 +2553,9 @@ class Generator {
       return
     }
     // The world is baked against this geometry, so moving it afterwards would describe
-    // a band the level was never cut for.
-    if (this.levelWorld) {
+    // a band the level was never cut for. (Asked of the walk, not of the pre-scan — that
+    // one already knows the band, which is the whole point, S1.B5.)
+    if (this.useMapSeen) {
       this.err(this.M.playFieldAfterMap(), s)
       return
     }
@@ -2499,17 +2595,46 @@ class Generator {
       this.err(this.M.useMapNoPlayField(id), s)
       return
     }
-    if (this.levelWorld) {
+    // A SECOND world in the file — asked of the statements walked so far, not of the
+    // pre-scan (which baked the first one before the walk even started, S1.B5).
+    if (this.useMapSeen && this.levelWorld) {
       this.err(this.M.useMapTwice(this.levelWorld.id, id), s)
       return
     }
+    this.useMapSeen = true
 
+    // Normally the pre-scan has baked this world already. It bakes only what it can see
+    // soundly (a compile-time band, a named map, a project) — everything else lands here,
+    // where the error can point at the statement that meant it.
+    if (!this.levelWorld && !this.bakeWorld(id, s)) return
+
+    // Setup: show the first window, then hand the beam to the split. `sei` is what makes
+    // the split reliable — a KERNAL interrupt during the raster wait would land the split
+    // a few lines off, and a split on the wrong line is a visible tear.
+    this.emit(`/* UseMap "${id}" */`)
+    this.emit('{ unsigned char _c; for (_c = 0; _c < BC_SCR_W; ++_c) bc_fill_col(_c, _c); }')
+    this.emit('VIC.ctrl2 = BC_D016_HUD;')
+    this.emit('__asm__("sei"); /* the raster split needs the beam to itself */')
+  }
+
+  /**
+   * Bake the level named `id` into the program: the column-major block the engine reads,
+   * plus its colours. Called from the pre-scan (before the walk, so every statement knows
+   * it is in a world) or, when the pre-scan could not see far enough, from `UseMap`
+   * itself. Needs `playField` — the band is what the level is cut to.
+   *
+   * `at` is the statement to blame for a broken map; without it (the pre-scan) a failure
+   * simply leaves the world unbaked and `UseMap` reports it properly a moment later.
+   * Returns whether a world now exists.
+   */
+  private bakeWorld(id: string, at?: Statement): boolean {
+    if (!this.assets || !this.playField) return false
     let map: ResolvedTilemap
     try {
       map = resolveTilemap(id, this.assets.manifest, this.assets.readFile, this.locale)
     } catch (e) {
-      this.err(e instanceof AssetResolveError ? e.message : String(e), s)
-      return
+      if (at) this.err(e instanceof AssetResolveError ? e.message : String(e), at)
+      return false
     }
 
     // A map is exactly one screen tall today (vertical scrolling is deferred) and
@@ -2586,14 +2711,30 @@ class Generator {
       tilesDecl,
       colorsDecl
     }
+    return true
+  }
 
-    // Setup: show the first window, then hand the beam to the split. `sei` is what makes
-    // the split reliable — a KERNAL interrupt during the raster wait would land the split
-    // a few lines off, and a split on the wrong line is a visible tear.
-    this.emit(`/* UseMap "${id}" */`)
-    this.emit('{ unsigned char _c; for (_c = 0; _c < BC_SCR_W; ++_c) bc_fill_col(_c, _c); }')
-    this.emit('VIC.ctrl2 = BC_D016_HUD;')
-    this.emit('__asm__("sei"); /* the raster split needs the beam to itself */')
+  /**
+   * May `word` speak about the world here? Two different questions, on purpose (S1.B5):
+   *
+   *   - INSIDE A FUNCTION the world is a PROMISE. The function is emitted before the
+   *     top-level `UseMap`, but it runs after it — a game's `ResetLevel()` bringing the
+   *     camera home is written above the world it moves. So it is enough that the program
+   *     enters a world at all, which the pre-scan established before the walk.
+   *   - AT TOP LEVEL the statement runs exactly where it stands. A camera moved before the
+   *     window exists is an honest error, and it stays one — it would otherwise decide
+   *     something the `UseMap` a few lines down then overwrites.
+   */
+  private worldSpeaks(word: string, s: Pos): boolean {
+    if (!this.levelWorld) {
+      this.err(this.M.cameraNoWorld(word), s)
+      return false
+    }
+    if (!this.currentFunc && !this.useMapSeen) {
+      this.err(this.M.worldNotYet(word), s)
+      return false
+    }
+    return true
   }
 
   /**
@@ -2607,10 +2748,7 @@ class Generator {
    *   - a bigger jump is a CUT: the whole window is redrawn, which costs a frame.
    */
   private genSetCameraX(s: CommandStmt): void {
-    if (!this.levelWorld) {
-      this.err(this.M.cameraNoWorld('SetCameraX'), s)
-      return
-    }
+    if (!this.worldSpeaks('SetCameraX', s)) return
     if (s.args.length < 1) {
       this.err(this.M.setCameraXArgs(), s)
       return
@@ -2645,6 +2783,7 @@ class Generator {
       this.err(this.M.setMapTileNoWorld(), s)
       return
     }
+    if (!this.worldSpeaks('SetMapTile', s)) return
     const a = s.args
     if (a.length < 3) {
       this.err(this.M.setMapTileArgs(), s)
@@ -2674,10 +2813,7 @@ class Generator {
    * moment a scroller becomes a level.
    */
   private genFollow(s: CommandStmt): void {
-    if (!this.levelWorld) {
-      this.err(this.M.cameraNoWorld('Follow'), s)
-      return
-    }
+    if (!this.worldSpeaks('Follow', s)) return
     if (s.args.length < 1) {
       this.err(this.M.followArgs(), s)
       return
@@ -3114,8 +3250,98 @@ class Generator {
       const arrow = local?.isPointer ? '->' : '.'
       return `${cName(e.base.name)}${arrow}${cName(e.field)}`
     }
+    // The SAME element, asked again: read it through the pointer this function worked out
+    // once (see planRecordPointers) instead of finding the element from scratch.
+    const held = this.heldPointerFor(e.base)
+    if (held) return `${held}->${cName(e.field)}`
     const baseC = this.indexExpr(e.base)
     return `${baseC}.${cName(e.field)}`
+  }
+
+  /** The pointer this function already holds for `array[idx]`, if any. */
+  private heldPointerFor(base: IndexExpr): string | undefined {
+    if (base.indices.length !== 1) return undefined
+    const idx = base.indices[0]
+    if (idx.kind !== 'Identifier') return undefined
+    return this.recordPtrs.get(`${base.name}#${idx.name}`)
+  }
+
+  /**
+   * FIND THE ELEMENT ONCE (S1.B5.T3). `blobs[idx]\bx` is, in C, `blobs + idx × sizeof + off`
+   * — and cc65 works that address out ON EVERY FIELD, through runtime helper calls. Measured
+   * on the real machine: Into The Deep's `MoveBlob` makes 37 `jsr`s, twelve of them just the
+   * `idx × 8`; `DrawBlob` 20 with thirteen. Three blobs cost 11.830 cycles — 60 % of a PAL
+   * frame — while the whole player physics, which touches no record array, costs 3.293.
+   * (memory: breadcraft-record-array-multiply-trap. The 8-byte record already spared the
+   * multiply; what remained was the call, and nobody could see it from the source.)
+   *
+   * So: when a function reaches into the same element more than once, hold its address in a
+   * pointer and read every field as a fixed offset from it. The user writes the natural
+   * thing and it costs what a newcomer would assume it costs — the translation doctrine's
+   * whole point, one level below the language.
+   *
+   * WHEN IT IS SAFE, and the rule is deliberately narrow: the index must be a plain name
+   * that this function NEVER assigns (a parameter like `idx`, or a settled local). Then the
+   * element cannot move under the pointer. A loop counter is excluded by exactly that test —
+   * `blobs[i]` inside a `For i` loop keeps looking the element up, because it must.
+   */
+  private planRecordPointers(body: Statement[]): string[] {
+    const uses = new Map<string, { array: string; index: string; count: number }>()
+    const assigned = new Set<string>()
+
+    const visitExpr = (node: unknown): void => {
+      if (node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'FieldExpr') {
+        const base = rec.base as Identifier | IndexExpr
+        if (base.kind === 'IndexExpr' && base.indices.length === 1) {
+          const idx = base.indices[0]
+          const arr = this.arrays.get(base.name)
+          if (idx.kind === 'Identifier' && arr?.recordType) {
+            const key = `${base.name}#${idx.name}`
+            const seen = uses.get(key)
+            if (seen) seen.count++
+            else uses.set(key, { array: base.name, index: idx.name, count: 1 })
+          }
+        }
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visitExpr)
+        else if (v && typeof v === 'object') visitExpr(v)
+      }
+    }
+
+    const visitStmt = (s: Statement): void => {
+      // Anything that can move a name is a reason NOT to hold a pointer through it.
+      if (s.kind === 'AssignStmt' && s.target.kind === 'Identifier') assigned.add(s.target.name)
+      if (s.kind === 'GlobalStmt') assigned.add(s.target.name)
+      if (s.kind === 'ForStmt') assigned.add(s.variable.name)
+      visitExpr(s)
+      const blocks: Statement[][] = []
+      if (s.kind === 'IfStmt') {
+        blocks.push(s.then, ...s.elifs.map((e) => e.body), s.else ?? [])
+      } else if (s.kind === 'WhileStmt' || s.kind === 'RepeatStmt' || s.kind === 'ForStmt') {
+        blocks.push(s.body)
+      }
+      for (const b of blocks) b.forEach(visitStmt)
+    }
+    body.forEach(visitStmt)
+
+    const decls: string[] = []
+    for (const [key, use] of uses) {
+      if (use.count < 2 || assigned.has(use.index)) continue
+      const arr = this.arrays.get(use.array)!
+      const rec = this.records.get(arr.recordType!)
+      if (!rec) continue
+      const ptr = `bc_p_${cName(use.array)}_${cName(use.index)}`
+      this.recordPtrs.set(key, ptr)
+      decls.push(
+        `register struct ${rec.cName} *${ptr} = &${arr.cName}[${cName(use.index)}];` +
+          `  /* ${use.array}[${use.index}] found once, read ${use.count}× */`
+      )
+    }
+    return decls
   }
 
   /** The record type backing a field-access base (an array element, or a scalar record
@@ -3355,10 +3581,7 @@ class Generator {
         // CameraX() → the window's left edge in world pixels. The counterpart to
         // SetCameraX, and what turns a world position into a screen one:
         // screen_x = world_x − CameraX() (until `Follow` does it for you, S1.B3.3).
-        if (!this.levelWorld) {
-          this.err(this.M.cameraNoWorld('CameraX'), e)
-          return '/* CameraX: keine Welt */ 0'
-        }
+        if (!this.worldSpeaks('CameraX', e)) return '/* CameraX: keine Welt */ 0'
         this.usesCamera = true
         return 'bc_camx'
       case 'tileat':

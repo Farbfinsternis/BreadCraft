@@ -106,6 +106,7 @@ export interface CodegenMessages {
   useMapTwice(active: string, other: string): string
   setCameraXArgs(): string
   cameraNoWorld(word: string): string
+  worldNotYet(word: string): string
   followArgs(): string
   setMapTileArgs(): string
   setMapTileNoWorld(): string
@@ -388,6 +389,10 @@ const DE_CODEGEN: CodegenMessages = {
   cameraNoWorld: (word) =>
     `${word}: es gibt keine Welt zum Anschauen — die Kamera ist das Fenster auf eine Karte, ` +
     `die mit UseMap betreten wird (davor PlayField, damit klar ist, welcher Streifen scrollt)`,
+  worldNotYet: (word) =>
+    `${word} kommt zu früh: die Welt wird erst weiter unten mit UseMap betreten, also gibt es ` +
+    `hier noch kein Fenster, das sich bewegen ließe. In einer FUNKTION ist das kein Problem — ` +
+    `die läuft ja später; nur hier im geraden Ablauf zählt die Reihenfolge`,
   followArgs: () =>
     `Follow erwartet die Sprite-Nummer, der die Kamera folgen soll, z. B. Follow PLAYER — ` +
     `dahinter darf eine Leine stehen (Follow PLAYER, 20 = erst ab 20 Pixel Abstand zur ` +
@@ -535,6 +540,10 @@ const EN_CODEGEN: CodegenMessages = {
   cameraNoWorld: (word) =>
     `${word}: there is no world to look at — the camera is the window onto a map, and a map ` +
     `is entered with UseMap (after PlayField, so it is clear which strip scrolls)`,
+  worldNotYet: (word) =>
+    `${word} comes too early: the world is only entered further down with UseMap, so there is ` +
+    `no window here yet that could move. Inside a FUNCTION this is fine — that runs later; ` +
+    `only here in the straight run of the program does the order count`,
   followArgs: () =>
     `Follow expects the sprite the camera should follow, e.g. Follow PLAYER — a leash may ` +
     `come after it (Follow PLAYER, 20 = the world only follows once he is 20 pixels off ` +

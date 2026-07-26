@@ -1358,6 +1358,161 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       expect(code).toContain('COLOR_RAM[idx] = bc_lvlcol_bunt[_s];')
     })
 
+    // S1.B5.T3: `blobs[idx]\bx` is, in C, "array + idx × sizeof + offset" — and cc65 works
+    // that out on EVERY field, through runtime helper calls. Measured on the real machine:
+    // Into The Deep's three enemies cost 11.830 cycles a frame (60 % of PAL) that way.
+    describe('a record-array element is found once, not per field (S1.B5.T3)', () => {
+      const withBlobs = (fnBody: string): string =>
+        [
+          'Type Blob',
+          '  Field bx.w',
+          '  Field by.b',
+          '  Field hp.b',
+          'End Type',
+          'Dim blobs.Blob[3]',
+          'Function Move(idx.b)',
+          fnBody,
+          'End Function',
+          'Move(0)'
+        ].join('\n')
+
+      it('holds the element in a pointer when a function visits it more than once', () => {
+        const { code, errors } = gen(
+          withBlobs('  blobs[idx]\\bx = blobs[idx]\\bx + 1\n  blobs[idx]\\hp = 2'),
+          fakeAssets()
+        )
+        expect(errors).toEqual([])
+        // `register` puts it in the ZERO PAGE (cc65 --register-vars) — on the C stack the
+        // pointer would have to be fetched for every field, which measured almost no win.
+        expect(code).toContain('register struct Blob *bc_p_blobs_idx = &blobs[idx];')
+        expect(code).toContain('bc_p_blobs_idx->bx = (bc_p_blobs_idx->bx + 1);')
+        expect(code).toContain('bc_p_blobs_idx->hp = 2;')
+        expect(code).not.toContain('blobs[idx].bx')
+      })
+
+      it('leaves a single visit alone (a pointer would only cost setup)', () => {
+        const { code } = gen(withBlobs('  blobs[idx]\\hp = 0'), fakeAssets())
+        expect(code).not.toContain('bc_p_blobs_idx')
+        expect(code).toContain('blobs[idx].hp = 0;')
+      })
+
+      // The safety rule, and it is the whole reason this is narrow: the element may not
+      // move under the pointer. An index the function ASSIGNS is exactly that case.
+      it('refuses to hold a pointer when the index can change', () => {
+        const { code } = gen(
+          withBlobs('  idx = idx + 1\n  blobs[idx]\\bx = 1\n  blobs[idx]\\hp = 2'),
+          fakeAssets()
+        )
+        expect(code).not.toContain('bc_p_blobs_idx')
+        expect(code).toContain('blobs[idx].bx = 1;')
+      })
+
+      it('refuses it for a loop counter — that element moves every turn', () => {
+        const { code } = gen(
+          withBlobs('  For i.b = 0 To 2\n    blobs[i]\\bx = 1\n    blobs[i]\\hp = 2\n  Next'),
+          fakeAssets()
+        )
+        expect(code).not.toContain('bc_p_blobs_i ')
+        expect(code).toContain('blobs[i].bx = 1;')
+      })
+
+      it('holds one pointer per element a function visits', () => {
+        const { code } = gen(
+          [
+            'Type Blob',
+            '  Field bx.w',
+            '  Field hp.b',
+            'End Type',
+            'Dim blobs.Blob[3]',
+            'Function Swap(a.b, b.b)',
+            '  blobs[a]\\bx = blobs[b]\\bx',
+            '  blobs[a]\\hp = blobs[b]\\hp',
+            'End Function',
+            'Swap(0, 1)'
+          ].join('\n'),
+          fakeAssets()
+        )
+        expect(code).toContain('*bc_p_blobs_a = &blobs[a];')
+        expect(code).toContain('*bc_p_blobs_b = &blobs[b];')
+        expect(code).toContain('bc_p_blobs_a->bx = bc_p_blobs_b->bx;')
+      })
+    })
+
+    // S1.B5: a game defines its functions ABOVE the UseMap that enters the world (ITD does
+    // it through Include), and calls them from the frame loop below it. The functions are
+    // emitted first but they RUN last — so the world must be known before the walk, or a
+    // function gets the pre-world shape of a statement in a scrolling program.
+    describe('functions written above the UseMap (the ITD shape)', () => {
+      const early = (fnBody: string, extra = ''): string =>
+        [
+          'Global px.w = 40',
+          'Function Draw()',
+          fnBody,
+          'End Function',
+          'UseTileset "main"',
+          'UseSprite 0, "player"',
+          'PlayField 3, 12',
+          'UseMap "welt"',
+          extra,
+          'While 1',
+          '  VWait',
+          '  Draw',
+          'Wend'
+        ].join('\n')
+
+      it('hands the sprite to the frame tail, not to the VIC directly', () => {
+        const { code, errors } = gen(early('  Sprite 0, px, 100'), fakeAssets())
+        expect(errors).toEqual([])
+        // The world path. The old walk-order check emitted VIC.spr_pos writes here: the
+        // hero would not ride on the world, and his registers would be written while the
+        // beam draws the band — wrong, and silent.
+        expect(code).toContain('bc_sprite(0, px, 100);')
+        expect(code).not.toContain('VIC.spr_pos[0].x =')
+      })
+
+      it('counts the sprite slots it names, so the tail knows what to write', () => {
+        const { code } = gen(early('  Sprite 2, px, 100'), fakeAssets())
+        expect(code).toContain('#define BC_SPR_N     3')
+      })
+
+      it('turns a sprite on as a WISH (the tail decides what the VIC gets)', () => {
+        const { code } = gen(early('  ShowSprite 0'), fakeAssets())
+        expect(code).toContain('bc_spr_want |= (1 << (0));')
+        expect(code).not.toContain('VIC.spr_ena |=')
+      })
+
+      it('lets a function bring the camera home — it runs after the world is entered', () => {
+        const { code, errors } = gen(early('  SetCameraX 0'), fakeAssets())
+        expect(errors).toEqual([])
+        expect(code).toContain('bc_set_camx((int)(0));')
+      })
+
+      it('lets a function change the world (SetMapTile) and read the camera', () => {
+        const { code, errors } = gen(early('  SetMapTile px, 100, 32\n  px = CameraX()'), fakeAssets())
+        expect(errors).toEqual([])
+        expect(code).toContain('bc_set_map_tile(')
+        expect(code).toContain('px = bc_camx;')
+      })
+
+      // …but a straight-line statement runs exactly where it stands. Before the UseMap
+      // there is no window yet, and saying so beats deciding something that the UseMap a
+      // few lines down then overwrites.
+      it('still refuses a camera moved at top level BEFORE the world is entered', () => {
+        const src = [
+          'UseTileset "main"',
+          'PlayField 3, 12',
+          'SetCameraX 0',
+          'UseMap "welt"'
+        ].join('\n')
+        expect(gen(src, fakeAssets()).errors.some((e) => /kommt zu früh/.test(e))).toBe(true)
+      })
+
+      it('still refuses a camera in a program that has no world at all', () => {
+        const src = 'UseTileset "main"\nSetCameraX 0'
+        expect(gen(src, fakeAssets()).errors.some((e) => /keine Welt zum Anschauen/.test(e))).toBe(true)
+      })
+    })
+
     // S1.B4: the codegen is the only side that KNOWS what the band and the engine are, so
     // it reports it — the health bars read those figures instead of guessing them a second
     // time from the source (one truth about the world).

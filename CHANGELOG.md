@@ -99,6 +99,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   BreadCraft sagt Dir das, statt eine Farbe zu versprechen, die beim Zurückscrollen umkippen
   würde. Auf echtem C64 (VICE) nachgemessen: ein Taucher frisst den Boden weg, und **208 Spalten**
   kamen nach einer Reise aus dem Bild und zurück mit ihrer Lücke wieder — keine einzige wuchs nach.
+- **Deine „Dinge" sind schneller geworden — messbar, auf echtem C64.** Wenn eine Funktion
+  mehrfach auf dasselbe Ding aus einer Liste zugreift (`blobs[idx]\bx`, `blobs[idx]\hp`, …),
+  suchte der C64 dieses Ding bisher **bei jedem einzelnen Feld neu heraus**. Das sieht man dem
+  Programm nicht an: „Into The Deep" verbrauchte dadurch **60 % seines Frames für drei
+  Gegner** — mehr als für die gesamte Spielerphysik. Jetzt merkt BreadCraft sich das Ding
+  einmal und liest danach alle Felder direkt. Gemessen am laufenden Spiel: **16.859 → 14.500
+  Takte pro Frame, also von 86 % auf 74 %** — ein Fünftel des Frames zurück, ohne dass Du eine
+  Zeile änderst. Je Gegner: 3.943 → 3.172 Takte. (Gilt überall, wo Du mit Listen von Dingen
+  arbeitest; die Regel ist bewusst vorsichtig — zählt eine Schleife den Index hoch, wird
+  weiterhin jedes Mal frisch gesucht, weil sich das Ding dann ja ändert.)
 - **Der Karten-Editor hat einen Knopf „Neu" — und die neue Karte hat noch keinen Namen.**
   Ein Klick, und Du hast einen frischen Bildschirm zum Malen; die alte Karte fliegt aus dem
   Speicher (hattest Du dort ungespeicherte Arbeit, wird vorher gefragt). Das Besondere: die
