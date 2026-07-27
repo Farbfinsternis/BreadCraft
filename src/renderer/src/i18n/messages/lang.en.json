@@ -115,7 +115,7 @@
   "param.tileat.px": "Pixel X (sprite coordinate).",
   "param.tileat.py": "Pixel Y (sprite coordinate).",
 
-  "cmd.playfield": "Declares a strip of the screen to be the scrolling play field — the rows inside it travel, everything above and below stays nailed down (room for your score). Up to ten tile rows, BreadCraft's current technique scrolls like butter; taller than that it can no longer keep up with the electron beam and the picture gets rough — the perf bar tells you when it begins to wheeze. (The C64 itself can do more: with double buffering the big games scroll the whole screen — that upgrade is on the roadmap.)",
+  "cmd.playfield": "Declares a strip of the screen to be the scrolling play field — the rows inside it travel, everything above and below stays nailed down (room for your score). Up to ten tile rows, BreadCraft's current technique scrolls like butter; taller than that it can no longer keep up with the electron beam and the picture gets rough — the perf bar tells you when it begins to wheeze. A flatter play field is a lever that pulls twice: moving the band on gets cheaper AND your program is left more time to think. (The C64 itself can do more: with double buffering the big games scroll the whole screen — that upgrade is on the roadmap.)",
   "param.playfield.first": "Top screen row of the play field (0–24).",
   "param.playfield.last": "Bottom screen row of the play field — first to last is the height.",
 

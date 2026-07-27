@@ -115,7 +115,7 @@
   "param.tileat.px": "Pixel-X (Sprite-Koordinate).",
   "param.tileat.py": "Pixel-Y (Sprite-Koordinate).",
 
-  "cmd.playfield": "Erklärt einen Streifen des Schirms zum scrollenden Spielfeld — die Zeilen dazwischen wandern, alles darüber und darunter steht wie festgenagelt (Platz für Deinen Punktestand). Bis zehn Kachelzeilen scrollt BreadCrafts heutige Technik butterweich; darüber kommt sie dem Elektronenstrahl nicht mehr hinterher und das Bild wird unruhig — die Perf-Bar sagt Dir, wann es zu keuchen beginnt. (Der C64 selbst kann mehr: mit Doppelpuffer-Technik scrollen große Spiele den ganzen Schirm — die Ausbaustufe steht auf dem Plan.)",
+  "cmd.playfield": "Erklärt einen Streifen des Schirms zum scrollenden Spielfeld — die Zeilen dazwischen wandern, alles darüber und darunter steht wie festgenagelt (Platz für Deinen Punktestand). Bis zehn Kachelzeilen scrollt BreadCrafts heutige Technik butterweich; darüber kommt sie dem Elektronenstrahl nicht mehr hinterher und das Bild wird unruhig — die Perf-Bar sagt Dir, wann es zu keuchen beginnt. Ein flacheres Spielfeld ist dabei ein Hebel, der doppelt zieht: das Nachrücken wird billiger UND Deinem Programm bleibt mehr Zeit zum Denken. (Der C64 selbst kann mehr: mit Doppelpuffer-Technik scrollen große Spiele den ganzen Schirm — die Ausbaustufe steht auf dem Plan.)",
   "param.playfield.first": "Oberste Bildschirmzeile des Spielfelds (0–24).",
   "param.playfield.last": "Unterste Bildschirmzeile des Spielfelds — first bis last ergibt die Höhe.",
 

@@ -109,6 +109,32 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Zeile änderst. Je Gegner: 3.943 → 3.172 Takte. (Gilt überall, wo Du mit Listen von Dingen
   arbeitest; die Regel ist bewusst vorsichtig — zählt eine Schleife den Index hoch, wird
   weiterhin jedes Mal frisch gesucht, weil sich das Ding dann ja ändert.)
+- **In einer scrollenden Welt hat Dein Programm jetzt um ein Vielfaches mehr Zeit.** Damit
+  oben und unten am Spielfeld sauber abgeschnitten wird, musste BreadCraft bisher in jedem
+  Frame an zwei ganz bestimmten Stellen des Bildaufbaus **persönlich anwesend** sein — und
+  dazwischen lief Dein Code. Dein Spiel durfte also nur denken, solange der C64 gerade das
+  Band malte. Das hatte eine unangenehme Kehrseite: je flacher Du Dein Spielfeld machtest,
+  desto **weniger** Zeit blieb Dir — genau andersherum, als man es braucht. Diese zwei
+  Handgriffe erledigt der C64 jetzt selbst, per Weckruf zur richtigen Bildzeile, und Dein
+  Code bekommt fast das ganze Frame. Auf echtem C64 nachgemessen, bei einem sechs Zeilen
+  hohen Spielfeld: **2.774 → 16.363 Takte** — aus „reicht für fast nichts" wird „reicht für
+  ein Spiel". Und die Rechnung dreht sich um: **ein flacheres Band gibt Dir ab jetzt mehr
+  Rechenzeit, nicht weniger.**
+- **Und wird es doch einmal zu viel, ruckelt das Bild ehrlich, statt zu zerreißen.** Kommt
+  Dein Code nicht rechtzeitig zurück, lässt BreadCraft das Weiterrücken der Welt für dieses
+  eine Frame ausfallen: die Welt hält einen Wimpernschlag an und holt im nächsten Frame auf.
+  Ein Ruckeln heißt „hier ist zu viel Code" und sagt Dir etwas — ein zerrissenes Bild sähe
+  dagegen aus, als wäre die Hardware kaputt.
+- **Der PERF-Balken rechnet mit dem neuen Zimmer — und nennt den Hebel, der jetzt doppelt
+  zieht.** Er zeigt nicht mehr „so viel Zeit hast Du, während das Band gemalt wird", sondern
+  „so viel bleibt vom Frame übrig, wenn die Welt weitergerückt ist". Wird es eng, sagt der
+  Balken weiterhin **welche** Wand es ist; neu ist, dass beide denselben Hebel haben: **ein
+  flacheres `PlayField` macht das Nachrücken billiger UND schenkt Deinem Programm
+  Rechenzeit.** Vorher war das ein Tauschgeschäft, jetzt ist es ein Gewinn. Nachgeprüft
+  wurde der Balken dort, wo es zählt: „Into The Deep" wurde in drei Fassungen in eine
+  scrollende Welt gesetzt und auf einem echten C64 laufen gelassen — und in allen drei
+  Fällen sagte der Balken vorher dasselbe, was die Maschine hinterher tat (eine Fassung
+  läuft ohne einen einzigen Aussetzer, zwei ruckeln).
 - **Der Karten-Editor hat einen Knopf „Neu" — und die neue Karte hat noch keinen Namen.**
   Ein Klick, und Du hast einen frischen Bildschirm zum Malen; die alte Karte fliegt aus dem
   Speicher (hattest Du dort ungespeicherte Arbeit, wird vorher gefragt). Das Besondere: die

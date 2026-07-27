@@ -69,10 +69,10 @@ describe('perf estimate (a guess from the code)', () => {
 //
 // Two things make a scrolling frame different, and these tests pin both: it is not an
 // AVERAGE (every 8th pixel the band physically moves a column — one heavy frame in eight),
-// and it is not one ROOM (the raster split gives the program the band's drawing time and
-// the shift what is left below it). The anchor is real hardware: at ten band rows the step
-// measured 13.309 cycles of the ~14.600 the tail offers — 22 raster lines of air — and at
-// twelve rows it tore (SCROLLING_PLAN T2c/T4).
+// and it is not one BUDGET (the step must fit below the band, and what it leaves of the
+// frame is what the program's own code may cost). The anchor is real hardware: at ten band
+// rows the step measured 13.309 cycles of the ~14.600 the tail offers — 22 raster lines of
+// air — and at twelve rows it tore (SCROLLING_PLAN T2c/T4).
 
 /** A world wide enough to travel through: 120 columns, one colour per tile (so it buys
  *  the cheap tile→colour table), plus the mottled twin that has to pay per cell. */
@@ -125,7 +125,7 @@ const worldPerf = (
     worldAssets()
   ).perf
 
-describe('a scrolling frame is two rooms, and one of eight is heavy (S1.B4)', () => {
+describe('a scrolling frame has two walls, and one of eight is heavy (S1.B4)', () => {
   const camera = '  SetCameraX CameraX() + 1'
 
   it('a program without a world knows nothing of rooms (the ITD case: untouched)', () => {
@@ -134,14 +134,13 @@ describe('a scrolling frame is two rooms, and one of eight is heavy (S1.B4)', ()
     expect(p.fraction).toBe(p.cyclesPerFrame / p.budgetCycles)
   })
 
-  it('the split frame divides into pocket and tail — 8 raster lines per band row', () => {
+  it('the tail is what the band leaves of the frame — 8 raster lines per band row', () => {
     const p = worldPerf('3, 12', '  BorderColor BLUE')!
     expect(p.world).toBeDefined()
     expect(p.world!.bandRows).toBe(10)
-    // Ten band rows draw for 80 raster lines: the program's own room. PAL's line = 63.
-    expect(p.world!.pocketCycles).toBe(10 * 8 * 63)
-    // …and everything else in the frame is the tail, where the band may be moved.
-    expect(p.world!.pocketCycles + p.world!.tailCycles).toBe(p.budgetCycles)
+    // Ten band rows draw for 80 raster lines; everything else in the frame is the tail,
+    // where the band may be moved. PAL's line = 63.
+    expect(p.world!.tailCycles).toBe(p.budgetCycles - 10 * 8 * 63)
   })
 
   it('a standing world pays nothing for a move it never makes', () => {
@@ -156,6 +155,58 @@ describe('a scrolling frame is two rooms, and one of eight is heavy (S1.B4)', ()
     expect(p.world!.everyFrames).toBe(8) // eight pixels to a character
     expect(p.world!.wall).toBe('tail')
     expect(p.fraction).toBe(p.world!.tailUsed / p.world!.tailCycles)
+  })
+
+  // S1 Schritt 2: a raster interrupt writes the two split registers, so the program no
+  // longer has to be present at them — its room is the FRAME minus what moving the band
+  // costs, not the band's drawing time. The lever inverts with it, and these two are the
+  // hardware points the model is held to (SCROLLING_PLAN Schritt 2, T1).
+  describe('the room the interrupt gave back (Schritt 2)', () => {
+    it('is the frame minus the step’s share — not the band’s drawing time', () => {
+      const p = worldPerf('3, 12', camera)!
+      // 19.656 − 1.381 (the split's own price, measured) − 13.310/8 (the step falls on one
+      // frame in eight; on the other seven the program has that time).
+      expect(p.world!.roomCycles).toBe(19656 - 1381 - Math.round(13310 / 8))
+      // The old model handed the program the band's drawing time (10 × 8 × 63 = 5.040)
+      // and shrank it as the band got flatter. It no longer does.
+      expect(p.world!.roomCycles).not.toBe(10 * 8 * 63)
+    })
+
+    it('GROWS when the play field gets flatter — the inversion the interrupt bought', () => {
+      const ten = worldPerf('3, 12', camera)!
+      const six = worldPerf('3, 8', camera)!
+      expect(six.world!.bandRows).toBe(6)
+      expect(six.world!.roomCycles).toBeGreaterThan(ten.world!.roomCycles)
+      // …where the waiting technique gave a six-row band LESS (504 × 6 = 3.024 against
+      // 5.040) — measured on hardware as 2.774 against 4.751.
+      expect(6 * 8 * 63).toBeLessThan(10 * 8 * 63)
+    })
+
+    // ★ THE ANCHOR IS THE PORTED GAME (Schritt 2, T4). Into The Deep was built onto a
+    // scrolling world three ways and each ran on real hardware with a counter on the
+    // engine's own drop path. The bar has to agree with what the machine did — above all
+    // in the direction that matters: what RUNS must never read "over".
+    it('agrees with Into The Deep on hardware — and never cries wolf', () => {
+      // ITD's own per-frame work, measured (the model's estimate of it is not the point
+      // here; what is measured is which side of the wall each configuration lands on).
+      const MEASURED = [
+        { rows: 6, work: 11566, dropped: 0, runs: true }, //   0 of 214 frames dropped
+        { rows: 6, work: 19045, dropped: 0.48, runs: false }, // 192 of 401
+        { rows: 10, work: 17177, dropped: 0.86, runs: false } // 374 of 435
+      ]
+      for (const m of MEASURED) {
+        const p = worldPerf(`3, ${m.rows + 2}`, camera)!
+        expect(p.world!.bandRows).toBe(m.rows)
+        const fraction = m.work / p.world!.roomCycles
+        if (m.runs) {
+          // Ran 214 frames without dropping one step: the bar must not call that "over".
+          expect(fraction).toBeLessThan(1)
+        } else {
+          // Stuttered on hardware — the bar must at least be at the wall about it.
+          expect(fraction).toBeGreaterThan(0.9)
+        }
+      }
+    })
   })
 
   it('reproduces the measured step at ten band rows (T4: 13.309 cycles, 22 lines of air)', () => {
@@ -190,22 +241,22 @@ describe('a scrolling frame is two rooms, and one of eight is heavy (S1.B4)', ()
     expect(six.state).toBe('ok')
   })
 
-  it('too much per-frame code fills the POCKET — a different wall, a different lever', () => {
+  it('too much per-frame code fills the ROOM — a different wall, a different lever', () => {
     const heavy = worldPerf(
       '3, 12',
-      ['  For i = 0 To 40', '    x.w = i * i * i', '  Next'].join('\n')
+      ['  For i = 0 To 70', '    x.w = i * i * i', '  Next'].join('\n')
     )!
     // A standing world, so the tail is empty: what is full here is the program's own room
     // between two VWaits, and naming that is what lets the user fix the right thing.
     expect(heavy.world!.shiftCycles).toBe(0)
-    expect(heavy.world!.wall).toBe('pocket')
+    expect(heavy.world!.wall).toBe('room')
     expect(heavy.state).toBe('over')
   })
 
   it('colour per TILE costs a hair more TIME than per cell — the other side of half the RAM', () => {
     const table = worldPerf('3, 12', camera, 'welt')!
     const perCell = worldPerf('3, 12', camera, 'bunt')!
-    expect(table.world!.pocketUsed).toBeGreaterThan(perCell.world!.pocketUsed)
+    expect(table.world!.roomUsed).toBeGreaterThan(perCell.world!.roomUsed)
   })
 
   it('sprites cost the tail on EVERY frame (their registers go below the band)', () => {

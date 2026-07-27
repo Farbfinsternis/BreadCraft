@@ -252,32 +252,36 @@ export interface PerfInfo {
   world?: PerfWorld
 }
 
-/** A SCROLLING FRAME IS TWO ROOMS, not one budget (S1.B4 — measured, SCROLLING_PLAN
- *  T2c/T4). The raster split cuts every frame in two:
+/** A SCROLLING FRAME HAS TWO DEADLINES, not one budget (S1.B4/Schritt 2 — measured,
+ *  SCROLLING_PLAN T2c/T4/Schritt 2 T1):
  *
- *    - THE POCKET — while the beam draws the band, the band must not be touched, but
- *      thinking is free. This is where the program's own frame code runs, and its deadline
- *      is the band's own drawing time: 8 raster lines per band row. Overrun it and `VWait`
- *      misses the split, waits a whole frame → 25 fps.
+ *    - THE ROOM — what the program's own frame code may cost. A raster interrupt now does
+ *      the splitting, so the program has to be nowhere in particular: it gets the whole
+ *      frame MINUS what moving the band takes out of it. Overrun it and the step is dropped
+ *      — the world stutters, it does not tear.
  *    - THE TAIL — below the band, the only place the band may be moved. The coarse shift
  *      lives here and its room is what is LEFT of the frame: `312 − 8·H` raster lines.
  *
- *  So a taller play field cuts both ways at once: the shift's work grows per band row while
- *  the room it must fit shrinks. That scissor — this engine's, not the C64's — is why the
- *  honest ceiling sits near ten band rows, and why the bar can DERIVE that ceiling instead
- *  of being told it.
+ *  THE LEVER RUNS ONE WAY NOW, and that is the point of the interrupt (Schritt 2). A taller
+ *  play field grows the shift's work AND shrinks the tail it must fit into — that scissor is
+ *  why the honest ceiling sits near ten band rows, and the bar DERIVES it rather than being
+ *  told. A flatter play field now gives the program MORE thinking time as well (measured on
+ *  hardware: at six band rows 16.363 cycles against 2.774 with the old waiting technique),
+ *  where before it gave less. One lever, both walls.
  *
  *  Only every 8th pixel does the band physically move (`$D016` shifts the picture 0–7
  *  pixels for one register write, for free), so with a moving camera one frame in eight is
- *  the heavy one — and that is the frame these figures describe. */
+ *  the heavy one. These figures describe THAT frame — and the room is quoted as if every
+ *  frame were heavy, because that is the floor a game can count on (Schritt 2, Befund 1:
+ *  the light frames may be borrowed, but they may not be promised). */
 export interface PerfWorld {
-  /** Tile rows that travel (`PlayField`) — the driver of both rooms' sizes. */
+  /** Tile rows that travel (`PlayField`) — the driver of both deadlines. */
   bandRows: number
-  /** Cycles the pocket offers the program's own code (bandRows × 8 raster lines). */
-  pocketCycles: number
-  /** Estimated cycles used there on the heavy frame: the program's own code, plus building
-   *  the column about to appear. */
-  pocketUsed: number
+  /** Cycles the frame leaves the program's own code once the band's move is paid for. */
+  roomCycles: number
+  /** Estimated cycles used there: the program's own code, plus building the column about
+   *  to appear. */
+  roomUsed: number
   /** Cycles the tail offers below the band (the rest of the frame). */
   tailCycles: number
   /** Estimated cycles used there on the heavy frame: the coarse shift, plus handing the
@@ -289,9 +293,9 @@ export interface PerfWorld {
   /** How often the heavy frame lands: every Nth frame at full camera speed (8 = one pixel
    *  per frame, eight pixels to a character). 0 for a standing world — all frames alike. */
   everyFrames: number
-  /** Which room is the fuller one, i.e. what `fraction` is about. The lever differs:
-   *  'pocket' → the program does too much per frame; 'tail' → the band is too tall. */
-  wall: 'pocket' | 'tail'
+  /** Which wall is the nearer one, i.e. what `fraction` is about. The lever differs:
+   *  'room' → the program does too much per frame; 'tail' → the band is too tall. */
+  wall: 'room' | 'tail'
 }
 
 /** What the scrolling level itself costs in RAM (S1.B4) — reported by the compiler so the

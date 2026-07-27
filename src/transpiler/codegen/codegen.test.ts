@@ -1279,8 +1279,8 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       expect(code).toContain('static const unsigned char bc_lvl_welt[1200]')
       // The window is filled at setup, and the beam is taken over for the split.
       expect(code).toContain('bc_fill_col(_c, _c)')
-      expect(code).toContain('__asm__("sei")')
-      expect(code).toContain('__asm__("cli")') // …and handed back if the program ever ends
+      expect(code).toContain('bc_split_start();')
+      expect(code).toContain('bc_split_stop();') // …and handed back if the program ever ends
     })
 
     it('turns VWait into the raster-split frame', () => {
@@ -1288,6 +1288,24 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       expect(code).toContain('static void bc_vwait(void)')
       expect(code).toContain('bc_vwait();')
       expect(code).not.toContain('waitvsync();')
+    })
+
+    // S1 Schritt 2: the two split writes live in a raster interrupt, so the program's own
+    // frame code is no longer confined to the time the band takes to draw. Only those two
+    // writes moved — the tail stays in the main program (cc65's zero page is not shareable).
+    it('cuts the frame with a raster interrupt, not by waiting on $D012', () => {
+      const { code } = gen(world('While 1\n  VWait\nWend'), fakeAssets())
+      expect(code).toContain('static void bc_irq_split(void)')
+      expect(code).toContain('*(void (**)(void))0x0314 = bc_irq_split;')
+      expect(code).toContain('__asm__("jmp $ea81");') // …not $EA31: no keyboard scan
+      // Armed a line early, then it meets its own line exactly — an interrupt is 40-60
+      // cycles late and a $D016 written mid-line would shear that line.
+      expect(code).toContain('VIC.rasterline = BC_SPLIT_IN - 1;')
+      expect(code).toContain('__asm__("bcirqw1: cpx $d012");')
+      // The frame turns over on the interrupt's tick, not on a raster wait.
+      expect(code).toContain('while (bc_tick == bc_last_tick) { }')
+      expect(code).not.toContain('while (BC_RASTER != BC_SPLIT_OUT)')
+      expect(code).not.toContain('while (BC_RASTER != BC_SPLIT_IN)')
     })
 
     // A program without a world keeps the plain frame sync — the engine costs nothing
@@ -1565,14 +1583,34 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       const CBAND = 0xd878
       const hex = (n: number): string => '0x' + n.toString(16).toUpperCase().padStart(4, '0')
 
-      it('decides in the pocket and moves in the tail', () => {
+      it('decides while the program has the frame, and moves in the tail', () => {
         const { code, errors } = gen(world('SetCameraX 8\nWhile 1\n  VWait\nWend'), fakeAssets())
         expect(errors).toEqual([])
         // The call itself only decides…
         expect(code).toContain('bc_set_camx((int)(8));')
         // …the movement sits behind the split, in the frame's tail.
-        expect(code).toMatch(/VIC\.ctrl2 = BC_D016_HUD;[\s\S]*?if \(bc_cut\)[\s\S]*?bc_shift_col_left\(\)/)
+        expect(code).toMatch(
+          /static void bc_vwait\(void\) \{[\s\S]*?if \(bc_cut\)[\s\S]*?bc_shift_col_left\(\)/
+        )
         expect(code).toContain('bc_shown_col = bc_want_col;')
+      })
+
+      // S1 Schritt 2, Befund 2: with the interrupt doing the splitting, nothing holds a slow
+      // program back any more — so the ENGINE has to. A step that no longer fits below the
+      // band is dropped (the wish stands), because a stutter is an honest "too much code"
+      // and a tear looks like broken hardware.
+      it('drops the step instead of tearing when the frame ran long', () => {
+        const { code } = gen(world('SetCameraX 8\nWhile 1\n  VWait\nWend'), fakeAssets())
+        // Room below a ten-row band = 312 − 80 lines; the step itself costs 10 × 21 + 2.
+        expect(code).toContain('#define BC_TAIL_SLACK 20')
+        expect(code).toContain('if ((unsigned int)(_r - BC_SPLIT_OUT) > BC_TAIL_SLACK) return;')
+        // The deadline is only asked when there is something heavy to do…
+        expect(code).toMatch(/if \(bc_dir_col \|\| bc_cut\) \{[\s\S]*?BC_TAIL_SLACK/)
+        // …and a dropped step keeps its wish: neither the column nor the fine scroll moves,
+        // because half a step is a jump, not a scroll.
+        expect(code).toMatch(
+          /BC_TAIL_SLACK\) return;[\s\S]*?bc_shown_col = bc_want_col;[\s\S]*?bc_d016_band = /
+        )
       })
 
       it('clamps at both level ends instead of wrapping', () => {
@@ -1665,7 +1703,7 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
           expect(code).toContain('bc_sprite(0, 200, 100);')
           // …not the register poke a standing program gets.
           expect(code).not.toContain('VIC.spr_pos[0].x = (unsigned char)((200) & 0xFF);')
-          expect(code).toMatch(/VIC\.ctrl2 = BC_D016_HUD;[\s\S]*?bc_spr_flush\(\);/)
+          expect(code).toMatch(/static void bc_vwait\(void\) \{[\s\S]*?bc_spr_flush\(\);/)
         })
 
         it('turns a world position into a screen one, and hides what is outside', () => {
@@ -1675,7 +1713,7 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
           expect(code).toContain('VIC.spr_ena = ena;')
         })
 
-        it('decides the camera where the hero is known — in the pocket, inside Sprite', () => {
+        it('decides the camera where the hero is known — inside Sprite', () => {
           const { code, errors } = gen(
             world('Follow 0, 20\nWhile 1\n  VWait\n  Sprite 0, 200, 100\nWend'),
             fakeAssets()

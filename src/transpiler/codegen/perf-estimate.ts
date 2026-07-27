@@ -92,18 +92,19 @@ const LOOP_GUESS = 4 // unknown While/Repeat iteration count → a flat guess
  *      Color-RAM (the VIC does not scroll $D800) and the column appearing at the edge.
  *      One heavy frame among eight light ones: 15.886 cycles measured against 4.240 on
  *      average at a ten-row band. An average hides the only frame that can tear.
- *   2. IT IS NOT ONE ROOM. The raster split gives the program's code the band's drawing
- *      time (the POCKET) and the shift what is left below the band (the TAIL, `312 − 8·H`
- *      raster lines). A taller band grows the work AND shrinks the room it must fit —
+ *   2. IT IS NOT ONE BUDGET. The shift has to fit below the band (the TAIL, `312 − 8·H`
+ *      raster lines) — a taller band grows the work AND shrinks the room it must fit,
  *      which is exactly why H = 12 tore where H = 10 stands, and why the ceiling belongs
- *      to this engine rather than to the machine (see PerfWorld in @shared/ipc).
+ *      to this engine rather than to the machine. And what is left of the frame after the
+ *      shift is what the program's own code may cost (the ROOM). See PerfWorld in
+ *      @shared/ipc.
  */
 const ENGINE = {
   /** Cycles the coarse step costs PER BAND ROW — copy plus revealed column (T4: 13.309
    *  cycles at ten rows, of the ~14.600 the tail then offers). */
   shiftPerBandRow: 1331,
   /** Building the column about to appear (`bc_set_camx`'s loop), per band row. Lands on
-   *  the same frame as the shift — the pocket decides, the tail moves. */
+   *  the same frame as the shift — the program decides, the tail moves. */
   edgePerBandRow: 90,
   /** …plus its fixed part: clamping, the fine-scroll value, deciding which way to travel. */
   edgeFixed: 60,
@@ -117,7 +118,19 @@ const ENGINE = {
   /** …and the flush's own loop/register overhead. */
   sprFlushFixed: 40,
   /** Frames between two coarse steps at full camera speed: eight pixels to a character. */
-  stepEveryFrames: 8
+  stepEveryFrames: 8,
+  /**
+   * What the SPLIT ITSELF takes out of EVERY frame, on top of moving the band: two
+   * interrupt entries that each wait for their exact raster line, the frame turnover
+   * `VWait` waits for, the deadline question before the step — plus the cycles the VIC
+   * steals from the CPU while it fetches a row of characters.
+   *
+   * MEASURED, not derived (SCROLLING_PLAN Schritt 2, T1). The probe raised its own load
+   * until a frame failed, backed off and ran clean: at ten band rows it carried 4.965
+   * cycles of game code with a column pushed in EVERY frame. 19.656 − 13.310 (the step)
+   * − 4.965 = 1.381, and that is this number.
+   */
+  splitOverhead: 1381
 }
 
 /** What the emitted scrolling engine adds to a frame — facts only the codegen knows, so
@@ -292,10 +305,10 @@ export function estimateFramePerf(
   // The frame's total work, heavy frame included — the "what does this cost" figure.
   const world = worldFrame(ownCode, sprTail, region, engine)
   const cyclesPerFrame = ownCode + sprTail
-  // Inside a world the bar is held to the fuller ROOM of the heavy frame; outside one a
-  // frame is a frame (S1.B4).
+  // Inside a world the bar is held to the NEARER of the heavy frame's two walls; outside
+  // one a frame is a frame (S1.B4).
   const fraction = world
-    ? Math.max(world.pocketUsed / world.pocketCycles, world.tailUsed / world.tailCycles)
+    ? Math.max(world.roomUsed / world.roomCycles, world.tailUsed / world.tailCycles)
     : cyclesPerFrame / budgetCycles
   const state = fraction >= 1 ? 'over' : fraction >= 0.75 ? 'warn' : 'ok'
   return { cyclesPerFrame, budgetCycles, fraction, state, region, ...(world ? { world } : {}) }
@@ -309,11 +322,34 @@ function spriteTail(engine?: EngineCost): number {
 }
 
 /**
- * The two rooms of a scrolling frame, filled for the HEAVY frame — the one in eight on
+ * The two walls of a scrolling frame, filled for the HEAVY frame — the one in eight on
  * which the band physically moves a column. A world whose window never travels has no
- * heavy frame (it pays nothing for a move it never makes), but it still has the split, so
- * its pocket deadline is reported all the same: that deadline is the surprise a scrolling
- * game brings, and hiding it until something stutters would be the dishonest half.
+ * heavy frame (it pays nothing for a move it never makes), but it still runs on the split,
+ * so its room is reported all the same.
+ *
+ * ★ THE TWO WALLS ARE MEASURED DIFFERENTLY, AND HARDWARE SAID SO (Schritt 2, T4).
+ *
+ *   - THE TAIL is a per-frame deadline: the step either fits below the band or it does
+ *     not, and no other frame can help. So the tail is charged WHOLE.
+ *   - THE ROOM is elastic. A column is only pushed every 8th pixel, and on the seven light
+ *     frames the program may borrow the empty tail — the hardware really does let it, and
+ *     `bc_vwait`'s deadline only drops a step when a SINGLE frame runs long. So the room is
+ *     charged the step's SHARE, not the whole step.
+ *
+ * The first cut of this model charged the room the whole step ("the floor a game can count
+ * on"), and Into The Deep on a six-row band with one blob then read 117 % — while the
+ * machine ran it for 214 frames without dropping a single step. A bar that cries wolf about
+ * a game running fine on VICE teaches the user to ignore it, which is worse than no bar.
+ * The floor was the wrong number because it describes a camera at eight pixels a frame; a
+ * scrolling game moves one or two, and `everyFrames` already says so.
+ *
+ * Measured against the ported game (all three ran on real hardware, drop counter in
+ * `_intern/itd-scroll.test.ts`):
+ *
+ *   band  blobs  work/frame   steps dropped   this model
+ *      6      1      11.566      0 of 214        ~65 %  ok
+ *      6      3      19.045    192 of 401        ~99 %  warn   (hardware: stutters)
+ *     10      3      17.177    374 of 435       ~106 %  over
  */
 function worldFrame(
   ownCode: number,
@@ -322,25 +358,39 @@ function worldFrame(
   engine?: EngineCost
 ): PerfWorld | undefined {
   if (!engine || engine.bandRows <= 0) return undefined
-  const pocketCycles = engine.bandRows * LINES_PER_BAND_ROW * LINE_CYCLES[region]
-  const tailCycles = FRAME_CYCLES[region] - pocketCycles
-  // The column about to appear is built in the POCKET of the very frame whose tail moves
-  // the band — the two always land together, so the heavy frame carries both.
+  // The tail's deadline: the beam is below the band for everything the band's own drawing
+  // time leaves over. This is the wall that derives the ten-row ceiling, and the raster
+  // interrupt changed nothing about it.
+  const bandDrawn = engine.bandRows * LINES_PER_BAND_ROW * LINE_CYCLES[region]
+  const tailCycles = FRAME_CYCLES[region] - bandDrawn
+  // The column about to appear is built on the very frame whose tail moves the band — the
+  // two always land together, so the heavy frame carries both.
   const perRow =
     ENGINE.edgePerBandRow + (engine.colorModel === 'tileTable' ? ENGINE.edgeTileTable : 0)
   const edgeCycles = engine.usesCamera ? ENGINE.edgeFixed + engine.bandRows * perRow : 0
   const shiftCycles = engine.usesCamera ? engine.bandRows * ENGINE.shiftPerBandRow : 0
-  const pocketUsed = ownCode + edgeCycles
+  const roomUsed = ownCode + edgeCycles
   const tailUsed = sprTail + shiftCycles
+  // …and what is left of the frame after all that is the program's own room. Two things
+  // do NOT appear here: the band's drawing time (since Schritt 2 an interrupt writes the
+  // two split registers, so the program may think straight through the band) and seven
+  // eighths of the step (it only falls on one frame in `everyFrames`, and the program may
+  // spend the other seven tails on itself).
+  const everyFrames = engine.usesCamera ? ENGINE.stepEveryFrames : 0
+  const stepShare = everyFrames > 0 ? Math.round(shiftCycles / everyFrames) : 0
+  const roomCycles = Math.max(
+    1,
+    FRAME_CYCLES[region] - sprTail - stepShare - ENGINE.splitOverhead
+  )
   return {
     bandRows: engine.bandRows,
-    pocketCycles,
-    pocketUsed,
+    roomCycles,
+    roomUsed,
     tailCycles,
     tailUsed,
     shiftCycles,
-    everyFrames: engine.usesCamera ? ENGINE.stepEveryFrames : 0,
-    wall: tailUsed / tailCycles > pocketUsed / pocketCycles ? 'tail' : 'pocket'
+    everyFrames,
+    wall: tailUsed / tailCycles > roomUsed / roomCycles ? 'tail' : 'room'
   }
 }
 

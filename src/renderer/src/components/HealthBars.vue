@@ -64,13 +64,13 @@ const screensLeft = computed(() => {
 // never a runtime measurement — the `~` says so). It climbs as the .crumb does more
 // expensive work, so the cost is visible while you write.
 const perf = computed(() => output.perf)
-// A scrolling frame is TWO ROOMS with separate deadlines (S1.B4): the program's code runs
-// while the beam draws the band, the band is moved below it. The bar shows the fuller room
-// of the HEAVY frame — every 8th pixel the band physically moves a column, and an average
-// over the eight would hide the only frame that can tear (SCROLLING_PLAN T2c/T4).
+// A scrolling frame has TWO deadlines (S1.B4/Schritt 2): the band must be moved below the
+// band, and what that leaves of the frame is the program's own room. The bar shows the
+// nearer wall of the HEAVY frame — every 8th pixel the band physically moves a column, and
+// an average over the eight would hide the only frame that can fail (SCROLLING_PLAN T4).
 const world = computed(() => perf.value?.world ?? null)
-// A world whose window travels has that heavy frame; a standing one does not — but it has
-// the pocket deadline all the same, which is the surprise scrolling brings.
+// A world whose window travels has that heavy frame; a standing one does not — but it runs
+// on the same split, so its room is worth naming all the same.
 const scrolls = computed(() => (world.value?.everyFrames ?? 0) > 0)
 // STAHL S6: "over" is the one state a newbie must READ, not just see as red — the
 // logic no longer fits one frame, so VWait silently halves the game to 25 fps.
@@ -146,18 +146,19 @@ const perfFillClass = computed(() => {
         <div class="hb-meta" :class="{ 'hb-meta-over': perfOver }">
           <template v-if="perfOver">
             <strong>{{ t('health.perf.full') }}</strong> —
-            <!-- WHICH room is full decides the lever, so the hint names it: the band's
-                 height (ours, not the C64's — this engine pays per band row) or the
-                 program's own work between two VWaits. -->
+            <!-- WHICH wall is the near one decides the lever, so the hint names it: the
+                 band's height (ours, not the C64's — this engine pays per band row) or the
+                 program's own work between two VWaits. Since Schritt 2 a flatter play field
+                 helps BOTH, so both hints may point at it. -->
             <template v-if="world && world.wall === 'tail'">{{ t('health.perf.fullScroll', { rows: world.bandRows, tail: world.tailCycles }) }}</template>
-            <template v-else-if="world">{{ t('health.perf.fullPocket', { pocket: world.pocketCycles }) }}</template>
+            <template v-else-if="world">{{ t('health.perf.fullRoom', { room: world.roomCycles, rows: world.bandRows }) }}</template>
             <template v-else>{{ t('health.perf.fullHint') }}</template>
           </template>
           <template v-else-if="world && scrolls">
-            {{ t('health.perf.peak', { every: world.everyFrames, tailUsed: world.tailUsed, tail: world.tailCycles, pocketUsed: world.pocketUsed, pocket: world.pocketCycles }) }}
+            {{ t('health.perf.peak', { every: world.everyFrames, tailUsed: world.tailUsed, tail: world.tailCycles, roomUsed: world.roomUsed, room: world.roomCycles }) }}
           </template>
           <template v-else-if="world">
-            {{ t('health.perf.world', { rows: world.bandRows, pocket: world.pocketCycles, pocketUsed: world.pocketUsed }) }}
+            {{ t('health.perf.world', { rows: world.bandRows, room: world.roomCycles, roomUsed: world.roomUsed }) }}
           </template>
           <template v-else-if="perf">{{ t('health.perf.estimate', { cycles: perf.cyclesPerFrame, budget: perf.budgetCycles, region: perf.region }) }}</template>
           <template v-else>{{ t('health.perf.meta') }}</template>

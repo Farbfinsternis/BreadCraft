@@ -44,6 +44,10 @@ import { seedFontRegion } from '@shared/font-slots'
 import type { EngineCost } from './perf-estimate'
 import type { Locale, LevelInfo } from '@shared/ipc'
 
+/** Raster lines in one PAL frame — the ruler the scrolling engine's tail is measured with
+ *  (S1, Schritt 2). The engine's split lines are raster lines, so its deadlines are too. */
+const RASTER_LINES = 312
+
 /** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
  *  The project palette stores indices; the generated C reads as named colours. */
 const COLOR_CONST: readonly string[] = [
@@ -1103,12 +1107,10 @@ class Generator {
       ...setup,
       ...this.lines,
       '',
-      // A scrolling world runs with interrupts off (the raster split needs the beam to
-      // itself). A game loops forever and never gets here — but a program that DOES end
-      // must hand the machine back able to breathe, or BASIC returns to a dead keyboard.
-      ...(this.levelWorld
-        ? ['  __asm__("cli"); /* hand the interrupts back to the KERNAL */', '']
-        : []),
+      // A scrolling world runs on its own raster interrupt. A game loops forever and never
+      // gets here — but a program that DOES end must hand the machine back able to breathe,
+      // or BASIC returns to a dead keyboard.
+      ...(this.levelWorld ? ['  bc_split_stop(); /* the KERNAL gets its beam back */', ''] : []),
       '  return 0;',
       '}',
       ''
@@ -1155,10 +1157,19 @@ class Generator {
    * band, the standing value one line below it. That splits every frame into two windows:
    *
    *   SPLIT_IN..SPLIT_OUT   the beam DRAWS the band — nothing about it may change, but
-   *                         thinking is free. This is where the program's own frame code
-   *                         runs (`VWait` hands it this pocket).
+   *                         thinking is free.
    *   after SPLIT_OUT       the beam is below the band — the only place the band may be
    *                         moved (S1.B3.2 puts the coarse shift here).
+   *
+   * WHO WRITES THE SPLIT (Schritt 2). A raster INTERRUPT does, not the program. When the
+   * program itself waited for the two lines it had to be present at both of them, so its
+   * own frame code only ever got the time the band takes to draw — `504 × H` cycles, a room
+   * that SHRINKS as the band gets flatter, which is the opposite of what a game needs. With
+   * the interrupt the program has to be nowhere; it only has to be back before the tail.
+   * Measured on hardware (T1): a six-row band went from 2.774 to 16.363 cycles of thinking
+   * time. Only the two register writes moved — the tail stays in the main program, because
+   * cc65 keeps its temporaries and software stack in the zero page and C called from an
+   * interrupt would trample the C it interrupted.
    */
   private scrollEngineDecls(screenAddr: number): string[] {
     if (!this.levelWorld || !this.playField) return []
@@ -1182,9 +1193,12 @@ class Generator {
       `#define BC_D016_HUD  ${this.gfxColor === 'MULTICOLOR' ? '0xD0' : '0xC0'}   /* standing frame, ${this.gfxColor === 'MULTICOLOR' ? 'multicolor' : 'hires'} text */`,
       '#define BC_RASTER    (*(volatile unsigned char*)0xD012)',
       '',
-      'static unsigned char bc_xscroll = 7;     /* $D016 fine scroll, this frame */',
-      'static unsigned char bc_xscroll_next = 7;',
+      'static unsigned char bc_d016_band = BC_D016_HUD | 7;   /* what the split writes at the band\'s top */',
+      'static unsigned char bc_phase = 0;          /* 0 = the band\'s top split comes next */',
+      'static volatile unsigned char bc_tick = 0;  /* the frame turned over below the band */',
+      'static unsigned char bc_last_tick = 0;',
       '',
+      ...this.splitIrqDecls(),
       '/* one column of the level into one screen column (screen AND colour) */',
       'static void bc_fill_col(unsigned char scol, unsigned int mapcol) {',
       '  unsigned char row;',
@@ -1204,12 +1218,17 @@ class Generator {
     if (this.spriteSlotsUsed > 0) out.push(...this.spriteWorldDecls())
     if (this.usesSetMapTile) out.push(...this.setMapTileDecls(name, rows))
     out.push(
-      '/* The frame turns over: end the one that was drawing, begin the next. Everything',
-      '   the program does between two VWaits runs while the beam draws the band — the',
-      '   pocket where thinking is free and the band must not be touched. */',
-      'static void bc_vwait(void) {',
-      '  while (BC_RASTER != BC_SPLIT_OUT) { }',
-      '  VIC.ctrl2 = BC_D016_HUD;               /* below the band the picture stands */'
+      '/* The frame turns over: wait for the tick the bottom split set, then move the band.',
+      '   The program no longer has to BE anywhere at a given raster line — the interrupt',
+      '   does the splitting — so everything it does between two VWaits gets the whole frame',
+      "   minus this tail (SCROLLING_PLAN Schritt 2 T1: at a six-row band that is 16.363",
+      '   cycles instead of the 2.774 the waiting technique could offer). */',
+      'static void bc_vwait(void) {'
+    )
+    if (this.usesCamera) out.push('  unsigned int _r;')
+    out.push(
+      '  while (bc_tick == bc_last_tick) { }    /* …the beam has left the band */',
+      '  bc_last_tick = bc_tick;'
     )
     if (this.spriteSlotsUsed > 0) {
       out.push(
@@ -1224,25 +1243,113 @@ class Generator {
         '  /* THE TAIL. The beam is below the band, so this is the only place the band may',
         '     be moved — and the coarse step eats most of it (measured: 211 of the ~232',
         '     raster lines available, SCROLLING_PLAN T4). Colour first, then the screen,',
-        '     then the column that was decided in the pocket: the order proven in',
+        '     then the column the program decided on: the order proven in',
         '     _preflight/scroll_t3.c. */',
-        '  if (bc_cut) { bc_fill_window(); bc_cut = 0; }',
-        '  else if (bc_dir_col > 0) { bc_shift_col_left(); bc_shift_scr_left(); bc_reveal_right(); }',
-        '  else if (bc_dir_col < 0) { bc_shift_col_right(); bc_shift_scr_right(); bc_reveal_left(); }',
-        '  bc_dir_col = 0;',
-        '  bc_shown_col = bc_want_col;',
-        '  /* Below the band the fine scroll may change: the new value is what the beam will',
-        '     meet at the top of the next band. */'
+        '  if (bc_dir_col || bc_cut) {',
+        '    /* DOES THE STEP STILL FIT? Nothing holds the program back any more, so a frame',
+        '       that ran long would shift the band while the beam is already drawing it — a',
+        '       tear, which looks like broken hardware. Instead the step is DROPPED: the wish',
+        '       stands, the world holds still for this one frame and catches up in the next.',
+        "       Stuttering is an honest 'too much code'; tearing is not. ($D012 only counts to",
+        '       255, so the ninth bit of the line lives in $D011.) */',
+        '    _r = BC_RASTER | ((VIC.ctrl1 & 0x80) << 1);',
+        '    if ((unsigned int)(_r - BC_SPLIT_OUT) > BC_TAIL_SLACK) return;',
+        '    if (bc_cut) { bc_fill_window(); bc_cut = 0; }',
+        '    else if (bc_dir_col > 0) { bc_shift_col_left(); bc_shift_scr_left(); bc_reveal_right(); }',
+        '    else { bc_shift_col_right(); bc_shift_scr_right(); bc_reveal_left(); }',
+        '    bc_dir_col = 0;',
+        '    bc_shown_col = bc_want_col;',
+        '  }',
+        '  /* The fine scroll belongs to the column that was just moved — the pair travels',
+        '     together, and the split writes it at the top of the next band. A frame that',
+        '     dropped its step never gets here: half a step is a jump, not a scroll. */',
+        '  bc_d016_band = BC_D016_HUD | bc_xscroll_next;'
       )
     }
-    out.push(
-      '  bc_xscroll = bc_xscroll_next;',
-      '  while (BC_RASTER != BC_SPLIT_IN) { }',
-      '  VIC.ctrl2 = BC_D016_HUD | bc_xscroll;  /* from here down the world scrolls */',
+    out.push('}', '')
+    return out
+  }
+
+  /**
+   * The raster interrupt that cuts the frame in two (S1, Schritt 2 — proven on hardware in
+   * `_intern/_preflight/scroll_t5.c`). Twenty instructions, and every one of them earns its
+   * place:
+   *
+   *   - It is entered through the KERNAL's IRQ vector at $0314 (A/X/Y are already saved on
+   *     the stack by then) and left through **$EA81**, not $EA31 — $EA31 would scan the
+   *     keyboard and cost more than the split itself.
+   *   - It touches NO zero page. That is what makes it safe to interrupt cc65's C anywhere:
+   *     the C runtime keeps its temporaries and its software stack down there.
+   *   - It is armed one line EARLY and then waits for its own line. An interrupt arrives
+   *     40–60 cycles late and jitters, a PAL line is 63 — a `$D016` written in the middle of
+   *     a visible line shifts the rest of that line, a seam straight through the HUD. Waiting
+   *     costs ~130 cycles a frame (0,7 %) and puts the write back in the border, exactly
+   *     where the waiting technique had it.
+   */
+  private splitIrqDecls(): string[] {
+    return [
+      '/* ---- the split hangs on an interrupt (S1, Schritt 2) ---- */',
+      'static void bc_irq_split(void) {',
+      '  __asm__("lda #$01");',
+      '  __asm__("sta $d019");                  /* acknowledge the raster interrupt */',
+      '  __asm__("lda %v", bc_phase);',
+      '  __asm__("bne bcirqbot");',
+      '  /* the top of the band: from this line down the world scrolls */',
+      '  __asm__("ldx #%b", (unsigned char)BC_SPLIT_IN);',
+      '  __asm__("bcirqw1: cpx $d012");         /* armed a line early: meet the line exactly */',
+      '  __asm__("bne bcirqw1");',
+      '  __asm__("lda %v", bc_d016_band);',
+      '  __asm__("sta $d016");',
+      '  __asm__("lda #$01");',
+      '  __asm__("sta %v", bc_phase);',
+      '  __asm__("lda #%b", (unsigned char)(BC_SPLIT_OUT - 1));',
+      '  __asm__("sta $d012");',
+      '  __asm__("jmp $ea81");',
+      '  /* …and the bottom: the picture stands again, and the frame turns over */',
+      '  __asm__("bcirqbot: ldx #%b", (unsigned char)BC_SPLIT_OUT);',
+      '  __asm__("bcirqw2: cpx $d012");',
+      '  __asm__("bne bcirqw2");',
+      '  __asm__("lda #%b", (unsigned char)BC_D016_HUD);',
+      '  __asm__("sta $d016");',
+      '  __asm__("inc %v", bc_tick);            /* the tail may run: VWait is waiting for this */',
+      '  __asm__("lda #$00");',
+      '  __asm__("sta %v", bc_phase);',
+      '  __asm__("lda #%b", (unsigned char)(BC_SPLIT_IN - 1));',
+      '  __asm__("sta $d012");',
+      '  __asm__("jmp $ea81");',
+      '}',
+      '',
+      '/* Hand the beam to the split: the KERNAL\'s timer interrupt off, ours in its place. */',
+      'static void bc_split_start(void) {',
+      '  unsigned char _d;',
+      '  __asm__("sei");',
+      '  CIA1.icr = 0x7F;                       /* the KERNAL\'s timer interrupt stops here */',
+      '  _d = CIA1.icr;                         /* reading clears what was pending */',
+      '  CIA2.icr = 0x7F;',
+      '  _d = CIA2.icr;',
+      '  (void)_d;',
+      '  *(void (**)(void))0x0314 = bc_irq_split;',
+      '  VIC.ctrl1 &= 0x7F;                     /* both split lines live below 256 */',
+      '  VIC.rasterline = BC_SPLIT_IN - 1;',
+      '  bc_phase = 0;',
+      '  VIC.irr = 0x0F;',
+      '  VIC.imr = 0x01;                        /* the raster is the only interrupt we want */',
+      '  __asm__("cli");',
+      '}',
+      '',
+      '/* A game loops forever and never gets here — but a program that DOES end must hand',
+      '   the machine back able to breathe, or BASIC returns to a dead keyboard and an',
+      '   interrupt vector pointing into memory that is no longer a program. */',
+      'static void bc_split_stop(void) {',
+      '  __asm__("sei");',
+      '  VIC.imr = 0x00;',
+      '  VIC.irr = 0x0F;',
+      '  *(void (**)(void))0x0314 = (void (*)(void))0xEA31;',
+      '  CIA1.icr = 0x81;                       /* the KERNAL gets its timer back */',
+      '  __asm__("cli");',
       '}',
       ''
-    )
-    return out
+    ]
   }
 
   /**
@@ -1256,8 +1363,8 @@ class Generator {
    *   - Every 8th pixel the band must physically move one column: ~1.331 cycles per band
    *     row for screen RAM, Color-RAM (the VIC does NOT scroll $D800) and the column that
    *     appears at the edge. That is the price, and it is paid in the tail.
-   * So `SetCameraX` only DECIDES (in the pocket, where thinking is free) and `bc_vwait`
-   * MOVES (in the tail, below the band).
+   * So `SetCameraX` only DECIDES (in the program's own time, where thinking is free) and
+   * `bc_vwait` MOVES (in the tail, below the band).
    *
    * WHY THE SHIFT IS ASSEMBLER — and only the shift. A cc65 loop costs ~67 cycles per
    * byte pair; the band is 400 bytes twice over. In C the step took 1,4 frames (it did not
@@ -1273,10 +1380,20 @@ class Generator {
     const bytes = rows * SCREEN_W - 1
     const scrBase = screenAddr + this.playField!.first * SCREEN_W
     const colBase = 0xd800 + this.playField!.first * SCREEN_W
+    // How late the tail may start and still finish before the beam is back at the band's
+    // top. Room below the band = 312 − 8·H raster lines; the step costs ~1.331 cycles per
+    // band row = 21 lines (measured, SCROLLING_PLAN T4), plus two for the deciding itself.
+    // A band so tall that nothing is left over keeps a hair of slack: the honest failure of
+    // an over-tall band is the tear it always was, not a world frozen in place.
+    const tailLines = rows * 21 + 2
+    const tailSlack = Math.max(2, RASTER_LINES - 8 * rows - tailLines)
     return [
       '/* ---- the camera and the coarse step (S1.B3.2) ---- */',
       `#define BC_CAM_MAX   ${camMax}   /* rightmost camera pixel — the level's right edge */`,
+      `#define BC_TAIL_SLACK ${tailSlack}   /* raster lines the tail may start late by: ` +
+        `${RASTER_LINES} − 8·${rows} of room, ${tailLines} for the step itself */`,
       '',
+      'static unsigned char bc_xscroll_next = 7;   /* $D016 fine scroll for the next band */',
       'static unsigned int bc_want_col = 0;    /* map column the tail is to make it show */',
       'static signed char  bc_dir_col = 0;     /* columns for the tail to travel: -1 / 0 / +1 */',
       'static unsigned char bc_cut = 0;        /* the window jumped: redraw it whole */',
@@ -1304,7 +1421,7 @@ class Generator {
       ...this.asmShiftRight('bccr', colBase, bytes),
       '}',
       '',
-      '/* The column that was built in the pocket is stamped into the edge the shift just',
+      '/* The column the program decided on is stamped into the edge the shift just',
       '   vacated — unrolled absolute stores, because the addresses are known at build time',
       '   and a loop would cost more than the stores it saves. */',
       'static void bc_reveal_right(void) {',
@@ -1322,10 +1439,11 @@ class Generator {
       '  for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, bc_want_col + c);',
       '}',
       '',
-      '/* Put the window at world pixel x. This only DECIDES — it runs in the pocket while',
-      '   the beam draws the band, where touching the band would tear it. The tail in',
-      '   bc_vwait does the moving. Signed on purpose: walking left past the start is the',
-      '   natural thing to write (SetCameraX CameraX() - 2), and it must clamp, not wrap. */',
+      '/* Put the window at world pixel x. This only DECIDES — it runs while the program has',
+      '   the frame, where the beam may be anywhere and touching the band would tear it.',
+      '   The tail in bc_vwait does the moving. Signed on purpose: walking left past the',
+      '   start is the natural thing to write (SetCameraX CameraX() - 2), and it must',
+      '   clamp, not wrap. */',
       'static void bc_set_camx(int x) {',
       '  unsigned int mc, _s;',
       '  unsigned char row;',
@@ -1365,8 +1483,8 @@ class Generator {
    *      only remembers, and `VWait` hands the whole set to the VIC at once.
    *
    * `Follow` then needs no loop of its own: the camera is decided the moment the hero's
-   * position is known, i.e. inside `Sprite`, which runs in the pocket where thinking is
-   * free. A frame in which nobody moves the hero simply does not move the camera.
+   * position is known, i.e. inside `Sprite`, which runs in the program's own time, where
+   * thinking is free. A frame in which nobody moves the hero simply does not move the camera.
    */
   private spriteWorldDecls(): string[] {
     const n = this.spriteSlotsUsed
@@ -1386,7 +1504,7 @@ class Generator {
             'static unsigned char bc_follow_spr = 0xFF;  /* the sprite the camera hangs on */',
             'static unsigned int bc_follow_dead = 0;     /* how far it may stray from the middle */',
             '',
-            '/* The camera reacts where the hero is known: in the pocket, one frame before it',
+            '/* The camera reacts where the hero is known, one frame before it',
             '   matters. Inside the dead zone the world stands still and he walks; outside it,',
             '   the world is pulled along until he is back on its edge. */',
             'static void bc_follow_now(unsigned int mx) {',
@@ -2118,8 +2236,8 @@ class Generator {
       case 'vwait':
         // Frame sync (PAL 50Hz) — the proven cbm.h call (Sprachdef §F, _preflight/game.c).
         // In a scrolling world the frame is cut in two by a raster split (S1.B3.1), so
-        // VWait becomes that turn-over: it hands the program the pocket in which the beam
-        // draws the band. Same word, same meaning ("one frame passes"), stronger engine.
+        // VWait becomes that turn-over: wait for the frame to tick over, then move the
+        // band. Same word, same meaning ("one frame passes"), stronger engine.
         this.emit(this.levelWorld ? 'bc_vwait();' : 'waitvsync();')
         // Advance any AnimateTile registrations once per frame (cheap no-op if none).
         if (this.usesAnimTiles) this.emit('bc_anim_tick();')
@@ -2608,13 +2726,14 @@ class Generator {
     // where the error can point at the statement that meant it.
     if (!this.levelWorld && !this.bakeWorld(id, s)) return
 
-    // Setup: show the first window, then hand the beam to the split. `sei` is what makes
-    // the split reliable — a KERNAL interrupt during the raster wait would land the split
-    // a few lines off, and a split on the wrong line is a visible tear.
+    // Setup: show the first window, then hand the beam to the split. From here on the
+    // raster interrupt owns the two $D016 writes and the KERNAL's own interrupt is off —
+    // a KERNAL interrupt landing between them would put a split on the wrong line, and a
+    // split on the wrong line is a visible tear.
     this.emit(`/* UseMap "${id}" */`)
     this.emit('{ unsigned char _c; for (_c = 0; _c < BC_SCR_W; ++_c) bc_fill_col(_c, _c); }')
     this.emit('VIC.ctrl2 = BC_D016_HUD;')
-    this.emit('__asm__("sei"); /* the raster split needs the beam to itself */')
+    this.emit('bc_split_start(); /* the raster split takes over the beam */')
   }
 
   /**
@@ -2741,8 +2860,8 @@ class Generator {
    * `SetCameraX x` → put the window at world pixel x (S1.B3.2). The door to direct camera
    * control: a cut scene, a boss room, a screen shake.
    *
-   * The call only decides — it runs between two VWaits, i.e. in the pocket where the beam
-   * is drawing the band and touching the band would tear it. The move happens at the next
+   * The call only decides — it runs between two VWaits, where the beam may be anywhere and
+   * touching the band would tear it. The move happens at the next
    * `VWait`. Two consequences a user can feel, both honest:
    *   - moving by up to one column per frame is the smooth path (the proven coarse step);
    *   - a bigger jump is a CUT: the whole window is redrawn, which costs a frame.
