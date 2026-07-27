@@ -360,7 +360,7 @@
   "health.perf.full": "FRAME FULL",
   "health.perf.fullHint": "your logic doesn't fit in one frame → VWait silently halves it to 25 fps",
   "health.perf.fullScroll": "moving the band on no longer fits below the picture ({tail} cycles) → fewer rows in the PlayField (now {rows}); that limit is this engine's, not the C64's",
-  "health.perf.fullRoom": "your code doesn't fit into what the frame has left beside moving the band ({room} cycles) → the world stutters until it keeps up again; both help: less code, or a flatter PlayField (now {rows} rows)",
+  "health.perf.fullRoom": "your code fills what the frame has left beside moving the band ({room} cycles) — there is no reserve left. If a frame does run long, the world holds still for a blink and catches up in the next one (it does not tear). Both help: less code, or a flatter PlayField (now {rows} rows)",
 
   "intellisense.planned": "⏳ planned",
   "intellisense.plannedDoc": "This word already belongs to the language, but its C64 code isn't wired up yet. Reach for it today and the build hands you an honest \"comes later\" — not a mystery.",

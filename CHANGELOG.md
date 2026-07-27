@@ -135,6 +135,27 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   scrollende Welt gesetzt und auf einem echten C64 laufen gelassen — und in allen drei
   Fällen sagte der Balken vorher dasselbe, was die Maschine hinterher tat (eine Fassung
   läuft ohne einen einzigen Aussetzer, zwei ruckeln).
+- **In einer scrollenden Welt blieben Figuren leer, die sich nicht animieren.** Wer einen Helden
+  mit Lauf-Bildern (`Sprite PLAYER, x, y, frame`) und daneben Gegner ohne Animation
+  (`Sprite blob, x, y`) hatte, sah nur den Helden: die Gegner standen als unsichtbare Kästchen
+  da, obwohl `UseSprite` ihnen ihre Grafik gegeben hatte. Grund war eine Buchhaltungslücke im
+  Inneren — die Welt schreibt die Sprite-Register gesammelt hinter dem Elektronenstrahl und
+  überschrieb dabei jede Gestalt, die ihr nie genannt worden war. Jetzt kennt sie jede.
+- **Du siehst jetzt wirklich bis an den Rand Deines Levels.** Sanftes Scrollen braucht den
+  38-Spalten-Schirm des C64 — die Seitenrahmen verdecken dabei die äußersten zwei
+  Zeichen-Spalten, und genau dort versteckt sich der halb verschobene Bildrand. Die Kamera
+  rechnete aber mit 40: **die letzten beiden Spalten Deiner Karte lagen dadurch für immer
+  hinter dem rechten Rahmen** — wer dort eine Mauer malte, bekam sie nie zu sehen. Jetzt fährt
+  die Kamera so weit, dass die letzte gemalte Spalte auf der letzten SICHTBAREN steht; was
+  hinter dem Rahmen liegt, bleibt leer, statt aus dem Level erfunden zu werden.
+- **Aus dem Titelbild zurück in die Welt: BreadCraft malt Dein Fenster von selbst neu.** Ein
+  Vollbild hat auf dem C64 keinen eigenen Bildschirm — es leiht sich genau den Speicher, in
+  dem auch Dein scrollendes Band liegt. Wer also einen Titelschirm zeigt und zurück ins Level
+  geht, landete bisher in einer Welt aus Bildresten, die sich beim Weiterlaufen langsam
+  „heilte" (jeder Scroll-Schritt bringt eine frische Spalte nach) — was noch schlimmer aussah
+  als kaputt, nämlich nach Zufall. Jetzt gilt: **das Fenster gehört der Engine, also stellt
+  sie es wieder her**, sobald Du mit `SetMode TEXT` zurückkommst. Die Zeilen über und unter
+  dem Band gehören weiter Dir — dort räumt ein `Cls` auf.
 - **Der Karten-Editor hat einen Knopf „Neu" — und die neue Karte hat noch keinen Namen.**
   Ein Klick, und Du hast einen frischen Bildschirm zum Malen; die alte Karte fliegt aus dem
   Speicher (hattest Du dort ungespeicherte Arbeit, wird vorher gefragt). Das Besondere: die

@@ -1278,7 +1278,7 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       // a coarse scroll step needs when it reveals a column.
       expect(code).toContain('static const unsigned char bc_lvl_welt[1200]')
       // The window is filled at setup, and the beam is taken over for the split.
-      expect(code).toContain('bc_fill_col(_c, _c)')
+      expect(code).toContain('bc_fill_window(0);')
       expect(code).toContain('bc_split_start();')
       expect(code).toContain('bc_split_stop();') // …and handed back if the program ever ends
     })
@@ -1615,10 +1615,17 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
 
       it('clamps at both level ends instead of wrapping', () => {
         const { code } = gen(world('SetCameraX 0'), fakeAssets())
-        // 120 columns − 40 on screen = 80 columns × 8 pixels of travel.
-        expect(code).toContain('#define BC_CAM_MAX   640')
+        // 120 columns − 38 SEEN on screen = 82 columns × 8 pixels of travel. Not 40: the
+        // engine scrolls in the VIC's 38-column mode, so the two outermost character
+        // columns live behind the side border. Clamping at 40 hid the level's last two
+        // columns for good (S1 Schritt 2, T4b).
+        expect(code).toContain('#define BC_CAM_MAX   656')
         expect(code).toContain('if (x < 0) x = 0;')
-        expect(code).toContain('if (x > 640) x = 640;')
+        expect(code).toContain('if (x > 656) x = 656;')
+        // …and the window then asks for map columns past the end, which are answered blank
+        // rather than read out of bounds.
+        expect(code).toContain('if (mapcol >= BC_MAP_W) {')
+        expect(code).toContain('if (mc >= BC_MAP_W) {')
         // Signed all the way in: `SetCameraX CameraX() - 2` at the start must clamp to 0,
         // not wrap to the far end of the world.
         expect(code).toContain('static void bc_set_camx(int x)')
@@ -1681,7 +1688,25 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       it('redraws the whole window on a jump — a cut, not a scroll', () => {
         const { code } = gen(world('SetCameraX 800'), fakeAssets())
         expect(code).toContain('else { bc_dir_col = 0; bc_cut = 1; return; }')
-        expect(code).toContain('for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, bc_want_col + c);')
+        expect(code).toContain('for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, left + c);')
+        expect(code).toContain('if (bc_cut) { bc_fill_window(bc_want_col); bc_cut = 0; }')
+      })
+
+      // S1 Schritt 2, T4: a full-screen image writes its colour layer into the very
+      // Screen-RAM the band lives in, so coming back to the tile world means the window is
+      // the picture's leftovers. The engine owns the window, so the engine repaints it.
+      it('repaints the window when the program comes back to TEXT mode', () => {
+        const { code } = gen(
+          world('SetMode BITMAP, MULTICOLOR\nSetMode TEXT, MULTICOLOR'),
+          fakeAssets()
+        )
+        expect(code).toContain('bc_fill_window(bc_shown_col);')
+        // …but not on the way OUT, and not before the world exists.
+        const before = gen(
+          'UseTileset "main"\nSetMode TEXT, MULTICOLOR\nPlayField 3, 12\nUseMap "welt"',
+          fakeAssets()
+        ).code
+        expect(before.indexOf('bc_fill_window(bc_shown_col)')).toBe(-1)
       })
 
       // A world that never moves must not pay for the machinery that moves it — the
@@ -1747,6 +1772,16 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
           // A slot only known at runtime means all eight have to be considered.
           const any = gen(world('i.b = 1\nSprite i, 200, 100'), fakeAssets())
           expect(any.code).toContain('#define BC_SPR_N     8')
+        })
+
+        // S1 Schritt 2, T4b — found by looking at the ported game: the diver was there and
+        // the blobs were blank squares. The tail stamps the whole sprite set every frame,
+        // pointer included, so a shape that lived only in the hardware register (because
+        // that sprite never names a frame) was overwritten with a zero.
+        it('tells the TAIL the shape too, not just the VIC register', () => {
+          const { code } = gen(world('UseSprite 1, "player"\nSprite 1, 100, 100'), fakeAssets())
+          expect(code).toContain('bc_spr_ptr[1] = bc_spr_base[1];')
+          expect(code).toContain('BC_SPR_PTR[i] = bc_spr_ptr[i];')
         })
 
         it('flips a wish, not the register — the tail decides what is really shown', () => {

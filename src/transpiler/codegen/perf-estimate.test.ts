@@ -182,29 +182,31 @@ describe('a scrolling frame has two walls, and one of eight is heavy (S1.B4)', (
       expect(6 * 8 * 63).toBeLessThan(10 * 8 * 63)
     })
 
-    // ★ THE ANCHOR IS THE PORTED GAME (Schritt 2, T4). Into The Deep was built onto a
-    // scrolling world three ways and each ran on real hardware with a counter on the
-    // engine's own drop path. The bar has to agree with what the machine did — above all
-    // in the direction that matters: what RUNS must never read "over".
+    // ★ THE ANCHOR IS THE PORTED GAME (Schritt 2, T4). Into The Deep now lives in a
+    // scrolling world (`PlayField 10, 15` over the painted six-row map), and it was run on
+    // real hardware with a counter on the engine's own drop path. The bar has to agree with
+    // what the machine did — above all in the direction that matters: what RUNS must never
+    // read "over".
     it('agrees with Into The Deep on hardware — and never cries wolf', () => {
-      // ITD's own per-frame work, measured (the model's estimate of it is not the point
-      // here; what is measured is which side of the wall each configuration lands on).
+      // ITD's own per-frame work, MEASURED (what the model estimates that work to be is a
+      // separate question with its own ±10 %; what is pinned here is which side of the
+      // wall each configuration lands on).
       const MEASURED = [
-        { rows: 6, work: 11566, dropped: 0, runs: true }, //   0 of 214 frames dropped
-        { rows: 6, work: 19045, dropped: 0.48, runs: false }, // 192 of 401
-        { rows: 10, work: 17177, dropped: 0.86, runs: false } // 374 of 435
+        // The ported game on its own map. All three ran; the third has no headroom left
+        // (its worst frame was 108 % of a PAL frame) but never dropped a step.
+        { rows: 6, work: 9798, runs: true }, //  1 blob:  0 of 501 frames dropped
+        { rows: 6, work: 12356, runs: true }, // 2 blobs: 0 of 500
+        { rows: 6, work: 15856, runs: true }, // 3 blobs: 0 of 486
+        // …and the counter-case from the same day, on a ten-row band: 374 of 435 frames
+        // dropped their step. Whatever the bar does, it must not call that fine.
+        { rows: 10, work: 17177, runs: false }
       ]
       for (const m of MEASURED) {
         const p = worldPerf(`3, ${m.rows + 2}`, camera)!
         expect(p.world!.bandRows).toBe(m.rows)
         const fraction = m.work / p.world!.roomCycles
-        if (m.runs) {
-          // Ran 214 frames without dropping one step: the bar must not call that "over".
-          expect(fraction).toBeLessThan(1)
-        } else {
-          // Stuttered on hardware — the bar must at least be at the wall about it.
-          expect(fraction).toBeGreaterThan(0.9)
-        }
+        if (m.runs) expect(fraction).toBeLessThan(1)
+        else expect(fraction).toBeGreaterThan(1)
       }
     })
   })

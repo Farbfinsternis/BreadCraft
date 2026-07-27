@@ -48,6 +48,12 @@ import type { Locale, LevelInfo } from '@shared/ipc'
  *  (S1, Schritt 2). The engine's split lines are raster lines, so its deadlines are too. */
 const RASTER_LINES = 312
 
+/** Character columns actually SEEN while scrolling. The engine runs the screen in the VIC's
+ *  38-column mode, because that is what hides the half-shifted edge behind the side border —
+ *  so 40 columns are addressed and 38 are visible. The camera's travel is measured in these
+ *  (S1 Schritt 2, T4b), or a level's last two columns would never be seen. */
+const VISIBLE_W = 38
+
 /** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
  *  The project palette stores indices; the generated C reads as named colours. */
 const COLOR_CONST: readonly string[] = [
@@ -951,17 +957,17 @@ class Generator {
 
     // Where the window stands. It comes FIRST because it is what every world question is
     // answered against — TileAt below reads it, and so does everything the scrolling
-    // engine does (S1.B3.4). Emitted only when something actually asks.
-    const worldWindow =
-      this.levelWorld &&
-      (this.usesCamera || this.spriteSlotsUsed > 0 || this.usesTileAt || this.usesSetMapTile)
-        ? [
-            '/* ---- where the window stands (S1.B3.2) ---- */',
-            "static unsigned int bc_camx = 0;        /* the window's left edge, in world pixels */",
-            'static unsigned int bc_shown_col = 0;   /* map column the band shows right now */',
-            ''
-          ]
-        : []
+    // engine does (S1.B3.4). Every world has one, even a standing one: it is what the
+    // window is REPAINTED from when something else has used the screen (S1 Schritt 2, T4 —
+    // a full-screen image borrows the same screen RAM the band lives in).
+    const worldWindow = this.levelWorld
+      ? [
+          '/* ---- where the window stands (S1.B3.2) ---- */',
+          "static unsigned int bc_camx = 0;        /* the window's left edge, in world pixels */",
+          'static unsigned int bc_shown_col = 0;   /* map column the band shows right now */',
+          ''
+        ]
+      : []
 
     // Tile-world file-scope data + helpers (M3.T1), emitted only when used.
     const tileWorld = this.tileWorldDecls()
@@ -1204,12 +1210,25 @@ class Generator {
       '  unsigned char row;',
       '  unsigned int _s = mapcol * BC_BAND_H;',
       '  unsigned int idx = (unsigned int)BC_BAND_TOP * BC_SCR_W + scol;',
+      '  if (mapcol >= BC_MAP_W) {             /* the hidden margin past the level end */',
+      '    for (row = 0; row < BC_BAND_H; ++row) { BC_SCREEN[idx] = 32; COLOR_RAM[idx] = 0; idx += BC_SCR_W; }',
+      '    return;',
+      '  }',
       '  for (row = 0; row < BC_BAND_H; ++row) {',
       `    BC_SCREEN[idx] = bc_lvl_${name}[_s];`,
       `    COLOR_RAM[idx] = ${colour};`,
       '    idx += BC_SCR_W;',
       '    ++_s;',
       '  }',
+      '}',
+      '',
+      '/* Paint the whole window from the level, starting at map column `left`. Three callers,',
+      '   one job: setting the world up, a camera CUT (the window landed somewhere else',
+      '   entirely — honest cost, a frame\'s worth of work), and coming back from a mode that',
+      '   used the screen for something else. Walking never does this; jumping does. */',
+      'static void bc_fill_window(unsigned int left) {',
+      '  unsigned char c;',
+      '  for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, left + c);',
       '}',
       ''
     ]
@@ -1254,7 +1273,7 @@ class Generator {
         '       255, so the ninth bit of the line lives in $D011.) */',
         '    _r = BC_RASTER | ((VIC.ctrl1 & 0x80) << 1);',
         '    if ((unsigned int)(_r - BC_SPLIT_OUT) > BC_TAIL_SLACK) return;',
-        '    if (bc_cut) { bc_fill_window(); bc_cut = 0; }',
+        '    if (bc_cut) { bc_fill_window(bc_want_col); bc_cut = 0; }',
         '    else if (bc_dir_col > 0) { bc_shift_col_left(); bc_shift_scr_left(); bc_reveal_right(); }',
         '    else { bc_shift_col_right(); bc_shift_scr_right(); bc_reveal_left(); }',
         '    bc_dir_col = 0;',
@@ -1374,7 +1393,15 @@ class Generator {
    */
   private cameraDecls(screenAddr: number, rows: number, name: string, colour: string): string[] {
     const world = this.levelWorld!
-    const camMax = Math.max(0, (world.columns - SCREEN_W) * 8)
+    // HOW FAR THE WINDOW MAY TRAVEL — and it is NOT `columns − 40` (S1 Schritt 2, T4b).
+    // Smooth scrolling needs the 38-column screen: the VIC's side borders then cover the
+    // two outermost character columns, which is exactly where the half-shifted edge is
+    // hidden. So 40 columns are addressed but only 38 are SEEN, and clamping the camera at
+    // `columns − 40` left the level's last two columns behind the right border forever —
+    // the user painted a wall there and never saw it. Clamping at `columns − 38` puts the
+    // level's last column at the last VISIBLE one; the two hidden screen columns then ask
+    // for map columns past the end, which bc_fill_col answers blank.
+    const camMax = Math.max(0, (world.columns - VISIBLE_W) * 8)
     // The band is ONE block (rows × 40 bytes), so one indexed copy walks it — no per-row
     // setup. Shifting by a column moves every byte but the last, which the reveal writes.
     const bytes = rows * SCREEN_W - 1
@@ -1431,14 +1458,6 @@ class Generator {
       ...this.asmReveal(scrBase, colBase, rows, 0),
       '}',
       '',
-      '/* A cut, not a scroll: the window landed somewhere else entirely, so the whole band',
-      '   is redrawn. Honest cost — that is a frame\'s worth of work and it may show one',
-      '   torn frame. Walking never does this; jumping does. */',
-      'static void bc_fill_window(void) {',
-      '  unsigned char c;',
-      '  for (c = 0; c < BC_SCR_W; ++c) bc_fill_col(c, bc_want_col + c);',
-      '}',
-      '',
       '/* Put the window at world pixel x. This only DECIDES — it runs while the program has',
       '   the frame, where the beam may be anywhere and touching the band would tear it.',
       '   The tail in bc_vwait does the moving. Signed on purpose: walking left past the',
@@ -1457,7 +1476,13 @@ class Generator {
       '  else if (bc_want_col + 1 == bc_shown_col) { bc_dir_col = -1; mc = bc_want_col; }',
       '  else { bc_dir_col = 0; bc_cut = 1; return; }',
       '  bc_cut = 0;',
-      '  _s = mc * BC_BAND_H;                  /* build the column that is about to appear */',
+      '  /* Build the column that is about to appear. Past the level\'s last column it is the',
+      '     hidden margin (see BC_CAM_MAX): blank, so nothing of the level is invented. */',
+      '  if (mc >= BC_MAP_W) {',
+      '    for (row = 0; row < BC_BAND_H; ++row) { bc_edge_t[row] = 32; bc_edge_c[row] = 0; }',
+      '    return;',
+      '  }',
+      '  _s = mc * BC_BAND_H;',
       '  for (row = 0; row < BC_BAND_H; ++row) {',
       `    bc_edge_t[row] = bc_lvl_${name}[_s];`,
       `    bc_edge_c[row] = ${colour};`,
@@ -1496,7 +1521,14 @@ class Generator {
       '',
       `static unsigned int bc_spr_mx[${n}];    /* where each sprite stands in the WORLD */`,
       `static unsigned char bc_spr_my[${n}];`,
-      ...(this.usesSpriteFrames ? [`static unsigned char bc_spr_ptr[${n}];   /* shape block, swapped in the tail */`] : []),
+      // THE SHAPE IS SHADOWED TOO, always — not only when a program swaps frames. The tail
+      // is the only place the VIC's sprite registers may be written, so it stamps the whole
+      // set every frame, pointer included. A sprite whose shape lived ONLY in the hardware
+      // register (because that sprite never names a frame) would have it overwritten with a
+      // zero the first time the tail served it, and turn into a blank square — which is
+      // exactly what happened to Into The Deep's blobs while the animated diver was fine
+      // (S1 Schritt 2, T4b).
+      `static unsigned char bc_spr_ptr[${n}];   /* shape block, stamped by the tail */`,
       'static unsigned char bc_spr_want = 0;   /* which sprites the program wants shown */',
       '',
       ...(this.usesCamera
@@ -1537,7 +1569,7 @@ class Generator {
       '    if (sx < 0 || sx > 343) continue;',
       '    VIC.spr_pos[i].x = (unsigned char)sx;',
       '    VIC.spr_pos[i].y = bc_spr_my[i];',
-      ...(this.usesSpriteFrames ? ['    BC_SPR_PTR[i] = bc_spr_ptr[i];'] : []),
+      '    BC_SPR_PTR[i] = bc_spr_ptr[i];',
       '    if (sx > 255) hi |= (1 << i);',
       '    ena |= (1 << i);',
       '  }',
@@ -2364,6 +2396,17 @@ class Generator {
     // MCM bit (multicolor vs hires)
     if (color === 'MULTICOLOR') this.emit('VIC.ctrl2 |= 0x10;')
     else this.emit('VIC.ctrl2 &= ~0x10;')
+    // COMING BACK TO A WORLD, the window has to be repainted (S1 Schritt 2, T4 — found by
+    // porting Into The Deep). A full-screen image has no screen of its own: `DrawImage`
+    // writes its colour layer into the very Screen-RAM the band lives in, so a game that
+    // shows a title and returns lands in a world whose window is the picture's leftovers.
+    // Walking would slowly heal it (each coarse step reveals one fresh column) — which is
+    // worse than not healing at all, because it looks like a glitch rather than a bug.
+    // The window belongs to the engine, so the engine restores it. The rows OUTSIDE the
+    // band belong to the program, and it clears them itself (`Cls`).
+    if (area === 'TEXT' && this.levelWorld && (this.currentFunc || this.useMapSeen)) {
+      this.emit('bc_fill_window(bc_shown_col); /* the window belongs to the engine */')
+    }
   }
 
   /** Read a bare constant name (TEXT, MULTICOLOR) from an arg, upper-cased; else ''. */
@@ -2731,7 +2774,7 @@ class Generator {
     // a KERNAL interrupt landing between them would put a split on the wrong line, and a
     // split on the wrong line is a visible tear.
     this.emit(`/* UseMap "${id}" */`)
-    this.emit('{ unsigned char _c; for (_c = 0; _c < BC_SCR_W; ++_c) bc_fill_col(_c, _c); }')
+    this.emit('bc_fill_window(0);')
     this.emit('VIC.ctrl2 = BC_D016_HUD;')
     this.emit('bc_split_start(); /* the raster split takes over the beam */')
   }
@@ -3215,6 +3258,10 @@ class Generator {
     // Record the slot's base block (frame 0) in the runtime table, so `Sprite n,x,y,frame`
     // can swap the pointer by adding `frame` (SA4); point the slot at frame 0 now.
     this.emit(`bc_spr_base[${slot}] = BC_SPR_BLOCK0 + ${localBase};`)
+    // In a world the tail owns the VIC's sprite registers, so the shape has to be told to
+    // the tail as well — writing only the hardware pointer here would last exactly until
+    // the next frame stamped its (empty) shadow over it (S1 Schritt 2, T4b).
+    if (this.levelWorld) this.emit(`bc_spr_ptr[${slot}] = bc_spr_base[${slot}];`)
     this.emit(`BC_SPR_PTR[${slot}] = bc_spr_base[${slot}];`)
     // Individual per-sprite colour (the "10" pair), chosen in the sprite editor and
     // stored in the .sprite — so player and blob can differ.

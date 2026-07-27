@@ -360,7 +360,7 @@
   "health.perf.full": "FRAME VOLL",
   "health.perf.fullHint": "deine Logik passt nicht in ein Frame → VWait halbiert still auf 25 fps",
   "health.perf.fullScroll": "das Nachrücken des Bandes passt nicht mehr unter das Bild ({tail} Takte) → weniger Zeilen im PlayField (heute {rows}); die Grenze gehört dieser Engine, nicht dem C64",
-  "health.perf.fullRoom": "dein Code passt nicht in das, was neben dem Nachrücken des Bandes vom Frame bleibt ({room} Takte) → die Welt stockt, bis er wieder mitkommt; hilft beides: weniger Code oder ein flacheres PlayField (heute {rows} Zeilen)",
+  "health.perf.fullRoom": "dein Code füllt aus, was neben dem Nachrücken des Bandes vom Frame bleibt ({room} Takte) — Reserve ist keine mehr da. Wird ein Frame zu lang, hält die Welt einen Wimpernschlag an und holt im nächsten auf (sie reißt nicht). Hilft beides: weniger Code oder ein flacheres PlayField (heute {rows} Zeilen)",
 
   "intellisense.planned": "⏳ geplant",
   "intellisense.plannedDoc": "Dieses Wort gehört schon zur Sprache, aber sein C64-Code ist noch nicht verdrahtet. Greifst du heute danach, gibt dir der Build ein ehrliches „kommt später\" — kein Rätsel.",
