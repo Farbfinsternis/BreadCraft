@@ -48,11 +48,20 @@ import type { Locale, LevelInfo } from '@shared/ipc'
  *  (S1, Schritt 2). The engine's split lines are raster lines, so its deadlines are too. */
 const RASTER_LINES = 312
 
+/** Cycles in one PAL raster line — the exchange rate between the two rulers the tail is
+ *  measured with (its work is cycles, its deadline is a raster line). */
+const LINE_CYCLES = 63
+
 /** Character columns actually SEEN while scrolling. The engine runs the screen in the VIC's
  *  38-column mode, because that is what hides the half-shifted edge behind the side border —
  *  so 40 columns are addressed and 38 are visible. The camera's travel is measured in these
  *  (S1 Schritt 2, T4b), or a level's last two columns would never be seen. */
 const VISIBLE_W = 38
+
+/** Cells the coarse step moves between two turns of its loop (S1, Schritt 3). Eight is
+ *  where the measured curve flattens: it takes the loop's bookkeeping from seven cycles a
+ *  cell to under two, and doubling it again would buy ~7 % more for twice the code. */
+const UNROLL = 8
 
 /** C64 colour index (0–15) → the cc65 `COLOR_*` constant the VIC registers take.
  *  The project palette stores indices; the generated C reads as named colours. */
@@ -1249,33 +1258,49 @@ class Generator {
       '  while (bc_tick == bc_last_tick) { }    /* …the beam has left the band */',
       '  bc_last_tick = bc_tick;'
     )
+    if (this.usesCamera) {
+      out.push(
+        '  /* DOES THE STEP STILL FIT? Nothing holds the program back any more, so a frame',
+        '     that ran long would shift the band while the beam is already drawing it — a',
+        '     tear, which looks like broken hardware. Instead the step is DROPPED: the wish',
+        '     stands, the world holds still for this one frame and catches up in the next.',
+        "     Stuttering is an honest 'too much code'; tearing is not. ($D012 only counts to",
+        '     255, so the ninth bit of the line lives in $D011.)',
+        '',
+        '     ASKED FIRST, BEFORE ANY TAIL WORK — and it used to be asked after the sprites',
+        '     were already written, which cost the answer its meaning: the flush itself takes',
+        "     raster lines, so on a tall band (where the slack is down to its floor) the",
+        '     question was always answered "too late" and the world simply stopped scrolling.',
+        '     Worse, the sprites HAD been moved by then, against a band that had not — so the',
+        '     hero slid across a frozen world, falling through ground that was drawn elsewhere',
+        '     and hitting walls that were not there. One missed step, three symptoms.',
+        '     Skipping the flush too is what keeps hero and world in lockstep: on a dropped',
+        '     frame NOTHING moves, which is the honest picture of "this frame was too long". */',
+        '  if (bc_dir_col || bc_cut) {',
+        '    _r = BC_RASTER | ((VIC.ctrl1 & 0x80) << 1);',
+        '    if ((unsigned int)(_r - BC_SPLIT_OUT) > BC_TAIL_SLACK) return;',
+        '  }'
+      )
+    }
     if (this.spriteSlotsUsed > 0) {
       out.push(
-        '  /* Sprites first: $D016 never moves a sprite, so where it appears on screen is',
-        '     our sum — and the registers must be written here, below the band. Writing',
-        '     them while the beam is inside the band would tear the sprite itself. */',
+        '  /* Sprites: $D016 never moves a sprite, so where it appears on screen is our sum —',
+        '     and the registers must be written here, below the band. Writing them while the',
+        '     beam is inside the band would tear the sprite itself. */',
         '  bc_spr_flush();'
       )
     }
     if (this.usesCamera) {
       out.push(
         '  /* THE TAIL. The beam is below the band, so this is the only place the band may',
-        '     be moved — and the coarse step eats most of it (measured: 211 of the ~232',
-        '     raster lines available, SCROLLING_PLAN T4). Colour first, then the screen,',
-        '     then the column the program decided on: the order proven in',
-        '     _preflight/scroll_t3.c. */',
+        '     be moved — and the coarse step is by far the most of it (Schritt 3 T1: 850',
+        '     cycles per band row, 14 of the ~232 raster lines available for each row that',
+        '     travels). Screen and colour move together, then the column the program decided',
+        '     on lands in the edge they vacated. */',
         '  if (bc_dir_col || bc_cut) {',
-        '    /* DOES THE STEP STILL FIT? Nothing holds the program back any more, so a frame',
-        '       that ran long would shift the band while the beam is already drawing it — a',
-        '       tear, which looks like broken hardware. Instead the step is DROPPED: the wish',
-        '       stands, the world holds still for this one frame and catches up in the next.',
-        "       Stuttering is an honest 'too much code'; tearing is not. ($D012 only counts to",
-        '       255, so the ninth bit of the line lives in $D011.) */',
-        '    _r = BC_RASTER | ((VIC.ctrl1 & 0x80) << 1);',
-        '    if ((unsigned int)(_r - BC_SPLIT_OUT) > BC_TAIL_SLACK) return;',
         '    if (bc_cut) { bc_fill_window(bc_want_col); bc_cut = 0; }',
-        '    else if (bc_dir_col > 0) { bc_shift_col_left(); bc_shift_scr_left(); bc_reveal_right(); }',
-        '    else { bc_shift_col_right(); bc_shift_scr_right(); bc_reveal_left(); }',
+        '    else if (bc_dir_col > 0) { bc_shift_left(); bc_reveal_right(); }',
+        '    else { bc_shift_right(); bc_reveal_left(); }',
         '    bc_dir_col = 0;',
         '    bc_shown_col = bc_want_col;',
         '  }',
@@ -1304,6 +1329,15 @@ class Generator {
    *     a visible line shifts the rest of that line, a seam straight through the HUD. Waiting
    *     costs ~130 cycles a frame (0,7 %) and puts the write back in the border, exactly
    *     where the waiting technique had it.
+   *   - **It waits for "at or past", never for "exactly".** That one letter is the difference
+   *     between a seam and a dead machine (found by a real game, S1 Schritt 3 T3b). If the
+   *     tail overruns into the band, this interrupt arrives after its line has already gone
+   *     by — and `cpx / bne` then spins for a WHOLE FRAME waiting for that line to come round
+   *     again, missing the other split on the way, which leaves the two-phase machine turned
+   *     around and the game frozen with the tail's `VWait` waiting for a tick that never
+   *     comes. `cmp / bcc` gives up instead: the split lands late, the picture shows a seam
+   *     for that frame, and the machine keeps running. An over-tall play field is then
+   *     something you SEE and can fix, not something that kills the program.
    */
   private splitIrqDecls(): string[] {
     return [
@@ -1314,9 +1348,9 @@ class Generator {
       '  __asm__("lda %v", bc_phase);',
       '  __asm__("bne bcirqbot");',
       '  /* the top of the band: from this line down the world scrolls */',
-      '  __asm__("ldx #%b", (unsigned char)BC_SPLIT_IN);',
-      '  __asm__("bcirqw1: cpx $d012");         /* armed a line early: meet the line exactly */',
-      '  __asm__("bne bcirqw1");',
+      '  __asm__("bcirqw1: lda $d012");         /* armed a line early: meet the line… */',
+      '  __asm__("cmp #%b", (unsigned char)BC_SPLIT_IN);',
+      '  __asm__("bcc bcirqw1");                /* …but never wait for one already gone */',
       '  __asm__("lda %v", bc_d016_band);',
       '  __asm__("sta $d016");',
       '  __asm__("lda #$01");',
@@ -1325,9 +1359,9 @@ class Generator {
       '  __asm__("sta $d012");',
       '  __asm__("jmp $ea81");',
       '  /* …and the bottom: the picture stands again, and the frame turns over */',
-      '  __asm__("bcirqbot: ldx #%b", (unsigned char)BC_SPLIT_OUT);',
-      '  __asm__("bcirqw2: cpx $d012");',
-      '  __asm__("bne bcirqw2");',
+      '  __asm__("bcirqbot: lda $d012");',
+      '  __asm__("cmp #%b", (unsigned char)BC_SPLIT_OUT);',
+      '  __asm__("bcc bcirqbot");',
       '  __asm__("lda #%b", (unsigned char)BC_D016_HUD);',
       '  __asm__("sta $d016");',
       '  __asm__("inc %v", bc_tick);            /* the tail may run: VWait is waiting for this */',
@@ -1408,11 +1442,22 @@ class Generator {
     const scrBase = screenAddr + this.playField!.first * SCREEN_W
     const colBase = 0xd800 + this.playField!.first * SCREEN_W
     // How late the tail may start and still finish before the beam is back at the band's
-    // top. Room below the band = 312 − 8·H raster lines; the step costs ~1.331 cycles per
-    // band row = 21 lines (measured, SCROLLING_PLAN T4), plus two for the deciding itself.
+    // top. Room below the band = 312 − 8·H raster lines; the step costs ~850 cycles per
+    // band row = 13,5 lines (Schritt 3 T1, measured: 834 for the copy, 16 for the revealed
+    // cell), plus the ~410 cycles the step pays once however tall the band is. Rounded UP
+    // per row and generously at the fixed end, because the two ways of being wrong are not
+    // equal: a deadline that is a touch early drops a step (the world holds still for one
+    // frame), one that is late TEARS.
+    //
+    // AND THE SPRITES COUNT. They are written in this same tail, every frame, before the
+    // step — so their cycles are part of what has to fit, and leaving them out of the sum
+    // was what broke a fourteen-row play field: the slack said "two raster lines" while the
+    // flush alone took seven, and every single step was refused.
     // A band so tall that nothing is left over keeps a hair of slack: the honest failure of
     // an over-tall band is the tear it always was, not a world frozen in place.
-    const tailLines = rows * 21 + 2
+    const flushLines =
+      this.spriteSlotsUsed > 0 ? Math.ceil((40 + 90 * this.spriteSlotsUsed) / LINE_CYCLES) : 0
+    const tailLines = rows * 14 + 9 + flushLines
     const tailSlack = Math.max(2, RASTER_LINES - 8 * rows - tailLines)
     return [
       '/* ---- the camera and the coarse step (S1.B3.2) ---- */',
@@ -1428,24 +1473,14 @@ class Generator {
       `static unsigned char bc_edge_c[${rows}];   /* …and its colours */`,
       '',
       '/* the band travels one column LEFT (the world walks right) */',
-      'static void bc_shift_scr_left(void) {',
-      ...this.asmShiftLeft('bcsl', scrBase, bytes),
-      '}',
-      'static void bc_shift_col_left(void) {',
-      ...this.asmShiftLeft('bccl', colBase, bytes),
+      'static void bc_shift_left(void) {',
+      ...this.asmShiftLeft('bcl', scrBase, colBase, bytes),
       '}',
       '',
       '/* …and one column RIGHT (walking back), which is the mirror image: the copy must',
-      '   run downwards. MEASURED TRAP (T3): the obvious descending loop ends with',
-      '   "dex / cpx #$FF / bne", and those two cycles per byte cost ~25 raster lines over',
-      '   the band — more than the margin, so the way home tore while the way out did not.',
-      '   Hence "dex / bne" and index 0 copied by hand: one byte is cheaper than a compare',
-      '   on every byte. */',
-      'static void bc_shift_scr_right(void) {',
-      ...this.asmShiftRight('bcsr', scrBase, bytes),
-      '}',
-      'static void bc_shift_col_right(void) {',
-      ...this.asmShiftRight('bccr', colBase, bytes),
+      '   run downwards, or every byte overwrites the one it is about to read. */',
+      'static void bc_shift_right(void) {',
+      ...this.asmShiftRight('bcr', scrBase, colBase, bytes),
       '}',
       '',
       '/* The column the program decided on is stamped into the edge the shift just',
@@ -1631,54 +1666,144 @@ class Generator {
   }
 
   /**
-   * Ascending block copy `base+1 → base`, `bytes` bytes: the band travels one column
-   * left. Full 256-byte blocks end on the index wrapping to zero (`bne`), so only the
-   * last, partial block pays for a compare.
+   * THE COARSE STEP, and the single most expensive thing a scrolling frame does. Every
+   * eighth pixel the whole band moves one column, and the shape of this loop is what the
+   * play field's ceiling is made of (SCROLLING_PLAN, Schritt 3):
+   *
+   *     shift per band row · H  ≤  19.656 − 504·H
+   *
+   * so 1.331 cycles a row put the ceiling at ten, and 850 put it at fourteen. Nothing
+   * about the C64 changed in between — only these instructions.
+   *
+   * WHAT T1 MEASURED (five loops on real hardware, `_preflight/scroll_t6.c`, cycles per
+   * band row at H=10): two separate indexed loops 1.274 · ONE interleaved loop 1.025 ·
+   * interleaved and unrolled eight cells at a time 834. What is emitted here is the third,
+   * and the saving is entirely in the loop CONTROL, not in the copying:
+   *
+   *   - INTERLEAVED. Screen-RAM and Colour-RAM move the same distance under the same
+   *     index, so counting that index twice was paying twice for one piece of arithmetic.
+   *     ($D800 has to travel at all because the VIC does not scroll it — `$D016` moves the
+   *     character matrix and nothing else.)
+   *   - UNROLLED EIGHT WIDE. `inx / cpx / bne` on every byte is seven cycles of
+   *     bookkeeping against nine of work; advancing the index once per eight cells
+   *     (`txa / clc / adc #8 / tax`) drops that to under two. The eight bodies differ only
+   *     by a constant in the address, which the 6502 gets for free.
+   *   - THE FLAT BAND STOPS BEING THE EXPENSIVE ONE. A band under 256 bytes used to pay a
+   *     compare on every single byte, so a SIX-row band cost MORE per row (1.369) than a
+   *     ten-row one (1.274) — the reason the perf model's straight line was a fifth too
+   *     optimistic at H=6. Unrolled, the two measure 824 and 834: one constant, honestly.
+   *
+   * THE PRICE IS CODE. Each 256-byte block needs its own eight bodies, so this costs
+   * roughly 100 bytes per block per direction — about 580 bytes at a ten-row band against
+   * some 100 before. It is paid once per program, it shows up in the RAM bar like any
+   * other code, and it buys four more rows of world.
+   *
+   * `bytes` is `rows × 40 − 1`: every cell but the last travels, and the reveal writes
+   * that one. So `bytes % 8` is always 7 — the loop is written for any remainder anyway,
+   * because a constant that is only true by accident is a trap for the next change.
    */
-  private asmShiftLeft(tag: string, base: number, bytes: number): string[] {
+  private asmShiftLeft(tag: string, scrBase: number, colBase: number, bytes: number): string[] {
     const out = ['  __asm__("ldx #$00");']
-    const full = Math.floor(bytes / 256)
-    const rem = bytes % 256
-    for (let b = 0; b < full; b++) {
-      const blk = base + b * 256
-      out.push(
-        `  __asm__("${tag}${b}: lda %w,x", ${hx(blk + 1)}u);`,
-        `  __asm__("sta %w,x", ${hx(blk)}u);`,
-        '  __asm__("inx");',
-        `  __asm__("bne ${tag}${b}");`
-      )
+    const tail = bytes % UNROLL
+    const looped = bytes - tail
+    const full = Math.floor(looped / 256)
+    const partial = looped % 256
+    let blk = 0
+    // One cell, indexed: read the neighbour above, write it here — screen and colour.
+    const cell = (k: number): string[] => [
+      `  __asm__("lda %w,x", ${hx(scrBase + k + 1)}u);`,
+      `  __asm__("sta %w,x", ${hx(scrBase + k)}u);`,
+      `  __asm__("lda %w,x", ${hx(colBase + k + 1)}u);`,
+      `  __asm__("sta %w,x", ${hx(colBase + k)}u);`
+    ]
+    const body = (at: number, label: string): string[] => {
+      const o = [`  __asm__("${label}:");`]
+      for (let k = 0; k < UNROLL; k++) o.push(...cell(at + k))
+      return o
     }
-    if (rem > 0) {
-      const blk = base + full * 256
+    const step = (label: string, count?: number): string[] => [
+      '  __asm__("txa");',
+      '  __asm__("clc");',
+      '  __asm__("adc #$08");',
+      '  __asm__("tax");',
+      ...(count === undefined ? [] : [`  __asm__("cpx #%b", (unsigned char)${count});`]),
+      `  __asm__("bne ${label}");`
+    ]
+    // A whole 256-byte block ends when the index wraps back to zero — `tax` sets the flag
+    // for it, so a full block needs no compare at all, and the next block starts where
+    // this one left the index.
+    for (let b = 0; b < full; b++) {
+      const label = `${tag}${blk++}`
+      out.push(...body(b * 256, label), ...step(label))
+    }
+    if (partial > 0) {
+      const label = `${tag}${blk++}`
+      out.push(...body(full * 256, label), ...step(label, partial))
+    }
+    // …and the handful the eights do not reach, at addresses known at build time.
+    for (let k = 0; k < tail; k++) {
+      const o = looped + k
       out.push(
-        `  __asm__("${tag}${full}: lda %w,x", ${hx(blk + 1)}u);`,
-        `  __asm__("sta %w,x", ${hx(blk)}u);`,
-        '  __asm__("inx");',
-        `  __asm__("cpx #%b", (unsigned char)${rem});`,
-        `  __asm__("bne ${tag}${full}");`
+        `  __asm__("lda %w", ${hx(scrBase + o + 1)}u);`,
+        `  __asm__("sta %w", ${hx(scrBase + o)}u);`,
+        `  __asm__("lda %w", ${hx(colBase + o + 1)}u);`,
+        `  __asm__("sta %w", ${hx(colBase + o)}u);`
       )
     }
     return out
   }
 
-  /** Descending block copy `base → base+1`: the mirror image, walking back. */
-  private asmShiftRight(tag: string, base: number, bytes: number): string[] {
+  /**
+   * The way home: the same copy walking DOWNWARDS, because ascending would overwrite each
+   * byte just before reading it. Highest addresses first — the odd cells at the top, then
+   * the blocks, each from its top end.
+   *
+   * The loop ends on the borrow out of zero (`sbc #8` leaves carry clear exactly once),
+   * so the last turn is the one at index 0 and no compare is needed. That matters here
+   * more than anywhere: in T3 the descending copy was the one that tore, and it tore over
+   * two cycles a byte spent on comparing.
+   */
+  private asmShiftRight(tag: string, scrBase: number, colBase: number, bytes: number): string[] {
     const out: string[] = []
-    const top = Math.floor((bytes - 1) / 256)
-    for (let b = top; b >= 0; b--) {
-      const count = b === top ? bytes - top * 256 : 256
-      const blk = base + b * 256
-      if (count > 1) {
-        out.push(
-          `  __asm__("ldx #%b", (unsigned char)${count - 1});`,
-          `  __asm__("${tag}${b}: lda %w,x", ${hx(blk)}u);`,
-          `  __asm__("sta %w,x", ${hx(blk + 1)}u);`,
-          '  __asm__("dex");',
-          `  __asm__("bne ${tag}${b}");`
-        )
-      }
-      out.push(`  __asm__("lda %w", ${hx(blk)}u);`, `  __asm__("sta %w", ${hx(blk + 1)}u);`)
+    const tail = bytes % UNROLL
+    const looped = bytes - tail
+    const full = Math.floor(looped / 256)
+    const partial = looped % 256
+    for (let k = tail - 1; k >= 0; k--) {
+      const o = looped + k
+      out.push(
+        `  __asm__("lda %w", ${hx(scrBase + o)}u);`,
+        `  __asm__("sta %w", ${hx(scrBase + o + 1)}u);`,
+        `  __asm__("lda %w", ${hx(colBase + o)}u);`,
+        `  __asm__("sta %w", ${hx(colBase + o + 1)}u);`
+      )
     }
+    let blk = 0
+    const cell = (k: number): string[] => [
+      `  __asm__("lda %w,x", ${hx(scrBase + k)}u);`,
+      `  __asm__("sta %w,x", ${hx(scrBase + k + 1)}u);`,
+      `  __asm__("lda %w,x", ${hx(colBase + k)}u);`,
+      `  __asm__("sta %w,x", ${hx(colBase + k + 1)}u);`
+    ]
+    const body = (at: number, label: string): string[] => {
+      const o = [`  __asm__("${label}:");`]
+      for (let k = UNROLL - 1; k >= 0; k--) o.push(...cell(at + k))
+      return o
+    }
+    const block = (at: number, from: number): string[] => {
+      const label = `${tag}${blk++}`
+      return [
+        `  __asm__("ldx #%b", (unsigned char)${from});`,
+        ...body(at, label),
+        '  __asm__("txa");',
+        '  __asm__("sec");',
+        '  __asm__("sbc #$08");',
+        '  __asm__("tax");',
+        `  __asm__("bcs ${label}");`
+      ]
+    }
+    if (partial > 0) out.push(...block(full * 256, partial - UNROLL))
+    for (let b = full - 1; b >= 0; b--) out.push(...block(b * 256, 256 - UNROLL))
     return out
   }
 
@@ -2390,9 +2515,22 @@ class Generator {
     this.gfxArea = area
     this.gfxColor = color
     this.emit(`/* SetMode ${area}, ${color} */`)
-    // BMM bit (bitmap vs text)
-    if (area === 'BITMAP') this.emit('VIC.ctrl1 |= 0x20;')
-    else this.emit('VIC.ctrl1 &= ~0x20;')
+    // BMM bit (bitmap vs text) — and bit 7 is CLEARED on the way past, deliberately.
+    //
+    // $D011 is not a normal register: writing it sets the raster compare's 9th bit, but
+    // READING it gives back the beam's current line 8. A plain `|=` therefore copies
+    // wherever the beam happened to be into the interrupt's line number — and if the read
+    // lands below raster 256, the split is suddenly armed for line 321, which does not
+    // exist on a PAL frame. The interrupt then never fires again, `VWait` waits forever for
+    // a tick that cannot come, and the whole game stops dead.
+    //
+    // Found by a real game (S1 Schritt 3, T3b): switching from the title picture back into
+    // the world froze Into The Deep with $D011 = $9B. It had always been a coin toss — the
+    // taller play field only changed the timing of that one read enough to make it land in
+    // the bad half every time. The engine keeps both split lines below 256 anyway
+    // (`bc_split_start`), so clearing the bit here costs nothing and can never be wrong.
+    if (area === 'BITMAP') this.emit('VIC.ctrl1 = (VIC.ctrl1 | 0x20) & 0x7F;')
+    else this.emit('VIC.ctrl1 = VIC.ctrl1 & 0x5F;   /* ~BMM, and bit 7 never written back */')
     // MCM bit (multicolor vs hires)
     if (color === 'MULTICOLOR') this.emit('VIC.ctrl2 |= 0x10;')
     else this.emit('VIC.ctrl2 &= ~0x10;')

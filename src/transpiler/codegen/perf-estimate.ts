@@ -90,19 +90,45 @@ const LOOP_GUESS = 4 // unknown While/Repeat iteration count → a flat guess
  *   1. IT IS NOT AN AVERAGE. `$D016` shifts the picture 0–7 pixels for one register write
  *      (free), and every 8th pixel the band must physically move one column — screen RAM,
  *      Color-RAM (the VIC does not scroll $D800) and the column appearing at the edge.
- *      One heavy frame among eight light ones: 15.886 cycles measured against 4.240 on
- *      average at a ten-row band. An average hides the only frame that can tear.
+ *      One heavy frame among eight light ones. An average hides the only frame that can
+ *      tear.
  *   2. IT IS NOT ONE BUDGET. The shift has to fit below the band (the TAIL, `312 − 8·H`
- *      raster lines) — a taller band grows the work AND shrinks the room it must fit,
- *      which is exactly why H = 12 tore where H = 10 stands, and why the ceiling belongs
- *      to this engine rather than to the machine. And what is left of the frame after the
- *      shift is what the program's own code may cost (the ROOM). See PerfWorld in
- *      @shared/ipc.
+ *      raster lines) — a taller band grows the work AND shrinks the room it must fit, and
+ *      that scissor is where the ceiling comes from. It belongs to THIS ENGINE, never to
+ *      the machine: at 1.331 cycles a band row it closed at ten rows, at the 850 the
+ *      unrolled copy costs (Schritt 3) it closes at fourteen, and the C64 did not change
+ *      in between. What is left of the frame after the shift is what the program's own
+ *      code may cost (the ROOM). See PerfWorld in @shared/ipc.
  */
 const ENGINE = {
-  /** Cycles the coarse step costs PER BAND ROW — copy plus revealed column (T4: 13.309
-   *  cycles at ten rows, of the ~14.600 the tail then offers). */
-  shiftPerBandRow: 1331,
+  /**
+   * Cycles the coarse step costs PER BAND ROW — the copy plus the revealed cell.
+   *
+   * MEASURED (Schritt 3, T1, `_preflight/scroll_t6.c` on real hardware): the interleaved,
+   * unrolled copy this engine now emits costs **834** cycles a row, and the revealed cell
+   * four instructions more, so 850. The old two-loop copy measured 1.274 in the same probe
+   * against 1.331 for the whole engine step — the 57 a row of difference being the reveal
+   * and what the step pays ONCE (`shiftFixed` below), which is where both numbers here
+   * come from.
+   *
+   * ★ THE FLAT BAND IS NO LONGER THE EXPENSIVE ONE. Until Schritt 3 this was not a
+   * constant at all: a band under 256 bytes paid a compare on every byte, so six rows cost
+   * 1.369 each against 1.274 at ten, and the model's straight line was a fifth too
+   * optimistic at H=6 (a discrepancy T2/T3 wrote into a test rather than smooth over).
+   * Unrolled, the same probe measures 824 at six rows and 834 at ten. The line is now
+   * true, not approximately true.
+   *
+   * ◑ DERIVED, not yet measured ON THIS ENGINE: T1 weighed the loop in isolation, so what
+   * is pinned here is the loop plus a reconciliation that the old engine's numbers made
+   * explicit. The hardware cross-check is T3 (Into The Deep on a taller play field), and
+   * until it lands this number may be off by a few percent — in the direction of saying
+   * the step costs slightly more than it does.
+   */
+  shiftPerBandRow: 850,
+  /** …and what the step costs however tall the band is: two calls, the C-level decision,
+   *  the loop set-ups. 1.331 × 10 − (1.274 + 16) × 10 = 410 on the old engine, and none of
+   *  that part changed. */
+  shiftFixed: 410,
   /** Building the column about to appear (`bc_set_camx`'s loop), per band row. Lands on
    *  the same frame as the shift — the program decides, the tail moves. */
   edgePerBandRow: 90,
@@ -368,7 +394,9 @@ function worldFrame(
   const perRow =
     ENGINE.edgePerBandRow + (engine.colorModel === 'tileTable' ? ENGINE.edgeTileTable : 0)
   const edgeCycles = engine.usesCamera ? ENGINE.edgeFixed + engine.bandRows * perRow : 0
-  const shiftCycles = engine.usesCamera ? engine.bandRows * ENGINE.shiftPerBandRow : 0
+  const shiftCycles = engine.usesCamera
+    ? ENGINE.shiftFixed + engine.bandRows * ENGINE.shiftPerBandRow
+    : 0
   const roomUsed = ownCode + edgeCycles
   const tailUsed = sprTail + shiftCycles
   // …and what is left of the frame after all that is the program's own room. Two things

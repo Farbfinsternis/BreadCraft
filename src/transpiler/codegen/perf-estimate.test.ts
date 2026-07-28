@@ -70,9 +70,15 @@ describe('perf estimate (a guess from the code)', () => {
 // Two things make a scrolling frame different, and these tests pin both: it is not an
 // AVERAGE (every 8th pixel the band physically moves a column — one heavy frame in eight),
 // and it is not one BUDGET (the step must fit below the band, and what it leaves of the
-// frame is what the program's own code may cost). The anchor is real hardware: at ten band
-// rows the step measured 13.309 cycles of the ~14.600 the tail offers — 22 raster lines of
-// air — and at twelve rows it tore (SCROLLING_PLAN T2c/T4).
+// frame is what the program's own code may cost).
+//
+// THE ANCHOR MOVED WITH THE ENGINE (Schritt 3, T2). Until the copy loop was rewritten, the
+// step measured 13.309 cycles at ten band rows against the ~14.600 the tail offers — 22
+// raster lines of air, and at twelve rows it tore. That was never a fact about the C64,
+// only about two separate byte-at-a-time loops: interleaved and unrolled eight wide, the
+// same step costs 850 a row (T1, on hardware) and the scissor closes at fourteen rows
+// instead of ten. The old numbers stay in these comments as HISTORY, because a model whose
+// anchors quietly change identity is how a bar starts lying.
 
 /** A world wide enough to travel through: 120 columns, one colour per tile (so it buys
  *  the cheap tile→colour table), plus the mottled twin that has to pay per cell. */
@@ -164,9 +170,10 @@ describe('a scrolling frame has two walls, and one of eight is heavy (S1.B4)', (
   describe('the room the interrupt gave back (Schritt 2)', () => {
     it('is the frame minus the step’s share — not the band’s drawing time', () => {
       const p = worldPerf('3, 12', camera)!
-      // 19.656 − 1.381 (the split's own price, measured) − 13.310/8 (the step falls on one
-      // frame in eight; on the other seven the program has that time).
-      expect(p.world!.roomCycles).toBe(19656 - 1381 - Math.round(13310 / 8))
+      // 19.656 − 1.381 (the split's own price, measured) − 8.910/8 (the step falls on one
+      // frame in eight; on the other seven the program has that time). It was 13.310/8
+      // before Schritt 3 rewrote the copy — same shape, cheaper step.
+      expect(p.world!.roomCycles).toBe(19656 - 1381 - Math.round(8910 / 8))
       // The old model handed the program the band's drawing time (10 × 8 × 63 = 5.040)
       // and shrank it as the band got flatter. It no longer does.
       expect(p.world!.roomCycles).not.toBe(10 * 8 * 63)
@@ -211,29 +218,38 @@ describe('a scrolling frame has two walls, and one of eight is heavy (S1.B4)', (
     })
   })
 
-  it('reproduces the measured step at ten band rows (T4: 13.309 cycles, 22 lines of air)', () => {
+  it('reproduces the step the unrolled copy costs at ten band rows (Schritt 3: 8.910)', () => {
     const p = worldPerf('3, 12', camera)!
-    // Measured on the finished engine in VICE — the model must land on it, or the bar is
-    // telling a story the hardware doesn't.
-    expect(p.world!.shiftCycles).toBeGreaterThan(13000)
-    expect(p.world!.shiftCycles).toBeLessThan(13600)
-    // 13.309 of ~14.600 = tight but standing, exactly the margin T2b measured.
-    expect(p.fraction).toBeGreaterThan(0.85)
-    expect(p.fraction).toBeLessThan(1)
-    expect(p.state).toBe('warn')
+    // 410 the step pays once + 10 × 850 a row (T1 measured 834 for the copy, four
+    // instructions more for the revealed cell). The whole point of Schritt 3 sits in this
+    // one number: the same ten rows used to cost 13.309.
+    expect(p.world!.shiftCycles).toBe(410 + 10 * 850)
+    // …which turns a tail that was 91 % full into one with room to spare, so a ten-row
+    // band stops being the tight case it was.
+    expect(p.fraction).toBeLessThan(0.75)
+    expect(p.state).toBe('ok')
   })
 
-  it('DERIVES this engine\'s ten-row ceiling: at twelve rows the tail is over', () => {
-    // The scissor, not a hard-coded number: work grows per band row (1.331 cycles) while
-    // the room shrinks by 8 raster lines per row — so H = 12 tears where H = 10 stands,
-    // which is precisely what the counter-test on real hardware showed (T2c/T4).
-    const ten = worldPerf('3, 12', camera)!
+  it("DERIVES this engine's ceiling: twelve rows stand now, fifteen do not", () => {
+    // The scissor, not a hard-coded number: work grows per band row (850 cycles) while the
+    // room shrinks by 8 raster lines per row. Where the two meet is the ceiling, and it
+    // moved from ten to fourteen because the copy loop changed — nothing else did.
     const twelve = worldPerf('3, 14', camera)!
-    expect(twelve.world!.shiftCycles).toBeGreaterThan(ten.world!.shiftCycles)
-    expect(twelve.world!.tailCycles).toBeLessThan(ten.world!.tailCycles)
-    expect(ten.state).not.toBe('over')
-    expect(twelve.state).toBe('over')
-    expect(twelve.world!.wall).toBe('tail')
+    const fifteen = worldPerf('3, 17', camera)!
+    expect(fifteen.world!.shiftCycles).toBeGreaterThan(twelve.world!.shiftCycles)
+    expect(fifteen.world!.tailCycles).toBeLessThan(twelve.world!.tailCycles)
+    expect(twelve.state).not.toBe('over')
+    expect(fifteen.state).toBe('over')
+    expect(fifteen.world!.wall).toBe('tail')
+  })
+
+  // The band the old engine tore on is now well inside the tail — the four rows Schritt 3
+  // set out to buy, stated as a test so a later change cannot give them back unnoticed.
+  it('gives the play field four more rows than the engine before it', () => {
+    const twelve = worldPerf('3, 14', camera)!
+    expect(twelve.world!.tailUsed).toBeLessThan(twelve.world!.tailCycles)
+    // 12 rows × 1.331 + the old fixed part would not have fitted below a twelve-row band.
+    expect(410 + 12 * 1331).toBeGreaterThan(twelve.world!.tailCycles)
   })
 
   it('a shorter band leaves room again (the lever the user actually has)', () => {

@@ -509,19 +509,35 @@ describe('codegen: SetMode + VWait (Stufe 2, §E/§F)', () => {
     const { code, errors } = gen('SetMode TEXT, MULTICOLOR')
     expect(errors).toEqual([])
     expect(code).toContain('VIC.ctrl2 |= 0x10;') // multicolor on
-    expect(code).toContain('VIC.ctrl1 &= ~0x20;') // text (not bitmap)
+    expect(code).toContain('VIC.ctrl1 = VIC.ctrl1 & 0x5F;') // text (not bitmap)
   })
 
   it('SetMode TEXT, HIRES clears both mode bits', () => {
     const { code } = gen('SetMode TEXT, HIRES')
     expect(code).toContain('VIC.ctrl2 &= ~0x10;') // hires (not multicolor)
-    expect(code).toContain('VIC.ctrl1 &= ~0x20;') // text
+    expect(code).toContain('VIC.ctrl1 = VIC.ctrl1 & 0x5F;') // text
   })
 
   it('SetMode BITMAP, MULTICOLOR sets both mode bits', () => {
     const { code } = gen('SetMode BITMAP, MULTICOLOR')
-    expect(code).toContain('VIC.ctrl1 |= 0x20;') // bitmap
+    expect(code).toContain('VIC.ctrl1 = (VIC.ctrl1 | 0x20) & 0x7F;') // bitmap
     expect(code).toContain('VIC.ctrl2 |= 0x10;') // multicolor
+  })
+
+  // $D011 IS NOT A NORMAL REGISTER (S1 Schritt 3, T3b — found by a real game). Writing it
+  // sets the raster compare's 9th bit; READING it gives back the beam's current line 8. A
+  // plain read-modify-write therefore copies wherever the beam happened to be into the
+  // interrupt's line number, and a split armed for line 321 never fires again: Into The
+  // Deep froze on the way back from its title picture with $D011 = $9B, waiting forever
+  // for a tick. So bit 7 is never written back from a read, in any mode.
+  it('never writes the beam’s own position back into $D011', () => {
+    for (const mode of ['SetMode TEXT, MULTICOLOR', 'SetMode TEXT, HIRES', 'SetMode BITMAP, MULTICOLOR']) {
+      const { code } = gen(mode)
+      expect(code).not.toContain('VIC.ctrl1 |= ')
+      expect(code).not.toContain('VIC.ctrl1 &= ~0x20;')
+      // …whatever it writes, bit 7 is masked out of it.
+      expect(code).toMatch(/VIC\.ctrl1 = [^;]*0x(5F|7F)[^;]*;/)
+    }
   })
 
   it('SetMode TEXT alone defaults to HIRES (color mode optional)', () => {
@@ -1298,10 +1314,18 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       expect(code).toContain('static void bc_irq_split(void)')
       expect(code).toContain('*(void (**)(void))0x0314 = bc_irq_split;')
       expect(code).toContain('__asm__("jmp $ea81");') // …not $EA31: no keyboard scan
-      // Armed a line early, then it meets its own line exactly — an interrupt is 40-60
-      // cycles late and a $D016 written mid-line would shear that line.
+      // Armed a line early, then it meets its own line — an interrupt is 40-60 cycles late
+      // and a $D016 written mid-line would shear that line.
       expect(code).toContain('VIC.rasterline = BC_SPLIT_IN - 1;')
-      expect(code).toContain('__asm__("bcirqw1: cpx $d012");')
+      expect(code).toContain('__asm__("bcirqw1: lda $d012");')
+      // …but it waits for "at or past", NEVER for "exactly" (S1 Schritt 3, T3b). If the tail
+      // overran into the band this interrupt is already late, and `cpx / bne` would then
+      // spin a WHOLE FRAME for that line to come round again — missing the other split,
+      // turning the two-phase machine around, and freezing the game on a tick that never
+      // arrives. `cmp / bcc` gives up: a seam for one frame instead of a dead machine.
+      expect(code).toContain('__asm__("bcc bcirqw1");')
+      expect(code).toContain('__asm__("bcc bcirqbot");')
+      expect(code).not.toContain('cpx $d012')
       // The frame turns over on the interrupt's tick, not on a raster wait.
       expect(code).toContain('while (bc_tick == bc_last_tick) { }')
       expect(code).not.toContain('while (BC_RASTER != BC_SPLIT_OUT)')
@@ -1590,7 +1614,7 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
         expect(code).toContain('bc_set_camx((int)(8));')
         // …the movement sits behind the split, in the frame's tail.
         expect(code).toMatch(
-          /static void bc_vwait\(void\) \{[\s\S]*?if \(bc_cut\)[\s\S]*?bc_shift_col_left\(\)/
+          /static void bc_vwait\(void\) \{[\s\S]*?if \(bc_cut\)[\s\S]*?bc_shift_left\(\)/
         )
         expect(code).toContain('bc_shown_col = bc_want_col;')
       })
@@ -1601,8 +1625,10 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
       // and a tear looks like broken hardware.
       it('drops the step instead of tearing when the frame ran long', () => {
         const { code } = gen(world('SetCameraX 8\nWhile 1\n  VWait\nWend'), fakeAssets())
-        // Room below a ten-row band = 312 − 80 lines; the step itself costs 10 × 21 + 2.
-        expect(code).toContain('#define BC_TAIL_SLACK 20')
+        // Room below a ten-row band = 312 − 80 lines; the step itself costs 10 × 14 + 9
+        // (Schritt 3: 850 cycles a band row, rounded up to whole raster lines — early
+        // drops a step, late TEARS). It was 10 × 21 + 2 when the copy cost 1.331.
+        expect(code).toContain('#define BC_TAIL_SLACK 83')
         expect(code).toContain('if ((unsigned int)(_r - BC_SPLIT_OUT) > BC_TAIL_SLACK) return;')
         // The deadline is only asked when there is something heavy to do…
         expect(code).toMatch(/if \(bc_dir_col \|\| bc_cut\) \{[\s\S]*?BC_TAIL_SLACK/)
@@ -1611,6 +1637,33 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
         expect(code).toMatch(
           /BC_TAIL_SLACK\) return;[\s\S]*?bc_shown_col = bc_want_col;[\s\S]*?bc_d016_band = /
         )
+      })
+
+      // S1 Schritt 3, T3b — the regression a real game found. The deadline used to be asked
+      // AFTER the sprite registers had been written, and the flush itself takes raster
+      // lines: on a tall play field, where the slack is down to its floor, the answer was
+      // always "too late", every step was refused, and the world stopped scrolling. The
+      // sprites had moved by then though, against a band that had not — so the hero slid
+      // across a frozen world, falling through ground drawn elsewhere and hitting walls that
+      // were not there. One missed step, three symptoms.
+      it('asks the deadline BEFORE it moves anything, sprites included', () => {
+        const { code } = gen(
+          world('Sprite 0, 100, 80\nSetCameraX 8\nWhile 1\n  VWait\nWend'),
+          fakeAssets()
+        )
+        const tail = code.slice(code.indexOf('static void bc_vwait(void) {'))
+        const deadline = tail.indexOf('BC_TAIL_SLACK) return;')
+        const flush = tail.indexOf('bc_spr_flush();')
+        const step = tail.indexOf('bc_shift_left();')
+        expect(deadline).toBeGreaterThan(-1)
+        expect(flush).toBeGreaterThan(-1)
+        // …and in this order: ask, then move the sprites, then move the band.
+        expect(deadline).toBeLessThan(flush)
+        expect(flush).toBeLessThan(step)
+        // A dropped frame therefore moves NOTHING — hero and world stay in lockstep.
+        // The sprites' own cycles are part of what has to fit: one named slot is 130
+        // cycles = 3 raster lines less slack than the same world without a sprite.
+        expect(code).toContain('#define BC_TAIL_SLACK 80')
       })
 
       it('clamps at both level ends instead of wrapping', () => {
@@ -1640,32 +1693,50 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
         expect(code).toContain('else if (bc_want_col + 1 == bc_shown_col) { bc_dir_col = -1;')
       })
 
-      it('shifts the band as ONE block: full pages on bne, a compare only on the rest', () => {
+      // S1 Schritt 3, T2: the copy that decides how tall a play field may be. Screen and
+      // colour move under ONE index (counting it twice paid twice for one piece of
+      // arithmetic) and eight cells go per turn of the loop, which takes the bookkeeping
+      // from seven cycles a cell to under two. Measured on hardware in T1: 1.274 → 834
+      // cycles per band row, and with it the ceiling from ten rows to fourteen.
+      it('moves screen and colour under one index, eight cells to a turn', () => {
         const { code } = gen(world('SetCameraX 8'), fakeAssets())
         // 10 rows × 40 = 400 bytes, 399 of them travel (the last is the revealed column):
-        // one full 256-byte page, then 143 bytes.
-        expect(code).toContain(`__asm__("bcsl0: lda %w,x", ${hex(BAND + 1)}u);`)
-        expect(code).toContain('__asm__("bne bcsl0");')
-        expect(code).toContain(`__asm__("bcsl1: lda %w,x", ${hex(BAND + 257)}u);`)
-        expect(code).toContain('__asm__("cpx #%b", (unsigned char)143);')
-        // Colour travels with it — the VIC does not scroll $D800.
-        expect(code).toContain(`__asm__("bccl0: lda %w,x", ${hex(CBAND + 1)}u);`)
+        // one full 256-byte block, then 136 in eights, then the seven left over.
+        expect(code).toContain('__asm__("bcl0:");')
+        expect(code).toContain(`__asm__("lda %w,x", ${hex(BAND + 1)}u);`)
+        // …the colour of the very same cell, in the same breath — the VIC does not scroll
+        // $D800, so it has to travel, and it travels under the index already loaded.
+        expect(code).toContain(`__asm__("lda %w,x", ${hex(CBAND + 1)}u);`)
+        // Eight cells, then the index moves once for all of them.
+        expect(code).toMatch(
+          /__asm__\("txa"\);\n\s*__asm__\("clc"\);\n\s*__asm__\("adc #\$08"\);\n\s*__asm__\("tax"\);/
+        )
+        // A whole 256-byte block ends on the index wrapping to zero — no compare at all.
+        expect(code).toContain('__asm__("bne bcl0");')
+        // …only the partial block pays one: 399 − 7 = 392, of which 256 are the first block.
+        expect(code).toContain('__asm__("cpx #%b", (unsigned char)136);')
+        // …and the seven the eights do not reach are plain absolute stores.
+        expect(code).toContain(`__asm__("lda %w", ${hex(BAND + 399)}u);`)
+        expect(code).toContain(`__asm__("sta %w", ${hex(BAND + 398)}u);`)
       })
 
-      it('copies index 0 by hand on the way home (the measured tearing trap, T3)', () => {
+      it('walks downwards on the way home, and never compares a byte (the T3 trap)', () => {
         const { code } = gen(world('SetCameraX 8'), fakeAssets())
-        // Descending: the loop must end on `dex / bne`, never `dex / cpx #$FF / bne` —
-        // two cycles a byte cost ~25 raster lines over the band and tore the way back.
-        expect(code).toMatch(/__asm__\("dex"\);\n\s*__asm__\("bne bcsr1"\);/)
-        // …so the descending helper itself must not compare a single byte (the comment
-        // above it quotes the trap, so read the function, not the prose).
         const home = code.slice(
-          code.indexOf('static void bc_shift_scr_right(void) {'),
-          code.indexOf('static void bc_shift_col_right(void) {')
+          code.indexOf('static void bc_shift_right(void) {'),
+          code.indexOf('static void bc_reveal_right(void) {')
         )
+        // The way back tore first in T3, and it tore over two cycles a byte spent
+        // comparing. The descending loop ends on the borrow out of zero instead, so the
+        // last turn is the one at index 0 and nothing is compared anywhere in here.
+        expect(home).toContain('__asm__("sbc #$08");')
+        expect(home).toContain('__asm__("bcs bcr0");')
         expect(home).not.toContain('cpx')
-        expect(code).toContain(`__asm__("lda %w", ${hex(BAND + 256)}u);`)
-        expect(code).toContain(`__asm__("sta %w", ${hex(BAND + 257)}u);`)
+        // Highest addresses first, or every byte would overwrite the one it is about to
+        // read: the odd seven at the top come before the blocks.
+        expect(home.indexOf(`${hex(BAND + 398)}u`)).toBeLessThan(
+          home.indexOf(`${hex(BAND + 256)}u`)
+        )
       })
 
       it('stamps the revealed column into the edge the shift vacated', () => {
