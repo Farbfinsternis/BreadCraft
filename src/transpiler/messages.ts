@@ -75,6 +75,7 @@ export interface CodegenMessages {
   narrowByteReason(): string
   narrowWordReason(): string
   narrowSintReason(): string
+  byteMathIntoWide(where: string): string
   drawTextArgs(): string
   colorArg(): string
   strArgs(): string
@@ -330,6 +331,9 @@ const DE_CODEGEN: CodegenMessages = {
   narrowWordReason: () =>
     `ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl`,
   narrowSintReason: () => `ein .w-Wert über 32767 kippt im signed .i ins Negative`,
+  byteMathIntoWide: (where) =>
+    `diese Rechnung rechnet mit Bytes und kippt darum bei 256, wird aber nach ${where} geschrieben — ` +
+    `brauchst Du die große Zahl, gib einem der beteiligten Werte '.w'`,
   drawTextArgs: () => `DrawText erwartet x, y, Ausdruck`,
   colorArg: () => `Color erwartet eine Farbe, z. B. Color WHITE`,
   strArgs: () => `Str$ erwartet eine Zahl: Str$(n)`,
@@ -482,6 +486,9 @@ const EN_CODEGEN: CodegenMessages = {
   narrowWordReason: () =>
     `a signed value (.i) becomes unsigned (.w) — a negative value turns into a large number`,
   narrowSintReason: () => `a .w value above 32767 flips negative in a signed .i`,
+  byteMathIntoWide: (where) =>
+    `this calculation works on bytes and therefore wraps at 256, but its result goes into ${where} — ` +
+    `if you need the big number, give one of the values involved a '.w'`,
   drawTextArgs: () => `DrawText expects x, y, expression`,
   colorArg: () => `Color expects a colour, e.g. Color WHITE`,
   strArgs: () => `Str$ expects a number: Str$(n)`,

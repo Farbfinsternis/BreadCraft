@@ -14,6 +14,7 @@ import type {
   IndexExpr,
   FieldExpr,
   CallExpr,
+  Binary,
   IfStmt,
   WhileStmt,
   RepeatStmt,
@@ -276,6 +277,14 @@ const OP_C: Record<string, string> = {
   shr: '>>'
 }
 
+/**
+ * The operators that produce a VALUE (as opposed to a 0/1 flag). Only these can be
+ * narrowed by TYPEN-PLAN T2: a comparison or a logical `And` already yields one bit,
+ * so a cast there would be noise. `Xor` is bitwise and belongs here; `And`/`Or` are
+ * CRUMB's LOGICAL operators (see OP_C: `&&` / `||`) and do not.
+ */
+const VALUE_OPS = new Set(['+', '-', '*', '/', 'mod', 'xor', 'shl', 'shr'])
+
 /** One entry in the symbol table: a variable's C name, type, and scope. */
 interface Symbol {
   cName: string
@@ -469,6 +478,11 @@ class Generator {
   /** Any sprite command used. Sprites poke VIC registers directly (c64.h, always
    *  included), so no extra header is needed — the flag documents the dependency. */
   private usesSprites = false
+  /** A site needed `bc_bit[]` — the eight single-bit masks as a table (TYPEN-PLAN T4).
+   *  Set late (the world runtime asks for it after the header is built), which is why
+   *  the table is assembled at the very end of generate() rather than pushed into
+   *  `header`. Only emitted when something actually shifts by a runtime value. */
+  private usesBitTable = false
   /** UseSprite used (P2.T3) → emit the sprite-shape memory-map #defines (the 64-byte-
    *  aligned data block above the charset + the pointer slots). */
   private usesSpriteData = false
@@ -945,12 +959,22 @@ class Generator {
     const globalDecls: string[] = []
     const localDecls: string[] = []
     for (const sym of this.symbols.values()) {
-      const decl =
-        sym.type === 'string'
-          ? `char ${sym.cName}[${sym.strSize ?? DEFAULT_STR_CAP}];`
-          : `${C_TYPE[sym.type]} ${sym.cName} = 0;`
-      if (sym.global) globalDecls.push(decl)
-      else localDecls.push('  ' + decl)
+      if (sym.type === 'string') {
+        const decl = `char ${sym.cName}[${sym.strSize ?? DEFAULT_STR_CAP}];`
+        if (sym.global) globalDecls.push(decl)
+        else localDecls.push('  ' + decl)
+        continue
+      }
+      // A name without `Global` becomes a local of main — and main's 16-bit locals get the
+      // zero page too (see zeroPaged). Here it is even cheaper than in a function: main is
+      // entered ONCE and a game never returns from it, so the register bank is saved a
+      // single time instead of on every call. Measured on a representative frame loop:
+      // runtime helper calls 10 → 4, of them 16-bit 9 → 3.
+      // A file-scope global cannot be `register` — C does not allow it, and cc65 keeps
+      // globals in absolute memory regardless (proven: #pragma bss-name "ZEROPAGE" leaves
+      // them in DATA and the .prg byte-identical).
+      if (sym.global) globalDecls.push(`${C_TYPE[sym.type]} ${sym.cName} = 0;`)
+      else localDecls.push(`  ${this.zeroPaged(sym.type)}${C_TYPE[sym.type]} ${sym.cName} = 0;`)
     }
     if (globalDecls.length > 0) globalDecls.push('')
     if (localDecls.length > 0) localDecls.push('')
@@ -1102,9 +1126,23 @@ class Generator {
     // can see file-scope globals/arrays/structs and be called from main.
     const funcs = this.funcDefs.length > 0 ? [...this.funcDefs, ''] : []
 
+    // The eight single-bit masks (TYPEN-PLAN T4). Built HERE, last, because the world
+    // runtime above only asks for it while it is being assembled — after `header` was
+    // closed. Costs eight bytes and buys away every runtime `1 << n`, which cc65 would
+    // otherwise compile into a shift loop (`aslaxy`). Emitted only when something uses
+    // it, so a program with constant sprite slots is byte-identical to before.
+    const bitTable = this.usesBitTable
+      ? [
+          '/* the eight single-bit masks: `1 << n` with a runtime n is a loop, this is one lda */',
+          'static const unsigned char bc_bit[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };',
+          ''
+        ]
+      : []
+
     const code = [
       ...header,
       ...defines,
+      ...bitTable,
       ...structDecls,
       ...arrayDecls,
       ...baked,
@@ -1548,6 +1586,9 @@ class Generator {
    */
   private spriteWorldDecls(): string[] {
     const n = this.spriteSlotsUsed
+    // The tail's loop shifts by its own counter three times per slot — the one place in
+    // the engine where `1 << i` can never be folded. It always takes the table (T4).
+    this.usesBitTable = true
     return [
       '/* ---- sprites riding on the world (S1.B3.3) ---- */',
       `#define BC_SPR_N     ${n}   /* slots this program names */`,
@@ -1599,14 +1640,14 @@ class Generator {
       '  unsigned char i, ena = 0, hi = 0;',
       '  int sx;',
       '  for (i = 0; i < BC_SPR_N; ++i) {',
-      '    if (!(bc_spr_want & (1 << i))) continue;',
+      '    if (!(bc_spr_want & bc_bit[i])) continue;',
       '    sx = (int)bc_spr_mx[i] - (int)bc_camx + 24;   /* 24 = the first visible pixel */',
       '    if (sx < 0 || sx > 343) continue;',
       '    VIC.spr_pos[i].x = (unsigned char)sx;',
       '    VIC.spr_pos[i].y = bc_spr_my[i];',
       '    BC_SPR_PTR[i] = bc_spr_ptr[i];',
-      '    if (sx > 255) hi |= (1 << i);',
-      '    ena |= (1 << i);',
+      '    if (sx > 255) hi |= bc_bit[i];',
+      '    ena |= bc_bit[i];',
       '  }',
       '  VIC.spr_hi_x = hi;',
       '  VIC.spr_ena = ena;',
@@ -2199,7 +2240,7 @@ class Generator {
       if (isParam) continue
       if (l.recordType) this.emit(`struct ${cName(l.recordType)} ${l.cName};`)
       else if (l.type === 'string') this.emit(`char ${l.cName}[${l.strSize ?? DEFAULT_STR_CAP}];`)
-      else this.emit(`${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
+      else this.emit(`${this.zeroPaged(l.type)}${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
     }
     // Find repeatedly-visited record-array elements ONCE (S1.B5.T3) — the declarations go
     // above the body, and every field access below reads through them.
@@ -2304,6 +2345,25 @@ class Generator {
     const tt = this.exprType(target)
     const vt = this.exprType(value)
     if (!tt || !vt) return
+    const where =
+      target.kind === 'Identifier'
+        ? `'${target.name}'`
+        : target.kind === 'IndexExpr'
+          ? `'${target.name}[…]'`
+          : `'\\${target.field}'`
+
+    // ★ THE GUARD RAIL FOR T2. Byte arithmetic now really wraps at 256 (see
+    // narrowByteMath). Storing it into a byte is business as usual — it would have
+    // been truncated either way. Storing it into a WIDE destination is the one place
+    // where somebody plausibly expected the big number (`pixel.w = spalte * 8`), so
+    // say it out loud instead of letting the value be quietly wrong. Not an error:
+    // wrapping on purpose is legitimate, and forbidding it would be the wrong kind of
+    // railing ([[breadcraft-limits-philosophy]]).
+    if ((tt === 'word' || tt === 'sint') && this.isByteMath(value)) {
+      this.err(this.M.byteMathIntoWide(where), value, 'warn')
+      return
+    }
+
     let reason: string | undefined
     if (tt === 'byte' && (vt === 'word' || vt === 'sint')) {
       reason = this.M.narrowByteReason()
@@ -2313,12 +2373,6 @@ class Generator {
       reason = this.M.narrowSintReason()
     }
     if (!reason) return
-    const where =
-      target.kind === 'Identifier'
-        ? `'${target.name}'`
-        : target.kind === 'IndexExpr'
-          ? `'${target.name}[…]'`
-          : `'\\${target.field}'`
     this.err(this.M.narrowing(where, reason), target, 'warn')
   }
 
@@ -3205,7 +3259,7 @@ class Generator {
     // Off-variant: `Sprite n, OFF` — 2nd arg is the OFF constant, not an x value.
     if (a.length === 2 && a[1].kind === 'ConstantRef' && a[1].name.toUpperCase() === 'OFF') {
       this.noteSpriteSlot(a[0])
-      this.emitSpriteEnable(this.expr(a[0]), false)
+      this.emitSpriteEnable(a[0], this.expr(a[0]), false)
       return
     }
     if (a.length < 3) {
@@ -3225,7 +3279,8 @@ class Generator {
     } else {
       // Position; the 9th X bit (X >= 256) is carried into spr_hi_x bit n by hand.
       this.emit(`VIC.spr_pos[${n}].x = (unsigned char)((${x}) & 0xFF);`)
-      this.emit(`if ((${x}) & 0x100) VIC.spr_hi_x |= (1 << (${n})); else VIC.spr_hi_x &= ~(1 << (${n}));`)
+      const hiBit = this.bitOf(a[0], n)
+      this.emit(`if ((${x}) & 0x100) VIC.spr_hi_x |= ${hiBit}; else VIC.spr_hi_x &= ~${hiBit};`)
       this.emit(`VIC.spr_pos[${n}].y = (${y});`)
     }
     // 4th param `frame` (SA4): bend the sprite pointer to that frame's block — one byte
@@ -3266,7 +3321,7 @@ class Generator {
       return
     }
     this.noteSpriteSlot(a[0])
-    this.emitSpriteEnable(this.expr(a[0]), on)
+    this.emitSpriteEnable(a[0], this.expr(a[0]), on)
   }
 
   /**
@@ -3287,14 +3342,39 @@ class Generator {
     this.spriteSlotsUsed = 8
   }
 
+  /**
+   * The single-bit mask for slot `n` — as a shift when that costs nothing, as a table
+   * lookup when it would cost a loop (TYPEN-PLAN T4).
+   *
+   * `1 << 3` with a CONSTANT slot is folded by cc65 into an immediate: free, and a
+   * table would only make it worse (a memory read instead of a constant). But `1 << n`
+   * with a slot only known at RUNTIME compiles to `aslaxy` — a 16-bit shift helper that
+   * loops n times — and in a world that lands on the per-sprite, per-frame path. An
+   * eight-byte table turns the whole thing into one `lda`.
+   *
+   * Measured, not assumed (2026-07-29, `_intern/wide-ops.test.ts`): Into The Deep's
+   * `DrawBlob` goes from 5 runtime-helper calls to 3, both `aslaxy` gone, for four
+   * instructions and eight bytes of table.
+   *
+   * @param e  the slot as written, so a `Const` counts as constant too — not just a
+   *           literal. Undefined means "assume runtime" (the honest, safe side).
+   * @param n  the same slot, already emitted as C.
+   */
+  private bitOf(e: Expr | undefined, n: string): string {
+    if (e && this.constInt(e) !== undefined) return `(1 << (${n}))`
+    this.usesBitTable = true
+    return `bc_bit[${n}]`
+  }
+
   /** Emit the enable-bit poke for sprite n (shared by ShowSprite/HideSprite/Sprite n,OFF).
    *  In a world it flips a WISH instead of the register: the tail decides what the VIC
    *  actually gets, because a sprite outside the window has to stay dark (S1.B3.3). */
-  private emitSpriteEnable(n: string, on: boolean): void {
+  private emitSpriteEnable(e: Expr | undefined, n: string, on: boolean): void {
     this.usesSprites = true
     const reg = this.levelWorld ? 'bc_spr_want' : 'VIC.spr_ena'
-    if (on) this.emit(`${reg} |= (1 << (${n}));`)
-    else this.emit(`${reg} &= ~(1 << (${n}));`)
+    const bit = this.bitOf(e, n)
+    if (on) this.emit(`${reg} |= ${bit};`)
+    else this.emit(`${reg} &= ~${bit};`)
   }
 
   /**
@@ -3409,11 +3489,11 @@ class Generator {
       // palette (the coupling bgcolor1/2 = spr_mcolor0/1 — memory project-palette),
       // so sprite colours match what the editor painted.
       const pal = this.palette(s)
-      this.emit(`VIC.spr_mcolor |= (1 << (${slot}));`)
+      this.emit(`VIC.spr_mcolor |= ${this.bitOf(a[0], slot)};`)
       this.emit(`VIC.spr_mcolor0 = ${colorConst(pal.shared1)};`)
       this.emit(`VIC.spr_mcolor1 = ${colorConst(pal.shared2)};`)
     } else {
-      this.emit(`VIC.spr_mcolor &= ~(1 << (${slot}));`)
+      this.emit(`VIC.spr_mcolor &= ~${this.bitOf(a[0], slot)};`)
     }
   }
 
@@ -3849,7 +3929,7 @@ class Generator {
         // Always parenthesize — see Unary above. e.g. CRUMB `a + b Shl 2` parses as
         // `a + (b Shl 2)` (Shl binds like *); without parens C reads `(a + b) << 2`.
         const op = OP_C[e.op.toLowerCase()] ?? e.op
-        return `(${this.expr(e.left)} ${op} ${this.expr(e.right)})`
+        return this.narrowByteMath(e, `(${this.expr(e.left)} ${op} ${this.expr(e.right)})`)
       }
       case 'IndexExpr':
         return this.indexExpr(e)
@@ -3858,6 +3938,67 @@ class Generator {
       case 'CallExpr':
         return this.callExpr(e)
     }
+  }
+
+  /**
+   * TYPEN-PLAN T2 — a byte is a byte, in the generated C too.
+   *
+   * CRUMB's own type rule has always said `byte + byte → byte` (`exprType`), but the
+   * emitted C did not say so, and C then quietly widened every such sum to `int`:
+   * field 8 bits, constant 8 bits, destination 8 bits — and 16-bit arithmetic in
+   * between. Writing the narrowing down (`(unsigned char)(a + b)`) makes cc65 do the
+   * sum in eight bits, which is what the language claimed all along.
+   *
+   * ★ THIS CHANGES WHAT PROGRAMS MEAN, and that was a deliberate decision (user,
+   * 2026-07-29): `200 + 100` on two `.b` values is now 44, not 300. The measurements
+   * that motivated it are in `_intern/wide-ops.test.ts`; the guard rail against the
+   * surprise is `checkNarrowing`, which warns when byte arithmetic is written into a
+   * `.w`/`.i` destination — the one place where somebody plausibly wanted the big
+   * number. Everywhere else the result was going to be truncated to eight bits anyway.
+   *
+   * Applied UNIFORMLY, not per context. cc65 -O already narrows some shapes by itself
+   * (assignment to a byte, a byte parameter — measured in T1), so a cast there buys
+   * nothing; but making the rule depend on the surroundings would mean `a + b` wraps
+   * in one line and not in the next, and incoherent arithmetic is a worse price than
+   * a few redundant casts in a generated file.
+   */
+  private narrowByteMath(e: Binary, c: string): string {
+    if (!VALUE_OPS.has(e.op.toLowerCase())) return c   // a comparison is a flag, not a value
+    if (this.exprType(e) !== 'byte') return c          // honestly wide: leave it alone
+    return `(unsigned char)${c}`
+  }
+
+  /** Is this a byte-typed CALCULATION (not just a byte value)? The warning above only
+   *  fires for arithmetic — `w.w = b.b` is plain widening and holds no surprise. */
+  private isByteMath(e: Expr): boolean {
+    if (e.kind === 'Grouping') return this.isByteMath(e.expr)
+    if (e.kind !== 'Binary') return false
+    return VALUE_OPS.has(e.op.toLowerCase()) && this.exprType(e) === 'byte'
+  }
+
+  /**
+   * Should this local live in the ZERO PAGE? (`register`, with cc65 --register-vars.)
+   *
+   * On cc65's software stack a SIXTEEN-BIT local costs a subroutine call per access —
+   * `ldax0sp`, `stax0sp`, `addeqysp` are all `jsr`s. In the zero page the same access is
+   * `lda zp / ldx zp+1`. The price is one push and one pop of the register bank per CALL,
+   * which cc65 emits into the prologue; so this only pays where the saving beats that toll.
+   *
+   * ★ Measured, per variable, on Into The Deep (2026-07-29, harness `_intern/wide-ops.test.ts`):
+   * every 16-bit local either wins or breaks even (accel −3, fric −3, acc −5, nexty −3,
+   * footedge −1, front ±0), and every BYTE local is a wash (fourteen of them, all ±0 or +1).
+   * The reason is structural, not accidental: a byte on the stack needs no helper call in
+   * the first place, so there is nothing to remove — only the toll to pay. Hence the rule is
+   * the type, not a use count. Per-frame 16-bit runtime calls in ITD: 128 → 113.
+   *
+   * A blanket `register` on ALL locals was measured too and is WORSE (132) — that is the
+   * byte locals paying the toll for nothing.
+   *
+   * cc65's register bank is six bytes (`--register-space`, left at its default). Three
+   * 16-bit locals fill it; anything beyond stays on the stack, which cc65 handles by itself.
+   */
+  private zeroPaged(type: VarType | undefined): string {
+    return type === 'word' || type === 'sint' ? 'register ' : ''
   }
 
   /** Map a BreadCraft function call to its C expression. Tile-world reads (M3.T1)

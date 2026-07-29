@@ -904,7 +904,9 @@ describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
     expect(code).toContain('unsigned char Total(const struct Slot *s) {')
-    expect(code).toContain('return (s->item + s->count);') // M1.T1: always-parens
+    // M1.T1: always-parens — plus the byte narrowing from TYPEN-PLAN T2: both fields
+    // are .b, so the sum is byte arithmetic and is written as such.
+    expect(code).toContain('return (unsigned char)(s->item + s->count);')
     expect(code).toContain('r = Total(&bag[0]);') // address, not a copy
   })
 
@@ -937,6 +939,122 @@ describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
   })
 })
 
+// =====================================================================================
+// TYPEN-PLAN T2 — "a byte is a byte", in the generated C too.
+//
+// CRUMB's type rule always said `byte + byte → byte`; the emitted C did not, so C
+// widened every such sum to `int` and cc65 dutifully did 16-bit arithmetic between two
+// 8-bit values. Writing the narrowing down makes the language's own claim true.
+//
+// ★ This CHANGES WHAT PROGRAMS MEAN (200 + 100 on two .b values is 44, not 300) and was
+// a deliberate user decision (2026-07-29). These tests pin both halves of the bargain:
+// the narrowing itself, and the warning that catches the one case where somebody
+// plausibly wanted the big number.
+// =====================================================================================
+// =====================================================================================
+// 16-Bit-Lokale in die ZEROPAGE (`register`, cc65 --register-vars).
+//
+// On cc65's software stack a 16-bit local costs a SUBROUTINE CALL per access
+// (`ldax0sp`, `stax0sp`, `addeqysp` are all `jsr`s); in the zero page it is
+// `lda zp / ldx zp+1`. The toll is one push and one pop of the register bank per call.
+//
+// The rule is the TYPE, not a use count — and that is measured, not guessed
+// (2026-07-29, `_intern/wide-ops.test.ts`, per variable on Into The Deep): every 16-bit
+// local wins or breaks even, every BYTE local is a wash, because a byte on the stack
+// needs no helper call in the first place and would only pay the toll. A blanket
+// `register` on all 47 locals was measured too and comes out WORSE.
+// =====================================================================================
+describe('codegen: 16-bit locals go to the zero page', () => {
+  it('puts a .w / .i local of a function in the register bank', () => {
+    const src = ['Function Tick()', '  weit.w = 0', '  delta.i = 0', '  weit = weit + 1', 'EndFunction', 'Tick'].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('register unsigned int weit = 0;')
+    expect(code).toContain('register int delta = 0;')
+  })
+
+  it('leaves a byte local on the stack — it would only pay the toll', () => {
+    const src = ['Function Tick()', '  klein.b = 0', '  klein = klein + 1', 'EndFunction', 'Tick'].join('\n')
+    const { code } = gen(src)
+    expect(code).toContain('unsigned char klein = 0;')
+    expect(code).not.toContain('register unsigned char klein')
+  })
+
+  it('does the same for main’s own locals (a name without Global)', () => {
+    const { code } = gen(['weit.w = 0', 'klein.b = 0', 'weit = weit + 1'].join('\n'))
+    expect(code).toContain('  register unsigned int weit = 0;')
+    expect(code).toContain('  unsigned char klein = 0;')
+  })
+
+  it('never marks a file-scope global — C does not allow it', () => {
+    const { code, errors } = gen(['Global weit.w = 0', 'weit = weit + 1'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('unsigned int weit = 0;')
+    expect(code).not.toContain('register unsigned int weit')
+  })
+
+  it('leaves strings alone (they are buffers, not values)', () => {
+    const { code } = gen(['name$ = "ABC"'].join('\n'))
+    expect(code).not.toContain('register char')
+  })
+})
+
+describe('codegen: byte arithmetic stays 8 bits (TYPEN-PLAN T2)', () => {
+  it('writes the narrowing for a byte calculation', () => {
+    const { code, errors } = gen(['a.b = 200', 'b.b = 100', 'c.b = 0', 'c = a + b'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('c = (unsigned char)(a + b);')
+  })
+
+  it('leaves honestly wide arithmetic alone', () => {
+    const { code } = gen(['a.b = 200', 'w.w = 1000', 'r.w = 0', 'r = a + w'].join('\n'))
+    expect(code).toContain('r = (a + w);')
+    expect(code).not.toContain('(unsigned char)(a + w)')
+  })
+
+  it('does not narrow a comparison — that result is a flag, not a value', () => {
+    const { code } = gen(['a.b = 1', 'b.b = 2', 'c.b = 0', 'If a > b Then c = 1'].join('\n'))
+    expect(code).toContain('if ((a > b))')
+    expect(code).not.toContain('(unsigned char)(a > b)')
+  })
+
+  it('does not narrow a logical And/Or either', () => {
+    const { code } = gen(['a.b = 1', 'b.b = 2', 'c.b = 0', 'If a > 0 And b > 0 Then c = 1'].join('\n'))
+    expect(code).not.toContain('(unsigned char)((a > 0) &&')
+  })
+
+  it('narrows the inner step of a chain too, so the whole sum stays 8 bits', () => {
+    const { code } = gen(['a.b = 1', 'b.b = 2', 'c.b = 3', 'r.b = 0', 'r = (a + b) * c'].join('\n'))
+    expect(code).toContain('r = (unsigned char)(((unsigned char)(a + b)) * c);')
+  })
+
+  // --- the guard rail -----------------------------------------------------------
+  const wraps = (w: string[]): string[] => w.filter((m) => /256/.test(m))
+
+  it('warns when byte arithmetic is written into a wide destination', () => {
+    const { warnings, errors } = gen(['spalte.b = 40', 'pixel.w = 0', 'pixel = spalte * 8'].join('\n'))
+    expect(errors).toEqual([])   // a warning, not a refusal: wrapping on purpose is allowed
+    const hit = wraps(warnings)
+    expect(hit.length, 'a .b calculation stored into a .w must be flagged').toBe(1)
+    expect(hit[0]).toMatch(/pixel/)
+  })
+
+  it('stays quiet when the same calculation goes into a byte', () => {
+    const { warnings } = gen(['spalte.b = 40', 'reihe.b = 0', 'reihe = spalte * 8'].join('\n'))
+    expect(wraps(warnings)).toEqual([])
+  })
+
+  it('stays quiet for plain widening — that holds no surprise', () => {
+    const { warnings } = gen(['b.b = 7', 'w.w = 0', 'w = b'].join('\n'))
+    expect(wraps(warnings)).toEqual([])
+  })
+
+  it('stays quiet when one operand is already wide', () => {
+    const { warnings } = gen(['spalte.b = 40', 'acht.w = 8', 'pixel.w = 0', 'pixel = spalte * acht'].join('\n'))
+    expect(wraps(warnings)).toEqual([])
+  })
+})
+
 describe('codegen: sprites (M3.T2) — Sprite/ShowSprite/HideSprite', () => {
   it('Sprite n,x,y sets position, carries the 9th X bit, sets Y', () => {
     const { code, errors } = gen('Sprite 0, 160, 120')
@@ -950,7 +1068,8 @@ describe('codegen: sprites (M3.T2) — Sprite/ShowSprite/HideSprite', () => {
     const { code, errors } = gen(['s.b = 3', 'px.w = 300', 'Sprite s, px, 80'].join('\n'))
     expect(errors).toEqual([])
     expect(code).toContain('VIC.spr_pos[s].x = (unsigned char)((px) & 0xFF);')
-    expect(code).toContain('VIC.spr_hi_x |= (1 << (s))')
+    // A slot only known at runtime takes the bit TABLE, not a shift (TYPEN-PLAN T4).
+    expect(code).toContain('VIC.spr_hi_x |= bc_bit[s]')
   })
 
   it('Sprite n, OFF disables the sprite (off-variant)', () => {
@@ -965,6 +1084,47 @@ describe('codegen: sprites (M3.T2) — Sprite/ShowSprite/HideSprite', () => {
     expect(errors).toEqual([])
     expect(code).toContain('VIC.spr_ena |= (1 << (1));')
     expect(code).toContain('VIC.spr_ena &= ~(1 << (7));')
+  })
+
+  // --- TYPEN-PLAN T4: `1 << n` only costs something when n is a runtime value -------
+  // Measured with cc65 (_intern/wide-ops.test.ts): a constant shift is folded into an
+  // immediate and costs nothing, a runtime shift becomes `aslaxy` — a loop. Into The
+  // Deep hits the runtime case twice per blob per frame (`ShowSprite blobs[i]\bspr`),
+  // and the world's tail hits it three times per slot. Hence the table — but ONLY where
+  // it pays, so every program with constant slots stays byte-identical.
+  describe('the bit table (TYPEN-PLAN T4)', () => {
+    it('keeps the folded shift for a constant slot and emits no table at all', () => {
+      const { code, errors } = gen(['ShowSprite 1', 'HideSprite 7'].join('\n'))
+      expect(errors).toEqual([])
+      expect(code).toContain('VIC.spr_ena |= (1 << (1));')
+      expect(code).toContain('VIC.spr_ena &= ~(1 << (7));')
+      expect(code).not.toContain('bc_bit')
+    })
+
+    it('counts a Const as constant too — a named slot is still free', () => {
+      const { code, errors } = gen(['Const PLAYER = 1', 'ShowSprite PLAYER'].join('\n'))
+      expect(errors).toEqual([])
+      expect(code).toContain('VIC.spr_ena |= (1 << (PLAYER));')
+      expect(code).not.toContain('bc_bit')
+    })
+
+    it('uses the table for a slot only known at runtime, and declares it once', () => {
+      const { code, errors } = gen(['s.b = 3', 'ShowSprite s', 'HideSprite s'].join('\n'))
+      expect(errors).toEqual([])
+      expect(code).toContain('VIC.spr_ena |= bc_bit[s];')
+      expect(code).toContain('VIC.spr_ena &= ~bc_bit[s];')
+      expect(code).toContain('static const unsigned char bc_bit[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };')
+      expect(code.split('bc_bit[8]').length - 1, 'the table must be declared exactly once').toBe(1)
+    })
+
+    it('declares the table before anything reads it', () => {
+      const { code } = gen(['s.b = 3', 'ShowSprite s'].join('\n'))
+      expect(code.indexOf('bc_bit[8]')).toBeLessThan(code.indexOf('bc_bit[s]'))
+    })
+
+    it('a program without sprites never pays for it', () => {
+      expect(gen('x.b = 1').code).not.toContain('bc_bit')
+    })
   })
 
   it('marks sprite use in the header (asset-baking seam) only when used', () => {
@@ -997,7 +1157,8 @@ describe('codegen: sprites (M3.T2) — Sprite/ShowSprite/HideSprite', () => {
     const src = ['t.b = 9', 'UseSprite 0, "player"', 'Sprite 0, 100, 100, t Mod 2'].join('\n')
     const { code, errors } = gen(src, fakeAssets())
     expect(errors).toEqual([])
-    expect(code).toContain('BC_SPR_PTR[0] = bc_spr_base[0] + ((t % 2));')
+    // `t` is .b, so `t Mod 2` is byte arithmetic and carries T2's narrowing.
+    expect(code).toContain('BC_SPR_PTR[0] = bc_spr_base[0] + ((unsigned char)(t % 2));')
   })
 
   it('warns (best-effort) when a constant frame is past the slot’s baked frame count', () => {

@@ -214,6 +214,35 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gemalt ist, verschwindet nichts.
 
 ### Geändert
+- **Größere Zahlen in Funktionen liegen jetzt dort, wo der C64 am schnellsten hinlangt.**
+  Eine `.w`- oder `.i`-Variable innerhalb einer Funktion lag bisher auf einem Stapel, den
+  BreadCraft für den C64 nachbauen muss — und jeder Zugriff darauf war ein kleiner
+  Unterprogramm-Aufruf. Solche Variablen ziehen jetzt in die **Zeropage**, den Bereich, den
+  der 6502 in einem Atemzug erreicht; dort ist ein Zugriff ein einziger Befehl. `.b`-Variablen
+  bleiben, wo sie waren — für die lohnt der Umzug nachweislich nicht. Du musst dafür nichts
+  ändern und nichts wissen: es passiert beim Übersetzen. In „Into The Deep" fallen damit
+  **11 % der Rechen-Umwege pro Bild** weg.
+- **★ Rechnen mit `.b`-Werten bleibt jetzt wirklich beim Byte — und kippt bei 256.**
+  BreadCraft hat immer schon gesagt, dass `a.b + b.b` ein Byte ergibt. Der erzeugte Code
+  hielt sich nur nicht daran: er wich heimlich auf 16 Bit aus, und der C64 rechnete mit
+  doppelt so vielen Zahlen, wie nötig waren. Ab jetzt gilt, was drauf steht. **Das kann
+  bestehende Programme ändern:** `200 + 100` auf zwei `.b`-Werten ergibt jetzt 44, nicht
+  300 — so, wie ein Byte eben rechnet. Damit Dich das nicht kalt erwischt, sagt BreadCraft
+  Bescheid, wenn eine Byte-Rechnung in einen breiten Wert geschrieben wird — also genau
+  dort, wo Du wahrscheinlich die große Zahl wolltest:
+  „*diese Rechnung rechnet mit Bytes und kippt darum bei 256, wird aber nach 'pixel'
+  geschrieben — brauchst Du die große Zahl, gib einem der beteiligten Werte '.w'*".
+  Verboten wird nichts: absichtlich überlaufen zu lassen ist eine legitime Technik.
+- **Sprites an- und ausschalten kostet weniger Rechenzeit — vor allem, wenn Du die Nummer
+  ausrechnest.** Ein `ShowSprite 2` war noch nie teuer: die Nummer steht fest, und der Rechner
+  weiß beim Übersetzen, welches Schalterchen gemeint ist. Aber ein `ShowSprite gegner\bild`,
+  wo die Nummer erst im Spiel feststeht, musste der C64 sich bisher **hochzählen** — er fing
+  bei eins an und verdoppelte so oft, wie die Nummer sagt. Das ist eine kleine Schleife, und
+  sie lief bei jedem Gegner in jedem Bild. Jetzt schlägt er stattdessen in einer acht Byte
+  großen Tabelle nach: **einmal hinsehen statt hochzählen.** Betrifft `ShowSprite`,
+  `HideSprite`, `Sprite n, OFF`, weit rechts stehende Sprites und die Sprite-Ausgabe der
+  scrollenden Welt. Feste Nummern bleiben genau so schnell wie vorher, und das fertige
+  Programm wird **kein einziges Byte größer**.
 - **`DrawMap` sagt jetzt ehrlich, wenn eine Karte zu breit für den Bildschirm ist**, statt sie
   stillschweigend zu zerschneiden: „diese Karte ist 120 Spalten breit, auf den Bildschirm passen
   40 … eine Karte, die breiter ist als der Schirm, ist eine WELT, durch die man läuft — dafür ist
