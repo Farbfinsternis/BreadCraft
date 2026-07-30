@@ -75,6 +75,9 @@ export interface CodegenMessages {
   narrowByteReason(): string
   narrowWordReason(): string
   narrowSintReason(): string
+  narrowSbyteReason(): string
+  signedIntoUnsignedReason(): string
+  recordStride(record: string, bytes: number, next: number, missing: number): string
   byteMathIntoWide(where: string): string
   drawTextArgs(): string
   colorArg(): string
@@ -331,6 +334,15 @@ const DE_CODEGEN: CodegenMessages = {
   narrowWordReason: () =>
     `ein vorzeichenbehafteter Wert (.i) wird unsigned (.w) — ein negativer Wert wird zu einer großen Zahl`,
   narrowSintReason: () => `ein .w-Wert über 32767 kippt im signed .i ins Negative`,
+  narrowSbyteReason: () =>
+    `ein .s hält nur −128…127 — alles darüber kippt ins Negative, alles darunter läuft über`,
+  signedIntoUnsignedReason: () =>
+    `ein vorzeichenbehafteter Wert (.s) wird unsigned — aus −1 wird 255 bzw. 65535`,
+  recordStride: (record, bytes, next, missing) =>
+    `'${record}' ist ${bytes} Byte groß — keine Zweierpotenz. Der C64 findet '${record}[i]' dann ` +
+    `nicht mit einer Verschiebung, sondern muss jedes Mal multiplizieren (das ist teuer). ` +
+    `${missing} Byte mehr (auf ${next}) macht das Nachschlagen wieder billig — z. B. ein ` +
+    `Reserve-Feld —, oder Du nimmst die Rechnerei bewusst in Kauf, wenn der Platz knapper ist als die Zeit`,
   byteMathIntoWide: (where) =>
     `diese Rechnung rechnet mit Bytes und kippt darum bei 256, wird aber nach ${where} geschrieben — ` +
     `brauchst Du die große Zahl, gib einem der beteiligten Werte '.w'`,
@@ -446,7 +458,7 @@ const DE_CODEGEN: CodegenMessages = {
     'schnell wie möglich (Bewegung rast davon, Tearing). Setz ein VWait in die Schleife.',
   forStep0: () => `For … Step 0 würde endlos laufen — der Zähler bewegt sich nie`,
   forDownNeedsSint: (stepVal, declName) =>
-    `Abwärts zählen (Step ${stepVal}) braucht einen .i-Zähler — unsigned kennt kein „unter null" (schreib z. B. \`For ${declName}.i = …\`)`,
+    `Abwärts zählen (Step ${stepVal}) braucht einen vorzeichenbehafteten Zähler — unsigned kennt kein „unter null" (schreib z. B. \`For ${declName}.i = …\`, oder \`.s\` wenn es unter 128 bleibt)`,
   forCounterOverflow: (max, typeLabel, byteDeclName) =>
     `Zähler läuft bis ${max} (${typeLabel}-Maximum) und würde beim letzten Schritt überlaufen${
       byteDeclName ? ` — nimm .w für den Zähler (\`For ${byteDeclName}.w = …\`)` : ''
@@ -486,6 +498,15 @@ const EN_CODEGEN: CodegenMessages = {
   narrowWordReason: () =>
     `a signed value (.i) becomes unsigned (.w) — a negative value turns into a large number`,
   narrowSintReason: () => `a .w value above 32767 flips negative in a signed .i`,
+  narrowSbyteReason: () =>
+    `a .s only holds −128…127 — anything above flips negative, anything below underflows`,
+  signedIntoUnsignedReason: () =>
+    `a signed value (.s) becomes unsigned — −1 turns into 255 or 65535`,
+  recordStride: (record, bytes, next, missing) =>
+    `'${record}' is ${bytes} bytes — not a power of two. The C64 then cannot find ` +
+    `'${record}[i]' with a shift and has to multiply every time (which is expensive). ` +
+    `${missing} more byte(s), up to ${next}, makes the lookup cheap again — a spare field ` +
+    `will do — or keep the multiply on purpose if space is tighter than time`,
   byteMathIntoWide: (where) =>
     `this calculation works on bytes and therefore wraps at 256, but its result goes into ${where} — ` +
     `if you need the big number, give one of the values involved a '.w'`,
@@ -599,7 +620,7 @@ const EN_CODEGEN: CodegenMessages = {
     'possible (movement races away, tearing). Put a VWait in the loop.',
   forStep0: () => `For … Step 0 would loop forever — the counter never moves`,
   forDownNeedsSint: (stepVal, declName) =>
-    `counting down (Step ${stepVal}) needs an .i counter — unsigned has no "below zero" (write e.g. \`For ${declName}.i = …\`)`,
+    `counting down (Step ${stepVal}) needs a signed counter — unsigned has no "below zero" (write e.g. \`For ${declName}.i = …\`, or \`.s\` if it stays under 128)`,
   forCounterOverflow: (max, typeLabel, byteDeclName) =>
     `counter runs up to ${max} (${typeLabel} maximum) and would overflow on the last step${
       byteDeclName ? ` — use .w for the counter (\`For ${byteDeclName}.w = …\`)` : ''

@@ -64,6 +64,20 @@
       "since": "phase1"
     },
     {
+      "id": "sbyte",
+      "name": ".s",
+      "kind": "type",
+      "category": "type",
+      "i18nKey": "type.sbyte",
+      "cMapping": "signed char",
+      "range": [
+        -128,
+        127
+      ],
+      "since": "phase1",
+      "$note": "Vorzeichenbehaftet, EIN Byte (signed 8-bit). Für Richtungen und kleine Deltas (-1/+1), die bisher ein ganzes .i belegen mussten. ★ EHRLICH: spart RAM und macht die Absicht lesbar — aber KEINE Takte. C zieht jeden signed char zur Rechnung nach int hoch, cc65 schreibt die Verengung nicht zurück; gemessen in _intern/wide-ops.test.ts (MoveBlob mit .i und mit .s: 130 vs 130 Befehle)."
+    },
+    {
       "id": "sint",
       "name": ".i",
       "kind": "type",
@@ -75,7 +89,7 @@
         32767
       ],
       "since": "phase1",
-      "$note": "Vorzeichenbehaftet (signed 16-bit). Für Geschwindigkeiten/Deltas/Offsets, die negativ werden (z.B. Sprung-vy). Der einzige signed-Typ; .b/.w sind unsigned."
+      "$note": "Vorzeichenbehaftet (signed 16-bit). Für Geschwindigkeiten/Deltas/Offsets, die negativ werden (z.B. Sprung-vy). .b/.w sind unsigned; .s ist der kleine signed Bruder."
     },
     {
       "id": "strbuf",

@@ -156,16 +156,31 @@ export interface AssetContext {
   readFile: AssetReader
 }
 
-/** A BreadCraft numeric/string type, inferred from a `.b`/`.w`/`.i`/`$` suffix.
- *  `sint` is the only SIGNED type (.i) — needed for velocities/deltas (physics). */
-type VarType = 'byte' | 'word' | 'sint' | 'string'
+/** A BreadCraft numeric/string type, inferred from a `.b`/`.w`/`.i`/`.s`/`$` suffix.
+ *  `sint` (.i) and `sbyte` (.s) are the SIGNED ones — needed for velocities and for
+ *  directions (physics). `.s` is the one-byte signed type (TYPEN-PLAN T3). */
+type VarType = 'byte' | 'sbyte' | 'word' | 'sint' | 'string'
 
 /** The C type each BreadCraft type maps to (Sprachdef §C table). */
 const C_TYPE: Record<VarType, string> = {
   byte: 'unsigned char',
+  sbyte: 'signed char', // signed 8-bit (-128..127) — directions, small deltas
   word: 'unsigned int',
   sint: 'int', // signed 16-bit (-32768..32767) — velocities, deltas, offsets
   string: 'char' // emitted as `char name[size]`; size from the assigned value (S8.T2)
+}
+
+/**
+ * How many bytes each scalar costs in RAM. Only used to tell the user what a record
+ * layout is doing to them (see `recordSizeNote`) — the RAM bar itself is measured from
+ * the linked binary, never estimated.
+ */
+const TYPE_BYTES: Record<VarType, number | undefined> = {
+  byte: 1,
+  sbyte: 1,
+  word: 2,
+  sint: 2,
+  string: undefined // sized per variable
 }
 
 /** Fallback string-buffer size when a string var is never sized by an assigned literal
@@ -179,6 +194,7 @@ const STR_NUM_MAX = 5
  *  unsigned-wrap traps (Befund 3). undefined = not a counting type. */
 const TYPE_MAX: Record<VarType, number | undefined> = {
   byte: 255,
+  sbyte: 127,
   word: 65535,
   sint: 32767,
   string: undefined
@@ -187,16 +203,22 @@ const TYPE_MAX: Record<VarType, number | undefined> = {
 /** Human label for the counting types, for honest For-loop diagnostics. */
 const TYPE_LABEL: Record<VarType, string> = {
   byte: 'Byte',
+  sbyte: 'Signed-Byte',
   word: 'Word',
   sint: 'Signed-Int',
   string: 'String'
 }
+
+/** The SIGNED types. Signedness is contagious in an expression (see exprType). */
+const SIGNED_TYPES = new Set<VarType>(['sbyte', 'sint'])
 
 /** Read the BreadCraft type from an identifier's written suffix. */
 function suffixType(suffix: string | undefined): VarType | undefined {
   switch (suffix) {
     case '.b':
       return 'byte'
+    case '.s':
+      return 'sbyte'
     case '.w':
       return 'word'
     case '.i':
@@ -209,7 +231,7 @@ function suffixType(suffix: string | undefined): VarType | undefined {
 }
 
 /** The scalar (non-record) suffixes — used to tell a record suffix (.Slot) apart. */
-const SCALAR_SUFFIXES = new Set(['$', '.b', '.w', '.i'])
+const SCALAR_SUFFIXES = new Set(['$', '.b', '.s', '.w', '.i'])
 
 /**
  * The record type name in a suffix like `.Slot`, or undefined for a scalar suffix
@@ -2311,13 +2333,22 @@ class Generator {
       case 'Grouping':
         return this.exprType(e.expr)
       case 'Binary': {
-        // Widening (no implicit float, §D). SIGNED is contagious: any .i in the
-        // expression makes the result signed (a velocity calc like vy + GRAVITY must
-        // stay signed even if GRAVITY is written unsigned). Otherwise word > byte.
+        // Widening (no implicit float, §D). Two rules, in this order:
+        //
+        // WIDTH wins first: anything touching a 16-bit operand is 16-bit. A `.s` next
+        // to a `.w` cannot stay one byte — the word's range does not fit in it.
+        //
+        // SIGN is contagious within a width: a velocity calc like `vy + GRAVITY` must
+        // stay signed even if GRAVITY is written unsigned, and a direction `.s` beside
+        // a `.b` must stay signed, or `bdir * SPEED` would read -1 as 255. So the pair
+        // (byte, sbyte) yields `sbyte` — narrow AND signed, which is exactly what the
+        // one-byte signed type was added for (TYPEN-PLAN T3).
         const l = this.exprType(e.left)
         const r = this.exprType(e.right)
-        if (l === 'sint' || r === 'sint') return 'sint'
-        if (l === 'word' || r === 'word') return 'word'
+        const wide = l === 'word' || r === 'word' || l === 'sint' || r === 'sint'
+        const signed = SIGNED_TYPES.has(l as VarType) || SIGNED_TYPES.has(r as VarType)
+        if (wide) return signed ? 'sint' : 'word'
+        if (l === 'sbyte' || r === 'sbyte') return 'sbyte'
         if (l === 'byte' || r === 'byte') return 'byte'
         return undefined
       }
@@ -2333,6 +2364,52 @@ class Generator {
         // Number literals and unknown calls: type follows the assignment target.
         return undefined
     }
+  }
+
+  /**
+   * How many bytes one record costs. cc65 lays a struct out on the 6502 with NO alignment
+   * padding, so this is simply the sum of the fields — which is what makes the stride
+   * question below answerable at all.
+   */
+  private recordBytes(rec: RecordInfo): number | undefined {
+    let total = 0
+    for (const ftype of rec.fields.values()) {
+      const n = TYPE_BYTES[ftype]
+      if (n === undefined) return undefined // a string field: sized per variable, don't guess
+      total += n
+    }
+    return total
+  }
+
+  /**
+   * ★ THE STRIDE TRAP, and the reason it ships together with `.s` (TYPEN-PLAN T3).
+   *
+   * `blobs[i]` is, in C, `blobs + i × sizeof(struct)`. When that size is a power of two the
+   * 6502 does it with shifts; when it is anything else cc65 calls a SOFTWARE MULTIPLY
+   * ([[breadcraft-record-array-multiply-trap]]). Into The Deep's Blob is eight bytes and
+   * pays nothing — but change one `.i` direction field to `.s` to save a byte, and the
+   * record becomes SEVEN, and the saving is paid for many times over in a place the source
+   * does not mention. Exactly the kind of invisible cost this language exists to refuse
+   * ([[breadcraft-translation-doctrine]]).
+   *
+   * So it is said out loud rather than silently padded. Padding would spend the user's RAM
+   * behind their back to buy back speed they never knew they had lost, and a generated
+   * struct that does not match the fields as written is its own kind of lie. A warning
+   * leaves the choice where it belongs and names both ways out.
+   *
+   * Only for ARRAYS: a lone record variable is never indexed, so it has no stride and this
+   * would be noise. Sizes of 1 and 2 are powers of two and stay silent by themselves.
+   */
+  private checkRecordStride(s: DimStmt): void {
+    const recordType = recordSuffixName(s.target.suffix)
+    if (!recordType) return
+    const rec = this.records.get(recordType)
+    if (!rec) return
+    const bytes = this.recordBytes(rec)
+    if (bytes === undefined || bytes < 1) return
+    if ((bytes & (bytes - 1)) === 0) return // a power of two: the index is a shift
+    const next = 1 << Math.ceil(Math.log2(bytes))
+    this.err(this.M.recordStride(recordType, bytes, next, next - bytes), s.target, 'warn')
   }
 
   /**
@@ -2371,6 +2448,15 @@ class Generator {
       reason = this.M.narrowWordReason()
     } else if (tt === 'sint' && vt === 'word') {
       reason = this.M.narrowSintReason()
+    } else if (tt === 'sbyte' && vt !== 'sbyte' && vt !== 'string') {
+      // Into a signed byte, EVERYTHING else can be lossy: a `.b` above 127 flips
+      // negative, and the wide types simply do not fit. `.s` ← `.s` is the only
+      // silent case.
+      reason = this.M.narrowSbyteReason()
+    } else if ((tt === 'byte' || tt === 'word') && vt === 'sbyte') {
+      // Out of a signed byte into an UNSIGNED target: -1 arrives as 255 or 65535.
+      // Same trap as .i → .w, one size down.
+      reason = this.M.signedIntoUnsignedReason()
     }
     if (!reason) return
     this.err(this.M.narrowing(where, reason), target, 'warn')
@@ -2404,7 +2490,9 @@ class Generator {
         // Pure compile-time → a #define in the header; nothing to emit in the body.
         break
       case 'DimStmt':
-        // Declared at file scope in generate(); nothing to emit in the body.
+        // Declared at file scope in generate(); nothing to emit in the body — but this is
+        // where the array's shape is finally known, so the cost of indexing it is checked.
+        this.checkRecordStride(s)
         break
       case 'TypeDecl':
         // A struct definition emitted in generate(); nothing to emit in the body.
@@ -3837,9 +3925,10 @@ class Generator {
     if (stepVal !== undefined && stepVal < 0) {
       // Counting DOWN. An unsigned counter has no value below 0: at 0 it wraps to its
       // type maximum and `v >= to` stays forever true (Befund 3 / N5, e.g.
-      // `For i = 10 To 0 Step -1` on a .b counter). Only a signed .i counter can step
-      // through 0 into the negatives, so its `>=` comparison terminates correctly.
-      if (counterType !== 'sint') {
+      // `For i = 10 To 0 Step -1` on a .b counter). Only a SIGNED counter can step
+      // through 0 into the negatives, so its `>=` comparison terminates correctly —
+      // `.s` does that just as well as `.i`, in one byte.
+      if (!SIGNED_TYPES.has(counterType)) {
         this.err(this.M.forDownNeedsSint(stepVal, declName), s)
         return
       }
@@ -3964,16 +4053,23 @@ class Generator {
    */
   private narrowByteMath(e: Binary, c: string): string {
     if (!VALUE_OPS.has(e.op.toLowerCase())) return c   // a comparison is a flag, not a value
-    if (this.exprType(e) !== 'byte') return c          // honestly wide: leave it alone
-    return `(unsigned char)${c}`
+    const t = this.exprType(e)
+    // `.s` is written down the same way, and it MUST be: without the cast a signed byte
+    // inherits exactly the promotion that makes `.i` expensive, and the one-byte type
+    // would cost the same as the two-byte one while claiming not to (TYPEN-PLAN T3).
+    if (t === 'byte') return `(unsigned char)${c}`
+    if (t === 'sbyte') return `(signed char)${c}`
+    return c                                           // honestly wide: leave it alone
   }
 
   /** Is this a byte-typed CALCULATION (not just a byte value)? The warning above only
-   *  fires for arithmetic — `w.w = b.b` is plain widening and holds no surprise. */
+   *  fires for arithmetic — `w.w = b.b` is plain widening and holds no surprise.
+   *  Both one-byte types count: each wraps at its own edge (255, or 127 into -128). */
   private isByteMath(e: Expr): boolean {
     if (e.kind === 'Grouping') return this.isByteMath(e.expr)
     if (e.kind !== 'Binary') return false
-    return VALUE_OPS.has(e.op.toLowerCase()) && this.exprType(e) === 'byte'
+    const t = this.exprType(e)
+    return VALUE_OPS.has(e.op.toLowerCase()) && (t === 'byte' || t === 'sbyte')
   }
 
   /**

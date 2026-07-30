@@ -33,6 +33,20 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   eine frische Karte. Jetzt ist nach dem Leeren wieder genau ein Bildschirm da.
 
 ### Hinzugefügt
+- **Neuer Zahlentyp `.s`: eine Zahl von −128 bis 127, die in ein einziges Byte passt.** Bisher
+  gab es nur eine Sorte Zahl, die negativ werden durfte — `.i` — und die belegt zwei Bytes.
+  Für eine Laufrichtung, die nur `-1` oder `+1` kennt, war das eine Verschwendung: jeder Gegner
+  schleppte pro Richtung ein Byte mit, das nie etwas zu tun bekam. `bdir.s = 0 - 1` schreibt
+  jetzt genau das hin, was gemeint ist, und kostet die Hälfte.
+  **Ehrlich dazugesagt: das macht Dein Spiel nicht schneller.** Der C64 rechnet auch mit einem
+  `.s` in 16 Bit weiter (nachgemessen: derselbe Maschinencode wie mit `.i`, Befehl für Befehl).
+  Was `.s` bringt, ist Platz im Speicher und ein Programm, das sagt, was es meint.
+- **Und eine Warnung, die genau dazugehört: „dieser Bauplan ist 7 Byte groß".** Wer mit `.s` ein
+  Byte spart, kann seinem Gegner-Bauplan aus Versehen eine krumme Größe geben — und dann muss
+  der C64 bei jedem Zugriff auf `gegner[i]` mühsam multiplizieren, statt einmal zu schieben.
+  Das ist teuer und steht nirgends im Programm. BreadCraft sagt es jetzt hin, nennt die fehlenden
+  Bytes bis zur nächsten glatten Größe und überlässt Dir die Wahl: ein Reserve-Feld dazu, oder
+  die Rechnerei bewusst in Kauf nehmen, wenn Platz knapper ist als Zeit.
 - **Die Wörter fürs Scrollen stehen fest — sichtbar, aber noch als „geplant" markiert.** In der
   Referenz und im Highlighting tauchen sechs neue Wörter für seitwärts scrollende Level auf:
   `PlayField` (welcher Streifen des Schirms scrollt und welcher als HUD steht), `UseMap` (eine

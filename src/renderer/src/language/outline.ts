@@ -22,9 +22,9 @@ export interface OutlineSymbol {
   line: number
 }
 
-// Capture the declared name including an optional return-type suffix (.b/.w/.i/$).
+// Capture the declared name including an optional return-type suffix (.b/.w/.i/.s/$).
 // Case-SENSITIVE (EISEN M2.T2): only the canonical `Function` keyword starts a def.
-const FUNCTION_RE = /^\s*Function\s+([A-Za-z_]\w*)(\.[bwi]|\$)?/
+const FUNCTION_RE = /^\s*Function\s+([A-Za-z_]\w*)(\.[bwis]|\$)?/
 
 // A user-placed Outliner waypoint: a comment whose first non-space char is '#'.
 //   ; # Konstanten   →  section "Konstanten"

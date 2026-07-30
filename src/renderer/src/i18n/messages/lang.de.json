@@ -218,7 +218,8 @@
 
   "type.byte": "Eine kleine ganze Zahl von 0 bis 255. Braucht am wenigsten Platz.",
   "type.word": "Eine ganze Zahl von 0 bis 65535 — für größere Werte wie einen Highscore.",
-  "type.sint": "Eine vorzeichenbehaftete Zahl von −32768 bis 32767 — der einzige Typ, der negativ werden darf (z. B. Geschwindigkeiten).",
+  "type.sbyte": "Eine Zahl von −128 bis 127: ein einzelnes Byte, das auch nach links zeigen darf. Gemacht für Laufrichtungen (−1 oder +1), die in einem .i zwei Bytes belegt hätten. Spart Platz — aber keine Zeit: der C64 rechnet auch damit in 16 Bit.",
+  "type.sint": "Eine vorzeichenbehaftete Zahl von −32768 bis 32767 — für Werte, die negativ werden UND groß (z. B. Geschwindigkeiten). Wird es nie größer als 127, tut es .s.",
   "type.strbuf": "Ein String-Puffer fester Größe (N Zeichen) — veränderbar, also für Text, der sich ändert.",
   "type.strconst": "Ein String, der direkt einem Literal zugewiesen und danach nicht mehr geändert wird (eine Konstante).",
 

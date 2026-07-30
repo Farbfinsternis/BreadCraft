@@ -15,6 +15,10 @@ const DQUOTE = '"'
 /** Operator characters (multi-char operators are greedily grouped, like Monaco). */
 const OP_CHARS = new Set('=+-*/<>&|'.split(''))
 
+/** The reserved letters after a type dot: `.b` byte, `.w` word, `.i` signed int,
+ *  `.s` signed byte. Everything else after a dot is a record type (`.Blob`). */
+const SCALAR_SUFFIX_LETTERS = new Set(['b', 'w', 'i', 's'])
+
 function isDigit(ch: string): boolean {
   return ch >= '0' && ch <= '9'
 }
@@ -360,22 +364,20 @@ class Scanner {
   }
 
   /**
-   * Look ahead for a type suffix without consuming it: `$`, `.b`, `.w`, `.i`, or a
+   * Look ahead for a type suffix without consuming it: `$`, `.b`, `.w`, `.i`, `.s`, or a
    * record type `.RecordName`. The lexer no longer knows which record names exist, so
-   * ANY `.<name>` that is not the reserved `.b`/`.w`/`.i` reads as a record-type
+   * ANY `.<name>` that is not one of the reserved letters reads as a record-type
    * suffix; the parser decides whether that record was actually declared (N2). The
-   * reserved letters win over a record named exactly "b"/"w"/"i" — but those can't
+   * reserved letters win over a record named exactly "b"/"w"/"i"/"s" — but those can't
    * exist (record names start uppercase here).
    */
   private peekTypeSuffix(): string | null {
     if (this.peek() === '$') return '$'
-    if (
-      this.peek() === '.' &&
-      (this.peek(1) === 'b' || this.peek(1) === 'w' || this.peek(1) === 'i')
-    ) {
-      // `.b`/`.w`/`.i` (.i = signed int) only if NOT immediately followed by more
-      // identifier chars (so `.item` is not mis-read as `.i` + `tem`, `.bonus` not
-      // `.b` + `onus`); those longer names fall through to the record branch below.
+    if (this.peek() === '.' && SCALAR_SUFFIX_LETTERS.has(this.peek(1))) {
+      // `.b`/`.w`/`.i`/`.s` only if NOT immediately followed by more identifier chars
+      // (so `.item` is not mis-read as `.i` + `tem`, `.bonus` not `.b` + `onus`, and
+      // `.speed` not `.s` + `peed`); those longer names fall through to the record
+      // branch below.
       if (!isIdentPart(this.peek(2))) return '.' + this.peek(1)
     }
     if (this.peek() === '.' && isIdentStart(this.peek(1))) {

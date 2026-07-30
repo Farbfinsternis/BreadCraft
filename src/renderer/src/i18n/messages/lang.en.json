@@ -218,7 +218,8 @@
 
   "type.byte": "A small whole number from 0 to 255. Needs the least space.",
   "type.word": "A whole number from 0 to 65535 — for larger values like a high score.",
-  "type.sint": "A signed number from −32768 to 32767 — the only type allowed to go negative (e.g. velocities).",
+  "type.sbyte": "A number from −128 to 127: a single byte that is also allowed to point left. Made for walking directions (−1 or +1), which would take two bytes in a .i. Saves room — but no time: the C64 still does the arithmetic in 16 bits.",
+  "type.sint": "A signed number from −32768 to 32767 — for values that go negative AND get large (e.g. velocities). If it never passes 127, .s will do.",
   "type.strbuf": "A fixed-size string buffer (N characters) — mutable, so for text that changes.",
   "type.strconst": "A string assigned directly from a literal and not changed afterwards (a constant).",
 

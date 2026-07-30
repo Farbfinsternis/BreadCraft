@@ -681,6 +681,139 @@ describe('codegen: signed type .i (P1, for physics)', () => {
   })
 })
 
+/**
+ * TYPEN-PLAN T3 — the one-byte signed type.
+ *
+ * Why it exists, honestly: a walking direction that only ever holds -1 or +1 had to be
+ * declared `.i` for want of anything narrower, and each one cost two bytes. `.s` costs
+ * one and says what it means. It does NOT make the program faster — measured in
+ * `_intern/wide-ops.test.ts`, MoveBlob with `.i` and with `.s` assembles to the same 130
+ * instructions, because C promotes every signed char to int for arithmetic. The user was
+ * shown that number and chose the type anyway, for the RAM and the readability.
+ */
+describe('codegen: signed byte .s (TYPEN-PLAN T3)', () => {
+  it('.s maps to signed char and holds negatives', () => {
+    const { code, errors } = gen(['bdir.s = 1', 'bdir = 0 - 1'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('signed char bdir = 0;') // declaration; the assignment follows
+    expect(code).toContain('bdir = (0 - 1);')
+  })
+
+  it('.s beside a .b stays SIGNED and stays NARROW', () => {
+    // The whole point: `bdir * SPEED` must not read -1 as 255 (that would be `byte`),
+    // and must not silently become two bytes wide (that would be `sint`).
+    const src = ['bdir.s = 1', 'speed.b = 2', 'step.s = 0', 'step = bdir * speed'].join('\n')
+    const { code, warnings, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([])
+    expect(code).toContain('step = (signed char)(bdir * speed);')
+  })
+
+  it('.s next to a wide value widens to .i, not to .w', () => {
+    // Width wins over narrowness; sign survives the widening.
+    const src = ['bdir.s = 1', 'far.w = 300', 'out.i = 0', 'out = bdir * far'].join('\n')
+    const { warnings, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([]) // widening into signed: nothing is lost
+  })
+
+  it('warns when a signed byte is written into an unsigned target (-1 becomes 255)', () => {
+    const src = ['bdir.s = 0', 'b.b = 0', 'b = bdir'].join('\n')
+    const { warnings } = gen(src)
+    expect(warnings.some((w) => /Verkleinerung/.test(w))).toBe(true)
+  })
+
+  it('warns when something wider is written into a .s', () => {
+    const src = ['big.w = 300', 'bdir.s = 0', 'bdir = big'].join('\n')
+    const { warnings } = gen(src)
+    expect(warnings.some((w) => /Verkleinerung/.test(w))).toBe(true)
+  })
+
+  it('.s ← .s is silent', () => {
+    const src = ['a.s = 1', 'b.s = 0', 'b = a'].join('\n')
+    const { warnings, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([])
+  })
+
+  it('counts down with a .s counter (signed, so it can pass zero)', () => {
+    const { code, errors } = gen('For i.s = 10 To 0 Step -1\nNext')
+    expect(errors).toEqual([])
+    expect(code).toContain('signed char i')
+    expect(code).toContain('i >= 0')
+  })
+
+  it('.s is not mistaken for a record suffix (and .speed still lexes as a record)', () => {
+    const src = [
+      'Type Ship',
+      '  Field speed.b',
+      'EndType',
+      'Dim fleet.Ship[2]',
+      'd.s = 0',
+      'fleet[0]\\speed = 3'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('signed char d = 0;')
+    expect(code).toContain('fleet[0].speed = 3;')
+  })
+
+  it('a .s field makes a one-byte member in a record', () => {
+    const src = ['Type Blob', '  Field bx.w', '  Field bdir.s', 'EndType', 'Dim blobs.Blob[3]'].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('signed char bdir;')
+  })
+
+  /**
+   * ★ THE TRAP THE PLAN INSISTED SHIP WITH `.s`.
+   *
+   * Saving one byte on a direction field is a good trade right up until it takes the
+   * record off a power of two — then every `blobs[i]` costs a software multiply instead
+   * of a shift ([[breadcraft-record-array-multiply-trap]]), and the source says nothing
+   * about it. The language's job is to make that visible, not to decide it in secret.
+   */
+  it('warns when a .s takes a record array off a power of two', () => {
+    const src = [
+      'Type Blob',
+      '  Field bx.w', // 2
+      '  Field by.w', // 2
+      '  Field hp.b', // 1
+      '  Field bspr.b', // 1
+      '  Field bdir.s', // 1  → seven in total, and the multiply is back
+      'EndType',
+      'Dim blobs.Blob[3]'
+    ].join('\n')
+    const { warnings, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(warnings.some((w) => /7 Byte/.test(w) && /Zweierpotenz/.test(w))).toBe(true)
+  })
+
+  it('…and stays quiet at eight bytes', () => {
+    const src = [
+      'Type Blob',
+      '  Field bx.w', // 2
+      '  Field by.w', // 2
+      '  Field hp.b', // 1
+      '  Field bspr.b', // 1
+      '  Field bhurt.b', // 1
+      '  Field bdir.s', // 1  → eight: the index is a shift again
+      'EndType',
+      'Dim blobs.Blob[3]'
+    ].join('\n')
+    const { warnings, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([])
+  })
+
+  it('a lone record variable has no stride, so it is not nagged about', () => {
+    // Only an INDEXED record pays the multiply; warning here would be pure noise.
+    const src = ['Type Odd', '  Field a.b', '  Field b.b', '  Field c.b', 'EndType', 'p.Odd', 'p\\a = 1'].join('\n')
+    const { warnings } = gen(src)
+    expect(warnings.filter((w) => /Zweierpotenz/.test(w))).toEqual([])
+  })
+})
+
 describe('codegen: math built-ins (P1.T4) — Abs/Min/Max', () => {
   it('Abs → cc65 abs() with a signed cast (|dx| for collision)', () => {
     const { code, errors } = gen('d.w = Abs(a.w - b.w)')
