@@ -8,6 +8,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Behoben
+- **Eine Funktion ohne Kürzel, die trotzdem etwas zurückgibt, erklärt BreadCraft jetzt selbst.**
+  Schreibt man `Function Punkte()` (ohne Kürzel am Namen) und darin `Return 1`, dann ist das
+  ein Widerspruch: eine Funktion ohne Kürzel *tut* etwas, sie *liefert* nichts. Bisher lief so
+  ein Programm bis in den Übersetzer durch und scheiterte dort mit einer englischen
+  Fehlermeldung über eine Zeile, die Du nie geschrieben hast — in einer Datei, die Du gar nicht
+  zu Gesicht bekommen sollst. Jetzt steht der Hinweis an *Deiner* Zeile und sagt beide Auswege:
+  ein Kürzel an den Namen (dann wird sie mit Klammern aufgerufen), oder `Return` allein stehen
+  lassen.
 - **Die Werkzeugfenster kletterten mit der Zeit über die Dialoge — daher das „tote" Namensfeld.**
   Jedes Anfassen eines schwebenden Fensters hob es eine Stufe höher, ohne Obergrenze. Nach ein
   paar Stunden Malen lagen die Fenster **über** dem „Speichern unter…"-Dialog: der war noch zu
@@ -33,6 +41,12 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   eine frische Karte. Jetzt ist nach dem Leeren wieder genau ein Bildschirm da.
 
 ### Hinzugefügt
+- **Eine Zahl, die nicht in ihre Schublade passt, sagt jetzt Bescheid.** Schreibst Du
+  `punkte = 5000`, ohne `punkte` ein Kürzel mitzugeben, dann ist `punkte` eine kleine Zahl
+  (0 bis 255) — und der C64 hat bisher klammheimlich **136** gespeichert und nichts gesagt.
+  Jetzt steht da, welche Zahl nicht passt, wie groß die Schublade ist und was Du schreiben
+  kannst, wenn Du die ganze Zahl brauchst. Gilt auch, wenn die Zahl hinter einem `Const`
+  steckt oder in einer Liste landet.
 - **Neuer Zahlentyp `.s`: eine Zahl von −128 bis 127, die in ein einziges Byte passt.** Bisher
   gab es nur eine Sorte Zahl, die negativ werden durfte — `.i` — und die belegt zwei Bytes.
   Für eine Laufrichtung, die nur `-1` oder `+1` kennt, war das eine Verschwendung: jeder Gegner

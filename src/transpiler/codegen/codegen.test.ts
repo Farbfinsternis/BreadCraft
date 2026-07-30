@@ -814,6 +814,74 @@ describe('codegen: signed byte .s (TYPEN-PLAN T3)', () => {
   })
 })
 
+/**
+ * TYPEN-PLAN T5 — the widths, made visible.
+ *
+ * The plan came here expecting to find that a name without a suffix is sixteen bits and
+ * merely wasteful. It is the other way round: an unsuffixed name is a BYTE, and until now
+ * a value too big for one was accepted without a word — `punkte = 5000` compiled to
+ * `unsigned char punkte; punkte = 5000;` and the machine stored 136. Not a performance
+ * question at all; a correctness one.
+ */
+describe('codegen: constants that do not fit (TYPEN-PLAN T5)', () => {
+  it('warns when a literal is too big for the (defaulted) byte it lands in', () => {
+    const { warnings } = gen('punkte = 5000')
+    expect(warnings.some((w) => /5000 passt nicht/.test(w) && /0…255/.test(w))).toBe(true)
+  })
+
+  it('…through a Const as well, since that is where the number hides', () => {
+    const { warnings } = gen(['Const N = 5000', 'punkte = N'].join('\n'))
+    expect(warnings.some((w) => /5000 passt nicht/.test(w))).toBe(true)
+  })
+
+  it('…and into an array element', () => {
+    const { warnings } = gen(['Dim feld[3]', 'feld[0] = 999'].join('\n'))
+    expect(warnings.some((w) => /999 passt nicht/.test(w))).toBe(true)
+  })
+
+  it('warns on a negative into an unsigned type', () => {
+    const { warnings } = gen(['x.b = 0', 'x = 0 - 5'].join('\n'))
+    expect(warnings.some((w) => /passt nicht/.test(w))).toBe(true)
+  })
+
+  it('…but -1 into a .s is exactly what the type is for, so it stays quiet', () => {
+    const { warnings, errors } = gen(['bdir.s = 0', 'bdir = 0 - 1'].join('\n'))
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([])
+  })
+
+  it('a value that fits says nothing', () => {
+    const { warnings, errors } = gen(['punkte.w = 5000', 'leben.b = 3'].join('\n'))
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([])
+  })
+})
+
+/**
+ * T5, second finding: a function with no suffix is a STATEMENT function and hands nothing
+ * back ([[breadcraft-functions-vs-statements]]). The rule lived in the language but not in
+ * the codegen, so `Function G()` + `Return 1` emitted `void G(void) { return 1; }` — which
+ * cc65 rejects. The build failed with an error about a line of C the user never wrote.
+ */
+describe('codegen: Return with a value from a statement function (TYPEN-PLAN T5)', () => {
+  it('is an error in CRUMB, not an error in C', () => {
+    const { errors, code } = gen(['Function G()', '  Return 1', 'EndFunction'].join('\n'))
+    expect(errors.some((e) => /liefert keinen Wert/.test(e))).toBe(true)
+    expect(code).not.toContain('return 1;') // and the emitted C stays valid
+  })
+
+  it('a bare Return is fine', () => {
+    const { errors } = gen(['Function G()', '  Return', 'EndFunction'].join('\n'))
+    expect(errors).toEqual([])
+  })
+
+  it('…and with a suffix it is a value function, as intended', () => {
+    const { errors, code } = gen(['Function G.b()', '  Return 1', 'EndFunction'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('return 1;')
+  })
+})
+
 describe('codegen: math built-ins (P1.T4) — Abs/Min/Max', () => {
   it('Abs → cc65 abs() with a signed cast (|dx| for collision)', () => {
     const { code, errors } = gen('d.w = Abs(a.w - b.w)')

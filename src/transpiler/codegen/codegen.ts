@@ -200,6 +200,15 @@ const TYPE_MAX: Record<VarType, number | undefined> = {
   string: undefined
 }
 
+/** …and the inclusive minimum, so a constant can be checked against BOTH ends (T5). */
+const TYPE_MIN: Record<VarType, number | undefined> = {
+  byte: 0,
+  sbyte: -128,
+  word: 0,
+  sint: -32768,
+  string: undefined
+}
+
 /** Human label for the counting types, for honest For-loop diagnostics. */
 const TYPE_LABEL: Record<VarType, string> = {
   byte: 'Byte',
@@ -2289,6 +2298,28 @@ class Generator {
       this.emit('return;')
       return
     }
+    /**
+     * ★ T5 — CAUGHT HERE, OR cc65 CATCHES IT AND THE USER READS C.
+     *
+     * A name without a suffix is a STATEMENT function: it does something, it hands
+     * nothing back ([[breadcraft-functions-vs-statements]]). The rule was in the
+     * language but not in the codegen, so `Function G()` with `Return 1` emitted
+     *
+     *     void G(void) { return 1; }
+     *
+     * — which cc65 rejects outright ("Returning a value in function with return type
+     * 'void'"). The build failed with an error about a line of C the user never wrote,
+     * in a file they are not supposed to have to read. Saying it in CRUMB's own words,
+     * about their own line, is the entire translation doctrine in one diagnostic
+     * ([[breadcraft-translation-doctrine]]).
+     *
+     * An error, not a warning: it never compiled: the only change is who explains it.
+     */
+    if (s.value && info && !info.returnType) {
+      this.err(this.M.returnFromStatementFunction(this.currentFunc!), s)
+      this.emit('return;')
+      return
+    }
     if (s.value) this.emit(`return ${this.expr(s.value)};`)
     else this.emit('return;')
   }
@@ -2367,6 +2398,40 @@ class Generator {
   }
 
   /**
+   * Fold a constant expression FOR A DIAGNOSTIC ONLY (T5).
+   *
+   * `constInt` is deliberately conservative: it drives real codegen decisions (a For
+   * loop's step, an array's shape, whether `1 << n` becomes a folded shift or a table
+   * lookup), so teaching it to fold arithmetic could quietly move generated code — and
+   * ITD's byte-identical lock exists to notice exactly that. A warning cannot move any
+   * code, so it can afford to look harder.
+   *
+   * What it adds is the arithmetic, and the reason is `0 - 5`: CRUMB writes its negative
+   * numbers that way all through Into The Deep (`vy.i = 0 - 820`), so a checker that only
+   * understands bare literals would miss every negative there is.
+   */
+  private foldForCheck(e: Expr | undefined, depth = 0): number | undefined {
+    if (!e || depth > 8) return undefined
+    if (e.kind === 'Grouping') return this.foldForCheck(e.expr, depth + 1)
+    if (e.kind === 'Binary') {
+      const l = this.foldForCheck(e.left, depth + 1)
+      const r = this.foldForCheck(e.right, depth + 1)
+      if (l === undefined || r === undefined) return undefined
+      switch (e.op) {
+        case '+':
+          return l + r
+        case '-':
+          return l - r
+        case '*':
+          return l * r
+        default:
+          return undefined // division, shifts, comparisons: not worth guessing about
+      }
+    }
+    return this.constInt(e)
+  }
+
+  /**
    * How many bytes one record costs. cc65 lays a struct out on the 6502 with NO alignment
    * padding, so this is simply the sum of the fields — which is what makes the stride
    * question below answerable at all.
@@ -2421,13 +2486,42 @@ class Generator {
   private checkNarrowing(target: Identifier | IndexExpr | FieldExpr, value: Expr): void {
     const tt = this.exprType(target)
     const vt = this.exprType(value)
-    if (!tt || !vt) return
+    if (!tt) return
     const where =
       target.kind === 'Identifier'
         ? `'${target.name}'`
         : target.kind === 'IndexExpr'
           ? `'${target.name}[…]'`
           : `'\\${target.field}'`
+
+    /**
+     * ★ T5 — A CONSTANT THAT DOES NOT FIT, said out loud.
+     *
+     * A name with no suffix is a BYTE (the cheap common case), and until now
+     * `punkte = 5000` was accepted in silence: the C said `unsigned char punkte;
+     * punkte = 5000;` and the machine stored 136. No warning anywhere, because the
+     * checks below compare TYPES and a number literal has no type of its own — it
+     * takes the target's.
+     *
+     * This is the opposite of the problem the plan expected to find here (it feared
+     * the default was too WIDE and merely wasteful); the default is narrow, and it
+     * loses data without a word. `constInt` also resolves `Const`, so a named
+     * constant is caught the same way.
+     *
+     * A warning, not an error: wrapping on purpose is legitimate, and the value may
+     * well be meant as a bit pattern ([[breadcraft-limits-philosophy]]).
+     */
+    const lo = TYPE_MIN[tt]
+    const hi = TYPE_MAX[tt]
+    if (lo !== undefined && hi !== undefined) {
+      const n = this.foldForCheck(value)
+      if (n !== undefined && (n < lo || n > hi)) {
+        this.err(this.M.constOutOfRange(where, n, TYPE_LABEL[tt], lo, hi), value, 'warn')
+        return
+      }
+    }
+
+    if (!vt) return
 
     // ★ THE GUARD RAIL FOR T2. Byte arithmetic now really wraps at 256 (see
     // narrowByteMath). Storing it into a byte is business as usual — it would have

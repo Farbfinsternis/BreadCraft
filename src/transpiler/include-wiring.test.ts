@@ -17,7 +17,11 @@ const reader = (files: Record<string, string>): SourceReader => (p) =>
 
 describe('B3.T3: Include in the front door', () => {
   it('a split program builds byte-identical C to the concatenated single file', () => {
-    const logic = ['Function Add(a.b, b.b)', '  Return a + b', 'EndFunction'].join('\n')
+    // `Add.b` — a function that hands a value back needs the suffix that says so
+    // ([[breadcraft-functions-vs-statements]]). Written without it until T5, when the
+    // codegen learnt to notice: the suffix-less form was emitting `void Add(…) { return
+    // a + b; }`, which cc65 rejects outright. The test never got as far as cc65.
+    const logic = ['Function Add.b(a.b, b.b)', '  Return a + b', 'EndFunction'].join('\n')
     const entry = ['Global score = 0', 'Include "logic"', 'score = Add(2, 3)'].join('\n')
     const single = ['Global score = 0', logic, 'score = Add(2, 3)'].join('\n')
 

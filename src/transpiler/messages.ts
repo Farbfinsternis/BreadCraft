@@ -78,6 +78,8 @@ export interface CodegenMessages {
   narrowSbyteReason(): string
   signedIntoUnsignedReason(): string
   recordStride(record: string, bytes: number, next: number, missing: number): string
+  constOutOfRange(where: string, value: number, typeLabel: string, lo: number, hi: number): string
+  returnFromStatementFunction(fn: string): string
   byteMathIntoWide(where: string): string
   drawTextArgs(): string
   colorArg(): string
@@ -343,6 +345,14 @@ const DE_CODEGEN: CodegenMessages = {
     `nicht mit einer Verschiebung, sondern muss jedes Mal multiplizieren (das ist teuer). ` +
     `${missing} Byte mehr (auf ${next}) macht das Nachschlagen wieder billig — z. B. ein ` +
     `Reserve-Feld —, oder Du nimmst die Rechnerei bewusst in Kauf, wenn der Platz knapper ist als die Zeit`,
+  constOutOfRange: (where, value, typeLabel, lo, hi) =>
+    `${value} passt nicht in ${where}: das ist ein ${typeLabel} und hält ${lo}…${hi}. ` +
+    `Gespeichert wird der Rest nach dem Überlauf, nicht ${value} — schreib ein Kürzel dazu ` +
+    `(z. B. '.w'), wenn Du die ganze Zahl brauchst`,
+  returnFromStatementFunction: (fn) =>
+    `'${fn}' liefert keinen Wert zurück, gibt aber mit 'Return <Wert>' einen her — beides ` +
+    `zusammen geht nicht. Entweder Du hängst dem Namen ein Kürzel an ('Function ${fn}.b()', ` +
+    `dann wird sie mit Klammern aufgerufen), oder das 'Return' steht allein`,
   byteMathIntoWide: (where) =>
     `diese Rechnung rechnet mit Bytes und kippt darum bei 256, wird aber nach ${where} geschrieben — ` +
     `brauchst Du die große Zahl, gib einem der beteiligten Werte '.w'`,
@@ -507,6 +517,14 @@ const EN_CODEGEN: CodegenMessages = {
     `'${record}[i]' with a shift and has to multiply every time (which is expensive). ` +
     `${missing} more byte(s), up to ${next}, makes the lookup cheap again — a spare field ` +
     `will do — or keep the multiply on purpose if space is tighter than time`,
+  constOutOfRange: (where, value, typeLabel, lo, hi) =>
+    `${value} does not fit in ${where}: that is a ${typeLabel} and holds ${lo}…${hi}. ` +
+    `What gets stored is the remainder after the overflow, not ${value} — add a suffix ` +
+    `(e.g. '.w') if you need the whole number`,
+  returnFromStatementFunction: (fn) =>
+    `'${fn}' hands back no value, but returns one with 'Return <value>' — you cannot have ` +
+    `both. Either give the name a suffix ('Function ${fn}.b()', which is then called with ` +
+    `parentheses), or let the 'Return' stand alone`,
   byteMathIntoWide: (where) =>
     `this calculation works on bytes and therefore wraps at 256, but its result goes into ${where} — ` +
     `if you need the big number, give one of the values involved a '.w'`,
