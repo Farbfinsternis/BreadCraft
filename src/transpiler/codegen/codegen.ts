@@ -2237,7 +2237,16 @@ class Generator {
         cParams.push(`const struct ${cName(p.recordType)} *${cName(p.name)}`)
         scope.set(p.name, { cName: cName(p.name), recordType: p.recordType, isPointer: true })
       } else {
-        const t = p.type ?? 'word' // typeless param → .w (reserve the wider, Sprachdef §C.1)
+        // A parameter with no suffix is a BYTE, like everything else with no suffix.
+        //
+        // It used to be the one exception (`?? 'word'`, "reserve the wider"), and the
+        // reasoning was sound on its own — a byte might be too small. But it made the
+        // parameter the only place in the language where saying nothing meant something
+        // different, and a rule that holds everywhere except one corner is a rule nobody
+        // can carry in their head. User's decision, 2026-07-30: no suffix means eight
+        // bits, everywhere, and the compiler WARNS when a value too big is handed to one
+        // (`checkCallArgs`) instead of quietly making room for it.
+        const t = p.type ?? 'byte'
         cParams.push(`${C_TYPE[t]} ${cName(p.name)}`)
         scope.set(p.name, { cName: cName(p.name), type: t })
       }
@@ -2335,19 +2344,43 @@ class Generator {
     if (s.callee === this.currentFunc) {
       this.err(this.M.recursion(s.callee), s)
     }
-    this.emit(`${info.cName}(${this.callArgs(info, s.args)});`)
+    this.emit(`${info.cName}(${this.callArgs(info, s.args, s.callee)});`)
   }
 
   /** Render a call's argument list, passing record args by address (const-pointer
-   *  contract) and scalars by value. */
-  private callArgs(info: FuncInfo, args: Expr[]): string {
+   *  contract) and scalars by value. Both call paths come through here, so the argument
+   *  range check below covers a statement call and a value call alike. */
+  private callArgs(info: FuncInfo, args: Expr[], callee: string): string {
     return args
       .map((a, i) => {
         const p = info.params[i]
         if (p?.recordType) return `&${this.expr(a)}` // record arg → address (no copy)
+        this.checkArgFits(callee, p, a)
         return this.expr(a)
       })
       .join(', ')
+  }
+
+  /**
+   * HANDING A NUMBER THAT DOES NOT FIT TO A PARAMETER.
+   *
+   * The counterpart to the range check on assignment: a parameter is a variable like any
+   * other, and `Heal 300` where `Heal(amount)` takes a byte loses the same 44 as
+   * `punkte = 300` would. It matters more here than it looks, because a parameter with no
+   * suffix used to be the one WIDE thing in the language and now is not — that made this
+   * warning the thing standing where the extra byte used to (user's decision, 2026-07-30:
+   * no suffix means eight bits everywhere, and the compiler says so rather than silently
+   * making room).
+   */
+  private checkArgFits(callee: string, p: FuncInfo['params'][number] | undefined, a: Expr): void {
+    const t = p?.type ?? (p && !p.recordType ? 'byte' : undefined)
+    if (!t) return
+    const lo = TYPE_MIN[t]
+    const hi = TYPE_MAX[t]
+    if (lo === undefined || hi === undefined) return
+    const n = this.foldForCheck(a)
+    if (n === undefined || (n >= lo && n <= hi)) return
+    this.err(this.M.argOutOfRange(p!.name, callee, n, TYPE_LABEL[t], lo, hi), a, 'warn')
   }
 
   /** The inferred type of an expression, as far as the slice can tell (§D). */
@@ -4342,7 +4375,7 @@ class Generator {
           if (e.callee === this.currentFunc) {
             this.err(this.M.recursion(e.callee), e)
           }
-          return `${info.cName}(${this.callArgs(info, e.args)})`
+          return `${info.cName}(${this.callArgs(info, e.args, e.callee)})`
         }
         this.err(this.M.funcNoMapping(e.callee), e)
         return `/* TODO ${e.callee}() */ 0`

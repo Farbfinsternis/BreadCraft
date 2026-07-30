@@ -855,6 +855,41 @@ describe('codegen: constants that do not fit (TYPEN-PLAN T5)', () => {
     expect(errors).toEqual([])
     expect(warnings).toEqual([])
   })
+
+  /**
+   * ONE RULE, NO CORNERS (user's decision, 2026-07-30).
+   *
+   * A parameter without a suffix used to be the single WIDE thing in the language
+   * (`?? 'word'`, "reserve the wider"). The reasoning was sound on its own — a byte might
+   * be too small — but it meant that saying nothing meant one thing in eighteen places and
+   * something else in the nineteenth, and a rule with one corner is a rule nobody can
+   * carry in their head. No suffix now means eight bits everywhere, and the compiler warns
+   * instead of quietly making room.
+   */
+  it('a parameter without a suffix is a byte, like everything else without a suffix', () => {
+    const { code } = gen(['Function F(p)', '  q.b = p', 'EndFunction', 'F(1)'].join('\n'))
+    expect(code).toContain('void F(unsigned char p)')
+  })
+
+  it('warns when the value handed to a byte parameter does not fit', () => {
+    const { warnings } = gen(['Function F(p)', '  q.b = p', 'EndFunction', 'F(300)'].join('\n'))
+    expect(warnings.some((w) => /300 passt nicht in 'p'/.test(w))).toBe(true)
+  })
+
+  it('…and says nothing when the parameter was given room', () => {
+    const { warnings, errors } = gen(
+      ['Function F(p.w)', '  q.w = p', 'EndFunction', 'F(300)'].join('\n')
+    )
+    expect(errors).toEqual([])
+    expect(warnings).toEqual([])
+  })
+
+  it('the same check covers a value call, not just a statement call', () => {
+    const { warnings } = gen(
+      ['Function F.b(p)', '  Return p', 'EndFunction', 'z.b = F(999)'].join('\n')
+    )
+    expect(warnings.some((w) => /999 passt nicht in 'p'/.test(w))).toBe(true)
+  })
 })
 
 /**

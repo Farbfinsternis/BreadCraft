@@ -79,6 +79,7 @@ export interface CodegenMessages {
   signedIntoUnsignedReason(): string
   recordStride(record: string, bytes: number, next: number, missing: number): string
   constOutOfRange(where: string, value: number, typeLabel: string, lo: number, hi: number): string
+  argOutOfRange(param: string, fn: string, value: number, typeLabel: string, lo: number, hi: number): string
   returnFromStatementFunction(fn: string): string
   byteMathIntoWide(where: string): string
   drawTextArgs(): string
@@ -349,6 +350,10 @@ const DE_CODEGEN: CodegenMessages = {
     `${value} passt nicht in ${where}: das ist ein ${typeLabel} und hält ${lo}…${hi}. ` +
     `Gespeichert wird der Rest nach dem Überlauf, nicht ${value} — schreib ein Kürzel dazu ` +
     `(z. B. '.w'), wenn Du die ganze Zahl brauchst`,
+  argOutOfRange: (param, fn, value, typeLabel, lo, hi) =>
+    `${value} passt nicht in '${param}': '${fn}' nimmt dort ein ${typeLabel} entgegen, das ` +
+    `${lo}…${hi} hält. Ankommen wird der Rest nach dem Überlauf — gib dem Parameter ein ` +
+    `Kürzel ('${param}.w'), wenn er die ganze Zahl bekommen soll`,
   returnFromStatementFunction: (fn) =>
     `'${fn}' liefert keinen Wert zurück, gibt aber mit 'Return <Wert>' einen her — beides ` +
     `zusammen geht nicht. Entweder Du hängst dem Namen ein Kürzel an ('Function ${fn}.b()', ` +
@@ -521,6 +526,10 @@ const EN_CODEGEN: CodegenMessages = {
     `${value} does not fit in ${where}: that is a ${typeLabel} and holds ${lo}…${hi}. ` +
     `What gets stored is the remainder after the overflow, not ${value} — add a suffix ` +
     `(e.g. '.w') if you need the whole number`,
+  argOutOfRange: (param, fn, value, typeLabel, lo, hi) =>
+    `${value} does not fit in '${param}': '${fn}' takes a ${typeLabel} there, which holds ` +
+    `${lo}…${hi}. What arrives is the remainder after the overflow — give the parameter a ` +
+    `suffix ('${param}.w') if it should receive the whole number`,
   returnFromStatementFunction: (fn) =>
     `'${fn}' hands back no value, but returns one with 'Return <value>' — you cannot have ` +
     `both. Either give the name a suffix ('Function ${fn}.b()', which is then called with ` +

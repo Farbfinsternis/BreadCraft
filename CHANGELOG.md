@@ -41,6 +41,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   eine frische Karte. Jetzt ist nach dem Leeren wieder genau ein Bildschirm da.
 
 ### Hinzugefügt
+- **Ohne Kürzel ist eine Zahl jetzt überall gleich groß — nämlich klein.** Bisher galt eine
+  Ausnahme, die niemand im Kopf behalten konnte: Schreibst Du `Function Heile(menge)` ohne
+  Kürzel, war `menge` als Einziges in der ganzen Sprache die *große* Sorte Zahl, während
+  überall sonst die kleine gemeint war. Jetzt heißt „kein Kürzel" an jeder Stelle dasselbe:
+  0 bis 255. Brauchst Du mehr, schreibst Du es hin (`menge.w`) — und wenn Du einer kleinen
+  Schublade eine zu große Zahl übergibst, sagt BreadCraft es Dir, statt still Platz zu
+  schaffen. (Deine bestehenden Programme ändern sich dadurch nicht: dort steht das Kürzel
+  ohnehin überall.)
 - **Eine Zahl, die nicht in ihre Schublade passt, sagt jetzt Bescheid.** Schreibst Du
   `punkte = 5000`, ohne `punkte` ein Kürzel mitzugeben, dann ist `punkte` eine kleine Zahl
   (0 bis 255) — und der C64 hat bisher klammheimlich **136** gespeichert und nichts gesagt.
