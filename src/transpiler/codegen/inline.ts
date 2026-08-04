@@ -24,39 +24,35 @@ import { recordSuffixName } from './suffix'
 /**
  * Body statements (counted through nesting) a function may have and still be pasted in.
  *
- * ★★★ ZERO — THE PASS IS OFF, ON PURPOSE, AND THE MEASUREMENT IS WHY (user's decision,
- * 2026-07-31, after seeing these numbers).
+ * ★★★ TWELVE — and it took three attempts and one wrong diagnosis to earn that number.
+ * Measured on a real C64 with Into The Deep, `_intern/blob-cost.test.ts`:
  *
- * Built, tested, measured on a real C64 with Into The Deep — and it is a wash:
+ *   |               | calls  | T1: pasted, decls in the block | T3: decls at caller scope |
+ *   | blob loop     |  5.676 |  5.677 (a wash)                |  **4.131  (−27,2 %)**     |
+ *   | whole frame   | 14.251 | 14.223                         |  **12.493 (−12,3 %)**     |
+ *   | share of frame| 28,9 % | 28,9 %                         |  **21,0 %**               |
+ *   | program CODE  | 7.962 B|  8.695 B                       |  **9.506 B (+1.544)**     |
  *
- *   |                    | before | pasted naively | pasted with the record rule |
- *   | blob loop          |  5.676 |  7.341 (+29 %) |  5.677                      |
- *   | whole frame        | 14.253 | 16.167         | 14.223                      |
- *   | program CODE       | 7.962 B| 10.500 B       |  8.695 B                    |
+ * WHY T1 WAS A WASH, and it is not what it looked like at the time. It looked like a budget
+ * problem — "cc65 gives each function a six-byte register bank, the call BUYS it, pasting
+ * spends it" — and that reading cost a rule (`touchesRecordArray`, since deleted) that kept
+ * record-array functions as calls for a year of project time. Recounted 2026-08-04: main's
+ * bank stood EMPTY. The real rule is that **cc65 honours `register` only AT FUNCTION SCOPE**
+ * and ignores it inside a nested block without a word — and T1 declared a pasted body's
+ * locals inside its own `do { … } while (0)`. See `_intern/regbank.test.ts`.
  *
- * **30 cycles a frame for 733 bytes.** Eight functions were pasted, each running once a frame,
- * so ~920 cycles of call overhead should have gone. It did not, and the reason is the same one
- * that made the first attempt 29 % SLOWER, one floor down: cc65 gives each FUNCTION its own
- * six-byte register bank in the zero page, and a pasted body has to share the caller's, which
- * is already spent. The record-element pointer falls out of it (that is what `touchesRecordArray`
- * now refuses), and so do the body's own 16-bit LOCALS — `nexty`, the acceleration temporaries.
- * On the software stack each of those costs a helper call, and the saving and the loss cancel.
+ * T3 hoists every declaration to the caller's function scope and leaves only assignments at
+ * the site, which costs nothing (a C89 initialiser in a block is an assignment on entry
+ * anyway). Then the pointers of several bodies in one loop round can share, which is what
+ * makes the demand fit the bank — and that is where two thirds of the win lives.
  *
- * So the honest reading: **while cc65 hands out one register bank per function, the call is what
- * BUYS that bank, and pasting spends it.** The 4.094 cycles measured in `_intern/blob-inline.c`
- * (−27 % against 5.637) were never "inlining" — they were inlining with the register demand kept
- * inside ONE bank, which is a budget question, not a call question.
- *
- * Setting this to **12** re-arms everything (that was the measured ceiling: at 8, ITD's
- * `DrawBlob` and `TakeHit` — 9 statements each, 40 % of the loop between them — stayed calls;
- * above 12 nothing in ITD changes at all). Do that when T3 exists: paste on the AST, before the
- * record-pointer pass, and allocate the six bytes deliberately. Until then the machinery sleeps —
- * a feature that costs 733 bytes for 0,15 % should not ship quietly.
+ * Twelve is the measured ceiling: at 8, ITD's `DrawBlob` and `TakeHit` (9 statements each,
+ * 40 % of the loop between them) stay calls; above 12 nothing in ITD changes at all.
  */
 // The type is written out so the constant does not narrow to a literal: the tests compare
 // against 0 to describe both states, and with a literal type flipping this to arm the pass
 // turns every one of those comparisons into a typecheck error.
-export const INLINE_MAX_STMTS: number = 0
+export const INLINE_MAX_STMTS: number = 12
 
 /** How deep a pasted body may itself paste. One level of nesting is a real win (a small
  *  helper inside a small helper); unbounded nesting is how generated code explodes. */
@@ -65,52 +61,6 @@ export const INLINE_MAX_DEPTH = 2
 /** Statements that make a function unfit to paste — each declares something that belongs
  *  to a scope, not to a body. */
 const DECLARING = new Set(['DimStmt', 'GlobalStmt', 'ConstStmt', 'TypeDecl', 'FunctionDecl'])
-
-/**
- * ★★★ THE ONE THAT COST A DAY TO LEARN: A FUNCTION THAT REACHES INTO A RECORD ARRAY IS BETTER
- * OFF BEING CALLED.
- *
- * cc65 gives every FUNCTION its own six-byte register bank in the zero page. That is where
- * S1.B5.T3 puts the pointer to `blobs[idx]`, and it is the biggest single win this project has:
- * one indexed load per field (`lda (regbank+4),y`) instead of working the address out again and
- * again. Measured back then on Into The Deep: 16.859 → 14.500 cycles a frame.
- *
- * A pasted body has no bank of its own. It must share the caller's, and `main`'s is already
- * spent on `main`'s own 16-bit locals — so cc65 quietly puts the pasted body's pointer on the
- * SOFTWARE STACK, and every field access becomes `jsr ldptr10sp` first. Measured on the real
- * machine, ITD's blob loop: **5.676 → 7.341 cycles, 29 % WORSE** — pasting had undone T3. In
- * the generated assembly it is plain to see: `regbank` references 142 → 71, `ldptr10sp` 0 → 18.
- *
- * So the call is not pure overhead here: it BUYS a private zero-page bank, and that is worth
- * more than the ~115 cycles it costs. A function that touches a record-array element keeps its
- * call.
- *
- * This is the narrow, honest rule and not the last word: pasting the bodies and THEN working
- * out one shared pointer for the whole loop was measured at 4.094 cycles — better than either
- * of them. That needs the paste to happen on the AST, before the record-pointer pass runs, and
- * it is written up as T3 in `_intern/INLINE_PLAN.md`.
- */
-function touchesRecordArray(body: Statement[]): boolean {
-  let found = false
-  const walk = (node: unknown): void => {
-    if (found || node === null || typeof node !== 'object') return
-    const rec = node as Record<string, unknown>
-    if (rec.kind === 'FieldExpr') {
-      const base = rec.base as { kind?: string } | undefined
-      if (base?.kind === 'IndexExpr') {
-        found = true
-        return
-      }
-    }
-    for (const key of Object.keys(rec)) {
-      const v = rec[key]
-      if (Array.isArray(v)) v.forEach(walk)
-      else if (v && typeof v === 'object') walk(v)
-    }
-  }
-  body.forEach(walk)
-  return found
-}
 
 /** Every statement list a statement owns (so both the counter and the scans below can walk
  *  a whole body without knowing the shapes by heart). */

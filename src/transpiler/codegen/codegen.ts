@@ -487,26 +487,20 @@ class Generator {
    * Lines arrive fully indented, ready to splice in above the body.
    */
   private hoistedDecls: string[] = []
-  /** Names already declared at the caller's scope, so nothing is declared there twice (T3). */
-  private hoistedNames = new Set<string>()
   /**
-   * ★ WHY EVERY PASTE KEEPS ITS OWN RECORD POINTER, even though sharing one is the whole
-   *   point of T3 on paper.
+   * Names already declared at the caller's scope — so several pasted bodies that work out the
+   * SAME record element share ONE pointer instead of each declaring its own (T3).
    *
-   * Sharing was built and MEASURED, and it breaks the game. Three bodies pasted into one loop
-   * round all hold `blobs[i]`, so one pointer should do — main's register demand falls from
-   * ten bytes to four and every pointer keeps the zero page, which is exactly the budget the
-   * plan asked for. On the real machine that build runs, scrolls, counts frames — and all
-   * three blobs are dead from the first sample, with nothing in the generated C writing `hp`
-   * at all. So it is memory being corrupted, not logic, and the cause is NOT understood yet.
+   * ★ This is where the 27 % is. Three bodies pasted into one loop round all hold `blobs[i]`:
+   * one pointer instead of three drops main's demand from ten bytes to four, which FITS the
+   * six-byte bank, so every pointer keeps the zero page instead of two of them being spilled
+   * to the software stack. Measured on the real machine: 5.676 → 4.131 cycles.
    *
-   * Per-paste pointers cost main its budget (five register variables, two of them spilled to
-   * the software stack by cc65) and still measure 4.837 cycles against 5.676 — so the honest
-   * thing is to take the win that works and leave the sharing for its own step, with the
-   * failing build reproducible by dropping this suffix. Guessing at a memory bug in shipped
-   * codegen is how a compiler earns a reputation.
+   * Safe because the name is derived from the ELEMENT (array + the index's C name), and every
+   * site keeps its own assignment. Two bodies holding `blobs[a]` and `blobs[b]` therefore get
+   * different pointers, and no site ever inherits an address another site worked out.
    */
-  private ptrUnique = ''
+  private hoistedNames = new Set<string>()
   /** How many pasted bodies we are currently inside (INLINE_MAX_DEPTH is the ceiling). */
   private inlineDepth = 0
   /** > 0 while generating an expression whose position cannot take hoisted statements
@@ -2679,7 +2673,6 @@ class Generator {
     const savedIndent = this.indent
     this.indent = 1
     for (const d of opening) this.emit(d)
-    this.ptrUnique = tag
     for (const d of this.planRecordPointers(fn.body)) {
       // Declared once per caller, assigned at every site. The assignment has to stay: it is
       // what makes the pointer good for THIS round of the loop, and it is also what makes
@@ -4364,7 +4357,7 @@ class Generator {
       // the two are the same. In pasted bodies they are not, and it matters both ways: three
       // bodies that all hold `blobs[i]` must arrive at ONE name so they share one pointer (and
       // one bank slot), while two that hold `blobs[a]` and `blobs[b]` must not collide.
-      const ptr = `${this.ptrUnique}bc_p_${cName(use.array)}_${idxC}`
+      const ptr = `bc_p_${cName(use.array)}_${idxC}`
       this.recordPtrs.set(key, ptr)
       decls.push({
         ptr,

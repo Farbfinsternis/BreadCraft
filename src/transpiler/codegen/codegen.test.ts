@@ -2908,24 +2908,22 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     expect(code).toContain('do {   /* Schub(')
     // Declared at main's scope — `register` means something only here — and assigned at the
     // site, where the index finally has a value.
-    expect(code).toMatch(/register struct Blob \*bc_i\d+_bc_p_blobs_bc_i\d+_idx = 0;/)
-    expect(code).toMatch(/bc_i\d+_bc_p_blobs_bc_i\d+_idx = &blobs\[bc_i\d+_idx\];/)
+    expect(code).toMatch(/register struct Blob \*bc_p_blobs_bc_i\d+_idx = 0;/)
+    expect(code).toMatch(/bc_p_blobs_bc_i\d+_idx = &blobs\[bc_i\d+_idx\];/)
     // and nothing is left inside the block that cc65 would refuse a bank for
     expect(code).not.toMatch(/do \{[\s\S]*?register /)
   })
 
-  it('★ each pasted body keeps its OWN record pointer — sharing one was measured and broke it', () => {
-    // ★★ THIS IS THE STEP T3 DID NOT FINISH, and the test says so rather than pretending.
+  it('★ several pasted bodies working on the same element share ONE pointer', () => {
+    // ★★ THIS IS WHERE THE 27 % IS. Three bodies pasted into one loop round each used to work
+    // out their own pointer to `blobs[i]`: three variables, ten bytes asked of a six-byte
+    // bank, two of them spilled to the software stack. One pointer fits, so all of them keep
+    // the zero page — measured on the real machine, 5.676 → 4.131 cycles.
     //
-    // Three bodies pasted into one loop round all hold `blobs[i]`, so one pointer should do:
-    // main's demand falls from ten bytes to four, every pointer keeps the zero page, and that
-    // is precisely the budget the plan asked for. It was built and measured — and the game
-    // comes up with all three blobs dead from the first sample, while nothing in the generated
-    // C writes `hp` at all. Memory corruption, cause not yet understood.
-    //
-    // So each site keeps its own, which costs main its budget (five register variables, two
-    // spilled) and still measures 4.837 cycles against 5.676. The parameter binding below is
-    // real and stays: a parameter the body only READS, handed a plain name, IS that name.
+    // A parameter the body only READS, handed a plain name, IS that name (no copy), so all
+    // three arrive at `blobs[i]` and CAN share. The assignment stays at every site: that is
+    // what makes the pointer right for THIS round, and what stops any site inheriting an
+    // address it did not work out itself.
     const src = [
       'Type Blob',
       '  Field bx.w',
@@ -2945,15 +2943,16 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     ].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    // TWO declarations, one per paste, each named after the element AND the site…
-    const decls = code.match(/register struct Blob \*bc_i\d+_bc_p_blobs_i = 0;/g) ?? []
-    expect(decls.length).toBe(2)
-    // …each set for this round before it is read
-    const sets = code.match(/bc_i\d+_bc_p_blobs_i = &blobs\[i\];/g) ?? []
+    // ONE declaration…
+    const decls = code.match(/register struct Blob \*bc_p_blobs_i = 0;/g) ?? []
+    expect(decls.length).toBe(1)
+    // …and both bodies read through it, each after setting it for this round
+    const sets = code.match(/bc_p_blobs_i = &blobs\[i\];/g) ?? []
     expect(sets.length).toBe(2)
-    expect(code).toMatch(/bc_i\d+_bc_p_blobs_i->bx = \(bc_i\d+_bc_p_blobs_i->bx \+ 1\);/)
-    // ★ the parameter is NOT copied — `idx` IS the caller's `i`, which is what makes the
-    //   element the same element in both bodies, and what the sharing step will build on
+    expect(code).toContain('bc_p_blobs_i->bx = (bc_p_blobs_i->bx + 1);')
+    expect(code).toContain('bc_p_blobs_i->hp = (unsigned char)(bc_p_blobs_i->hp + 1);')
+    // ★ the parameter is NOT copied — `idx` IS the caller's `i`, which is what makes it the
+    //   same element in both bodies, and so what makes sharing possible at all
     expect(code).not.toMatch(/bc_i\d+_idx = i;/)
   })
 

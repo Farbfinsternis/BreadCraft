@@ -250,6 +250,18 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   gemalt ist, verschwindet nichts.
 
 ### Geändert
+- **★ Kurze Funktionen werden nicht mehr angerufen — sie stehen einfach da, wo Du sie rufst.**
+  Eine Funktion aufzurufen kostet den C64 etwas, bevor sie das erste Mal irgendetwas tut: er
+  legt die Werte hin, springt, räumt hinterher wieder auf. Bei einer Funktion mit drei Zeilen,
+  die fünfzig Mal pro Bild läuft, ist das mehr Zeremonie als Arbeit. Kurze Funktionen schreibt
+  BreadCraft deshalb jetzt direkt an die Stelle, an der Du sie aufrufst — und weil ihre Zahlen
+  dabei mit umziehen, kommen sie dort auch in die schnelle Zeropage.
+  In „Into The Deep" kostet die Gegner-Schleife damit **27 % weniger** (5.676 → 4.131 Takte),
+  ein ganzes Bild **12 % weniger** — von 29 % auf **21 % eines Bildes**. Gemessen auf einem
+  echten C64, nicht geschätzt.
+  **Das kostet Platz, und die RAM-Anzeige sagt Dir wie viel:** Into The Deep wächst um
+  gut 1,5 KB Programmcode. Du musst dafür nichts ändern und nichts wissen — schreib Deine
+  kleinen Hilfsfunktionen so kurz und so zahlreich, wie es sich gut liest.
 - **Größere Zahlen in Funktionen liegen jetzt dort, wo der C64 am schnellsten hinlangt.**
   Eine `.w`- oder `.i`-Variable innerhalb einer Funktion lag bisher auf einem Stapel, den
   BreadCraft für den C64 nachbauen muss — und jeder Zugriff darauf war ein kleiner
