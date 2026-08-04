@@ -326,6 +326,20 @@ interface Symbol {
  * const-pointer (the doctrine, breadcraft-records-in-functions) so field access uses
  * `->` and the function can't mutate the caller's record.
  */
+/**
+ * One record-element pointer the S1.B5.T3 pass wants to hold. It comes apart into a
+ * DECLARATION and a TARGET because the two do not always belong in the same place: in a
+ * normal function both sit at the top, but a pasted body (INLINE_PLAN T3) must declare at
+ * the CALLER's function scope — the only scope where cc65 honours `register` — and assign
+ * where the call used to be, once the index actually has a value.
+ */
+interface RecordPtrPlan {
+  ptr: string
+  cType: string
+  target: string
+  note: string
+}
+
 interface LocalSym {
   cName: string
   /** Scalar type, or undefined when this is a record local/param. */
@@ -456,6 +470,43 @@ class Generator {
   private inlinePlan: InlinePlan = { fit: new Map(), free: new Map() }
   /** Running number, so every pasted site gets names nobody else has. */
   private inlineSeq = 0
+  /**
+   * ★★★ T3 — DECLARATIONS A PASTED BODY PUTS AT THE CALLER'S FUNCTION SCOPE.
+   *
+   * cc65 honours `register` ONLY at function scope. Inside a nested block it ignores the
+   * keyword without a word: measured on the same variable with the same accesses, twelve
+   * `regbank` references become zero and every touch turns back into a `jsr`
+   * (`_intern/regbank.test.ts`). T1 declared a pasted body's locals inside its own
+   * `do { … } while (0)`, so they ALL lost the zero page — that, and not a full register
+   * budget, is why pasting measured as a wash.
+   *
+   * So the declarations go up here and only the ASSIGNMENTS stay at the call site. That
+   * costs nothing: a C89 initialiser in a nested block is an assignment on block entry
+   * anyway, so `x = 0;` at the site is the same instruction it always was.
+   *
+   * Lines arrive fully indented, ready to splice in above the body.
+   */
+  private hoistedDecls: string[] = []
+  /** Names already declared at the caller's scope, so nothing is declared there twice (T3). */
+  private hoistedNames = new Set<string>()
+  /**
+   * ★ WHY EVERY PASTE KEEPS ITS OWN RECORD POINTER, even though sharing one is the whole
+   *   point of T3 on paper.
+   *
+   * Sharing was built and MEASURED, and it breaks the game. Three bodies pasted into one loop
+   * round all hold `blobs[i]`, so one pointer should do — main's register demand falls from
+   * ten bytes to four and every pointer keeps the zero page, which is exactly the budget the
+   * plan asked for. On the real machine that build runs, scrolls, counts frames — and all
+   * three blobs are dead from the first sample, with nothing in the generated C writing `hp`
+   * at all. So it is memory being corrupted, not logic, and the cause is NOT understood yet.
+   *
+   * Per-paste pointers cost main its budget (five register variables, two of them spilled to
+   * the software stack by cc65) and still measure 4.837 cycles against 5.676 — so the honest
+   * thing is to take the win that works and leave the sharing for its own step, with the
+   * failing build reproducible by dropping this suffix. Guessing at a memory bug in shipped
+   * codegen is how a compiler earns a reputation.
+   */
+  private ptrUnique = ''
   /** How many pasted bodies we are currently inside (INLINE_MAX_DEPTH is the ceiling). */
   private inlineDepth = 0
   /** > 0 while generating an expression whose position cannot take hoisted statements
@@ -465,9 +516,6 @@ class Generator {
   /** Blocks produced by value calls hoisted OUT of the statement being generated. They are
    *  emitted before it, which is only correct in the positions the ban above protects. */
   private pendingInline: string[] = []
-  /** Declarations the hoisted blocks need (their result variables), emitted at the start of
-   *  a fresh C block wrapped around the statement — C89 wants declarations first. */
-  private inlineTemps: string[] = []
   /** > 0 while a pasted body is being generated: its diagnostics were already reported at the
    *  definition, and repeating them per call site would invent problems. */
   private diagSilent = 0
@@ -1055,6 +1103,10 @@ class Generator {
       if (sym.global) globalDecls.push(`${C_TYPE[sym.type]} ${sym.cName} = 0;`)
       else localDecls.push(`  ${this.zeroPaged(sym.type)}${C_TYPE[sym.type]} ${sym.cName} = 0;`)
     }
+    // What the bodies pasted into main need at MAIN's scope (T3) — the walk above collected
+    // it. They come after main's own names, which is also the order cc65 hands out the three
+    // zero-page slots in; see the note over `zeroPaged`.
+    localDecls.push(...this.hoistedDecls)
     if (globalDecls.length > 0) globalDecls.push('')
     if (localDecls.length > 0) localDecls.push('')
 
@@ -2367,8 +2419,24 @@ class Generator {
     // Find repeatedly-visited record-array elements ONCE (S1.B5.T3) — the declarations go
     // above the body, and every field access below reads through them.
     this.recordPtrs.clear()
-    for (const d of this.planRecordPointers(s.body)) this.emit(d)
+    // A pasted body inside this function declares AT THIS SCOPE (T3). The declarations are
+    // collected while the body is generated, so they are spliced in below, above the body.
+    const savedHoist = this.hoistedDecls
+    const savedNames = this.hoistedNames
+    this.hoistedDecls = []
+    this.hoistedNames = new Set()
+    for (const d of this.planRecordPointers(s.body)) {
+      // This function's own record pointers are declared here AND registered, so a body
+      // pasted below that reaches the same element shares this one instead of shadowing it.
+      this.hoistedNames.add(d.ptr)
+      this.emit(`register ${d.cType}${d.ptr} = ${d.target};${d.note}`)
+    }
+    const hoistMark = this.sink.length
     for (const st of s.body) this.genStatement(st)
+    const hoisted = this.hoistedDecls
+    this.hoistedDecls = savedHoist
+    this.hoistedNames = savedNames
+    this.sink.splice(hoistMark, 0, ...hoisted)
     this.recordPtrs.clear()
 
     // Assemble the function and append to funcDefs, remembering where it landed so it can
@@ -2517,9 +2585,58 @@ class Generator {
       return this.expr(a)
     })
 
+    // ★ T3 — EVERY NAME OF THIS PASTE IS ITS OWN. The declarations leave the body's block
+    //   and land at the caller's function scope, where two pastes of the same function (or a
+    //   body local sharing a name with the caller's) would otherwise be one variable. The
+    //   scope carries the unique C name, so the generated body picks it up by itself.
+    const tag = `bc_i${++this.inlineSeq}_`
+
+    /**
+     * ★ A PARAMETER THAT IS ONLY EVER READ, HANDED A PLAIN NAME, IS THAT NAME.
+     *
+     * `MoveBlob(i)` used to become `bc_i12_idx = i;` and then work from `bc_i12_idx`. A copy
+     * of a variable is not wrong, but it costs the copy — and worse, it hides what the three
+     * pasted bodies of one loop round have in common: each of them worked out its OWN pointer
+     * to `blobs[bc_iN_idx]`, three pointers for one element, ten bytes of a six-byte bank.
+     * Binding straight through makes them all say `blobs[i]`, and then they can share.
+     *
+     * Only when the body never ASSIGNS the parameter: CRUMB passes by value, so a body that
+     * writes to its parameter must not be writing to the caller's variable.
+     */
+    const assignedInBody = new Set<string>()
+    const scanAssigned = (list: Statement[]): void => {
+      for (const st of list) {
+        if (st.kind === 'AssignStmt' && st.target.kind === 'Identifier') {
+          assignedInBody.add(st.target.name)
+        }
+        if (st.kind === 'ForStmt') assignedInBody.add(st.variable.name)
+        if (st.kind === 'IfStmt') {
+          scanAssigned(st.then)
+          st.elifs.forEach((e) => scanAssigned(e.body))
+          scanAssigned(st.else ?? [])
+        } else if (
+          st.kind === 'WhileStmt' ||
+          st.kind === 'RepeatStmt' ||
+          st.kind === 'ForStmt'
+        ) {
+          scanAssigned(st.body)
+        }
+      }
+    }
+    scanAssigned(fn.body)
+
+    const bound = new Map<string, string>()
+    info.params.forEach((p, i) => {
+      const a = args[i]
+      if (a?.kind === 'Identifier' && !assignedInBody.has(p.name)) bound.set(p.name, this.varC(a.name))
+    })
+
     const scope = new Map<string, LocalSym>()
     for (const p of info.params) {
-      scope.set(p.name, { cName: cName(p.name), type: p.type ?? 'byte' })
+      scope.set(p.name, {
+        cName: bound.get(p.name) ?? tag + cName(p.name),
+        type: p.type ?? 'byte'
+      })
     }
     const savedScope = this.localScope
     const savedPtrs = this.recordPtrs
@@ -2527,17 +2644,33 @@ class Generator {
     // The pasted body finds its own record elements; the caller's plan is not its plan.
     this.recordPtrs = new Map()
     for (const st of fn.body) this.collect(st)
+    for (const [name, l] of scope) {
+      if (bound.has(name)) continue
+      if (!l.cName.startsWith(tag)) l.cName = tag + l.cName
+    }
 
-    const decls: string[] = []
+    // Declarations go UP to the caller's function scope; what stays here are the assignments
+    // that give them their value. A local is zeroed on entry exactly as its `= 0` initialiser
+    // used to do, so a second run of the body cannot see the first one's leftovers.
+    const opening: string[] = []
     info.params.forEach((p, i) => {
+      if (bound.has(p.name)) return // it IS the caller's variable; nothing to declare or copy
       const l = scope.get(p.name)!
-      decls.push(`${C_TYPE[l.type ?? 'byte']} ${l.cName} = ${argC[i] ?? '0'};`)
+      this.hoistedDecls.push(`  ${this.zeroPaged(l.type)}${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
+      opening.push(`${l.cName} = ${argC[i] ?? '0'};`)
     })
     for (const [name, l] of scope) {
       if (info.params.some((p) => p.name === name)) continue
-      if (l.recordType) decls.push(`struct ${cName(l.recordType)} ${l.cName};`)
-      else if (l.type === 'string') decls.push(`char ${l.cName}[${l.strSize ?? DEFAULT_STR_CAP}];`)
-      else decls.push(`${this.zeroPaged(l.type)}${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
+      if (l.recordType) {
+        this.hoistedDecls.push(`  struct ${cName(l.recordType)} ${l.cName};`)
+      } else if (l.type === 'string') {
+        this.hoistedDecls.push(`  char ${l.cName}[${l.strSize ?? DEFAULT_STR_CAP}];`)
+      } else {
+        this.hoistedDecls.push(
+          `  ${this.zeroPaged(l.type)}${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`
+        )
+        opening.push(`${l.cName} = 0;`)
+      }
     }
 
     const savedSink = this.sink
@@ -2545,8 +2678,18 @@ class Generator {
     this.sink = body
     const savedIndent = this.indent
     this.indent = 1
-    for (const d of decls) this.emit(d)
-    for (const d of this.planRecordPointers(fn.body)) this.emit(d)
+    for (const d of opening) this.emit(d)
+    this.ptrUnique = tag
+    for (const d of this.planRecordPointers(fn.body)) {
+      // Declared once per caller, assigned at every site. The assignment has to stay: it is
+      // what makes the pointer good for THIS round of the loop, and it is also what makes
+      // sharing safe — no site inherits an address another site worked out.
+      if (!this.hoistedNames.has(d.ptr)) {
+        this.hoistedNames.add(d.ptr)
+        this.hoistedDecls.push(`  register ${d.cType}${d.ptr} = 0;${d.note}`)
+      }
+      this.emit(`${d.ptr} = ${d.target};`)
+    }
     this.inlineCtx.push({ result: resultVar })
     this.inlineDepth++
     this.diagSilent++
@@ -2822,9 +2965,12 @@ class Generator {
    * the value arrives in a variable. This wrapper is the whole mechanism:
    *
    *   1. the statement is generated into a buffer of its own;
-   *   2. `pendingInline` (filled while its expressions were generated) goes in FRONT of it;
-   *   3. if any of that needed a result variable, the lot is wrapped in `{ … }` with the
-   *      declarations at the top, because cc65 is a C89 compiler and C89 declares first.
+   *   2. `pendingInline` (filled while its expressions were generated) goes in FRONT of it.
+   *
+   * There is no wrapping block and no declaration to place here any more: since T3 every
+   * declaration a paste needs — parameters, body locals, the result variable — is hoisted to
+   * the caller's FUNCTION scope, because that is the only scope where cc65 honours
+   * `register`. What is left at the site is plain assignments, which need no C89 ceremony.
    *
    * Compound statements need no special case: their bodies go through this same door, so a
    * nested paste has already been placed by the time the outer one is written out.
@@ -2837,9 +2983,7 @@ class Generator {
    */
   private genStatement(s: Statement): void {
     const savedPending = this.pendingInline
-    const savedTemps = this.inlineTemps
     this.pendingInline = []
-    this.inlineTemps = []
 
     const savedSink = this.sink
     const buf: string[] = []
@@ -2848,27 +2992,10 @@ class Generator {
     this.sink = savedSink
 
     const pending = this.pendingInline
-    const temps = this.inlineTemps
     this.pendingInline = savedPending
-    this.inlineTemps = savedTemps
 
-    if (pending.length === 0) {
-      for (const l of buf) this.sink.push(l)
-      return
-    }
-    if (temps.length === 0) {
-      // Statement calls need no result variable, so no block is needed either.
-      for (const l of pending) this.sink.push(l)
-      for (const l of buf) this.sink.push(l)
-      return
-    }
-    this.emit('{')
-    this.indent++
-    for (const t of temps) this.emit(t)
-    for (const l of pending) this.sink.push('  ' + l)
-    for (const l of buf) this.sink.push('  ' + l)
-    this.indent--
-    this.emit('}')
+    for (const l of pending) this.sink.push(l)
+    for (const l of buf) this.sink.push(l)
   }
 
   private genStatementInner(s: Statement): void {
@@ -4044,11 +4171,29 @@ class Generator {
     return C_TYPE[arr.type ?? 'byte']
   }
 
+  /**
+   * THE C NAME OF A VARIABLE, asked of the scope rather than spelled from the source.
+   *
+   * For everything the user writes these are the same string, and for years there was no
+   * reason to tell them apart. A pasted body (INLINE_PLAN T3) is the reason: its names live
+   * at the CALLER's function scope now — the only scope where cc65 honours `register` — so
+   * each paste carries its own prefix, or two pastes of one function would share a variable
+   * and a body local would collide with a caller local of the same name.
+   *
+   * Every place that turns a name into a variable goes through here. The first version of
+   * T3 mangled only the DECLARATIONS and let the body keep spelling `cName(e.name)`; the C
+   * came out declaring `bc_i1_q` and assigning `q`. The tests caught it, which is what they
+   * are for — but it is the kind of thing that reads fine and cannot work.
+   */
+  private varC(name: string): string {
+    return this.localScope?.get(name)?.cName ?? cName(name)
+  }
+
   /** Render any assignable place (variable, array element, record field) to C. */
   private lvalue(e: Identifier | IndexExpr | FieldExpr): string {
     switch (e.kind) {
       case 'Identifier':
-        return cName(e.name)
+        return this.varC(e.name)
       case 'IndexExpr':
         return this.indexExpr(e)
       case 'FieldExpr':
@@ -4125,7 +4270,7 @@ class Generator {
     if (e.base.kind === 'Identifier') {
       const local = this.localScope?.get(e.base.name)
       const arrow = local?.isPointer ? '->' : '.'
-      return `${cName(e.base.name)}${arrow}${cName(e.field)}`
+      return `${this.varC(e.base.name)}${arrow}${cName(e.field)}`
     }
     // The SAME element, asked again: read it through the pointer this function worked out
     // once (see planRecordPointers) instead of finding the element from scratch.
@@ -4162,7 +4307,7 @@ class Generator {
    * element cannot move under the pointer. A loop counter is excluded by exactly that test —
    * `blobs[i]` inside a `For i` loop keeps looking the element up, because it must.
    */
-  private planRecordPointers(body: Statement[]): string[] {
+  private planRecordPointers(body: Statement[]): RecordPtrPlan[] {
     const uses = new Map<string, { array: string; index: string; count: number }>()
     const assigned = new Set<string>()
 
@@ -4205,18 +4350,28 @@ class Generator {
     }
     body.forEach(visitStmt)
 
-    const decls: string[] = []
+    const decls: RecordPtrPlan[] = []
     for (const [key, use] of uses) {
       if (use.count < 2 || assigned.has(use.index)) continue
       const arr = this.arrays.get(use.array)!
       const rec = this.records.get(arr.recordType!)
       if (!rec) continue
-      const ptr = `bc_p_${cName(use.array)}_${cName(use.index)}`
+      // ★ The index is resolved through the LOCAL SCOPE, not spelled straight from the
+      //   source name. Inside a pasted body its parameter carries a unique C name (T3), and
+      //   `&blobs[idx]` would otherwise name the caller's `idx` — or nothing at all.
+      const idxC = this.localScope?.get(use.index)?.cName ?? cName(use.index)
+      // ★ THE NAME COMES FROM THE ELEMENT, NOT FROM THE SOURCE SPELLING. In a normal function
+      // the two are the same. In pasted bodies they are not, and it matters both ways: three
+      // bodies that all hold `blobs[i]` must arrive at ONE name so they share one pointer (and
+      // one bank slot), while two that hold `blobs[a]` and `blobs[b]` must not collide.
+      const ptr = `${this.ptrUnique}bc_p_${cName(use.array)}_${idxC}`
       this.recordPtrs.set(key, ptr)
-      decls.push(
-        `register struct ${rec.cName} *${ptr} = &${arr.cName}[${cName(use.index)}];` +
-          `  /* ${use.array}[${use.index}] found once, read ${use.count}× */`
-      )
+      decls.push({
+        ptr,
+        cType: `struct ${rec.cName} *`,
+        target: `&${arr.cName}[${idxC}]`,
+        note: `  /* ${use.array}[${use.index}] found once, read ${use.count}× */`
+      })
     }
     return decls
   }
@@ -4335,7 +4490,7 @@ class Generator {
   }
 
   private genFor(s: ForStmt): void {
-    const v = cName(s.variable.name)
+    const v = this.varC(s.variable.name)
     const counterType = this.exprType(s.variable) ?? 'byte'
     const stepVal = this.constInt(s.step)
     const declName = s.variable.name
@@ -4436,7 +4591,7 @@ class Generator {
         if (this.functions.has(e.name) && !this.isDeclaredName(e.name)) {
           this.err(this.M.valueFuncNeedsParens(e.name), e)
         }
-        return cName(e.name)
+        return this.varC(e.name)
       case 'Grouping':
         return `(${this.expr(e.expr)})`
       case 'Unary': {
@@ -4711,9 +4866,16 @@ class Generator {
           // this one (INLINE_PLAN T1)? Then the body runs here and hands its value over in a
           // variable. `inlineBan` guards the positions where "in front" is the wrong moment.
           if (this.inlineBan === 0 && info.returnType && this.canPasteHere(e.callee, e.args)) {
-            const result = `bc_r${++this.inlineSeq}`
-            this.inlineTemps.push(`${C_TYPE[info.returnType]} ${result} = 0;`)
+            // The result variable is hoisted like everything else (T3) — a 16-bit result in a
+            // nested block would be another local cc65 refuses the zero page. It is zeroed
+            // here instead of by an initialiser, so a body that returns on no path cannot
+            // hand over the value the LAST evaluation left behind.
+            const result = `bc_r${this.inlineSeq + 1}`
+            this.hoistedDecls.push(
+              `  ${this.zeroPaged(info.returnType)}${C_TYPE[info.returnType]} ${result} = 0;`
+            )
             const pad = '  '.repeat(this.indent)
+            this.pendingInline.push(`${pad}${result} = 0;`)
             this.pasteBody(e.callee, e.args, result, (line) => this.pendingInline.push(pad + line))
             return result
           }

@@ -53,7 +53,10 @@ import { recordSuffixName } from './suffix'
  * record-pointer pass, and allocate the six bytes deliberately. Until then the machinery sleeps —
  * a feature that costs 733 bytes for 0,15 % should not ship quietly.
  */
-export const INLINE_MAX_STMTS = 0
+// The type is written out so the constant does not narrow to a literal: the tests compare
+// against 0 to describe both states, and with a literal type flipping this to arm the pass
+// turns every one of those comparisons into a typecheck error.
+export const INLINE_MAX_STMTS: number = 0
 
 /** How deep a pasted body may itself paste. One level of nesting is a real win (a small
  *  helper inside a small helper); unbounded nesting is how generated code explodes. */
@@ -259,7 +262,6 @@ export function planInlining(program: Program): InlinePlan {
     if (recordSuffixName(fn.returnSuffix)) continue
     if (fn.params.some((p) => recordSuffixName(p.suffix))) continue
     if (hasDeclaration(fn.body)) continue
-    if (touchesRecordArray(fn.body)) continue
     if (countStatements(fn.body) > INLINE_MAX_STMTS) continue
     fit.set(name, fn)
     free.set(name, freeNames(fn))

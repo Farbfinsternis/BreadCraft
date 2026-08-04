@@ -869,11 +869,11 @@ describe('codegen: constants that do not fit (TYPEN-PLAN T5)', () => {
    */
   it('a parameter without a suffix is a byte, like everything else without a suffix', () => {
     const { code } = gen(['Function F(p)', '  q.b = p', 'EndFunction', 'F(1)'].join('\n'))
-    // The parameter shows up in the C signature — or, if the INLINE_PLAN T1 pass is ever armed
-    // again, as the first declaration of the body written where the call stood. Byte either way;
-    // that is the rule being asserted, not the shape.
-    expect(code).toContain(
-      INLINE_MAX_STMTS === 0 ? 'void F(unsigned char p)' : 'unsigned char p = 1;'
+    // The parameter shows up in the C signature — or, if the INLINE_PLAN pass is ever armed
+    // again, as a declaration at the caller's scope carrying that paste's own prefix (T3).
+    // Byte either way; that is the rule being asserted, not the shape.
+    expect(code).toMatch(
+      INLINE_MAX_STMTS === 0 ? /void F\(unsigned char p\)/ : /unsigned char bc_i\d+_p = 0;/
     )
   })
 
@@ -1216,15 +1216,18 @@ describe('codegen: 16-bit locals go to the zero page', () => {
     const src = ['Function Tick()', '  weit.w = 0', '  delta.i = 0', '  weit = weit + 1', 'EndFunction', 'Tick'].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('register unsigned int weit = 0;')
-    expect(code).toContain('register int delta = 0;')
+    // The optional prefix is INLINE_PLAN T3: with the paste pass armed the body's locals are
+    // declared at the CALLER's function scope under a per-paste name — still `register`,
+    // which is the whole point (cc65 honours the keyword nowhere else).
+    expect(code).toMatch(/register unsigned int (bc_i\d+_)?weit = 0;/)
+    expect(code).toMatch(/register int (bc_i\d+_)?delta = 0;/)
   })
 
   it('leaves a byte local on the stack — it would only pay the toll', () => {
     const src = ['Function Tick()', '  klein.b = 0', '  klein = klein + 1', 'EndFunction', 'Tick'].join('\n')
     const { code } = gen(src)
-    expect(code).toContain('unsigned char klein = 0;')
-    expect(code).not.toContain('register unsigned char klein')
+    expect(code).toMatch(/unsigned char (bc_i\d+_)?klein = 0;/)
+    expect(code).not.toMatch(/register unsigned char (bc_i\d+_)?klein/)
   })
 
   it('does the same for main’s own locals (a name without Global)', () => {
@@ -1812,6 +1815,16 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
     // that out on EVERY field, through runtime helper calls. Measured on the real machine:
     // Into The Deep's three enemies cost 11.830 cycles a frame (60 % of PAL) that way.
     describe('a record-array element is found once, not per field (S1.B5.T3)', () => {
+      // ★ THE FUNCTION IS KEPT TOO BIG TO PASTE, ON PURPOSE. These cases are about the
+      //   record-pointer pass and nothing else. Once INLINE_PLAN is armed a two-line function
+      //   is pasted into main, and then every assertion here would really be describing the
+      //   paste — the pointer under a per-paste name, the definition dropped as uncalled. The
+      //   filler keeps the subject of the test on the table. What the pasted form looks like
+      //   is asserted where it belongs, in the INLINE_PLAN describes below.
+      const tooBigToPaste = Array.from(
+        { length: INLINE_MAX_STMTS + 1 },
+        (_, i) => `  fuell${i}.b = ${i}`
+      )
       const withBlobs = (fnBody: string): string =>
         [
           'Type Blob',
@@ -1822,6 +1835,7 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
           'Dim blobs.Blob[3]',
           'Function Move(idx.b)',
           fnBody,
+          ...tooBigToPaste,
           'End Function',
           'Move(0)'
         ].join('\n')
@@ -1877,6 +1891,8 @@ describe('codegen: UseTileset + DrawMap (tile world)', () => {
             'Function Swap(a.b, b.b)',
             '  blobs[a]\\bx = blobs[b]\\bx',
             '  blobs[a]\\hp = blobs[b]\\hp',
+            // kept a call, for the reason given at `tooBigToPaste` above
+            ...Array.from({ length: INLINE_MAX_STMTS + 1 }, (_, i) => `  fuell${i}.b = ${i}`),
             'End Function',
             'Swap(0, 1)'
           ].join('\n'),
@@ -2800,7 +2816,9 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     ].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('Lies(n)')
+    // Still a real call — that is the rule being asserted. How the argument is SPELLED is
+    // not: `Ruf` is itself pasted, so its own parameter carries that paste's prefix (T3).
+    expect(code).toMatch(/Lies\((bc_i\d+_)?n\)/)
   })
 
   it('an argument naming one of the pasted body own names: call, not paste', () => {
@@ -2818,11 +2836,15 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     ].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('Doppel(idx)')
+    expect(code).toMatch(/Doppel\((bc_i\d+_)?idx\)/)
   })
 
-  it('a local of the pasted body shadows the caller local of the same name (that is fine)', () => {
-    // The other direction is exactly what the block is for: the body's `t` is its own.
+  it('a local of the pasted body keeps its own name, and the caller keeps its 9', () => {
+    // Both name a variable `t`. Under T1 the body's `t` was declared inside the pasted block
+    // and shadowed the caller's; since T3 the declarations live at the CALLER's scope, so
+    // shadowing is no longer available and the separation has to come from the NAME. That is
+    // a stronger guarantee, not a weaker one — but it is a different one, so it is asserted
+    // differently: two declarations, two variables, the outer one untouched.
     const src = [
       'Function Klein.b(n.b)',
       '  t.b = n + 1',
@@ -2834,9 +2856,12 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
     expect(code).toContain('do {   /* Klein(')
-    // the body declares its own t inside the block, and the outer t keeps its 9
-    expect(code).toMatch(/do \{[\s\S]*?unsigned char t = 0;/)
+    // the caller's own t, declared and set to 9 …
+    expect(code).toContain('unsigned char t = 0;')
     expect(code).toContain('t = 9;')
+    // … and the body's t, a variable of its own that nothing else can reach
+    expect(code).toMatch(/unsigned char bc_i\d+_t = 0;/)
+    expect(code).toMatch(/bc_i\d+_t = \(unsigned char\)\(bc_i\d+_n \+ 1\);/)
   })
 
   it('a too-big number handed to a pasted parameter still warns', () => {
@@ -2855,15 +2880,18 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     expect(warnings[0]).toMatch(/300/)
   })
 
-  it('★ a body that reaches into a record array KEEPS its call — the call buys a zero page', () => {
-    // This one was measured the hard way. cc65 gives every FUNCTION its own six-byte register
-    // bank in the zero page, and that is where S1.B5.T3 keeps the pointer to `blobs[idx]`. A
-    // pasted body has no bank of its own: it shares the caller's, `main`'s is already spent,
-    // and cc65 quietly moves the pointer onto the software stack — where every field access
-    // needs a `jsr ldptr10sp` first. On the real machine ITD's blob loop went 5.676 → 7.341
-    // cycles, 29 % WORSE, because pasting had undone the project's biggest win.
+  it('★ a body that reaches into a record array is pasted, and its pointer keeps the zero page', () => {
+    // ★★★ THIS TEST CHANGED SIDES, AND THE MEASUREMENT IS WHY.
     //
-    // So the call is not pure overhead for these functions. It is how they get a zero page.
+    // It used to assert the opposite: such a body KEPT its call, because pasting it made ITD's
+    // blob loop 29 % WORSE (5.676 → 7.341 cycles). The reading of that was "the call buys the
+    // body a six-byte register bank, and pasting spends it". Recounted 2026-08-04
+    // (`_intern/regbank.test.ts`), and the reading was wrong: main's bank stood EMPTY. The real
+    // rule is that cc65 honours `register` only AT FUNCTION SCOPE and ignores it inside a
+    // nested block without a word — and a pasted body's declarations sat inside its own
+    // `do { … } while (0)`.
+    //
+    // T3 hoists them to the caller's scope, so the reason for refusing is gone.
     const src = [
       'Type Blob',
       '  Field bx.w',
@@ -2877,30 +2905,78 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into t
     ].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('Schub(0);')
-    expect(code).toContain('void Schub(unsigned char idx) {')
-    // …and inside the function, the pointer is exactly where T3 put it.
-    expect(code).toMatch(/register struct Blob \*bc_p_blobs_idx = &blobs\[idx\];/)
+    expect(code).toContain('do {   /* Schub(')
+    // Declared at main's scope — `register` means something only here — and assigned at the
+    // site, where the index finally has a value.
+    expect(code).toMatch(/register struct Blob \*bc_i\d+_bc_p_blobs_bc_i\d+_idx = 0;/)
+    expect(code).toMatch(/bc_i\d+_bc_p_blobs_bc_i\d+_idx = &blobs\[bc_i\d+_idx\];/)
+    // and nothing is left inside the block that cc65 would refuse a bank for
+    expect(code).not.toMatch(/do \{[\s\S]*?register /)
   })
 
-  it('…a body touching a record array ONCE keeps its call too (the rule is deliberately blunt)', () => {
-    // One access would not earn a pointer today, so this one could in principle be pasted.
-    // It is not: the rule asks "does this body reach into a record array at all", which needs
-    // no second copy of planRecordPointers' threshold to stay in step with. A blunt rule that
-    // cannot drift beats a sharp one that can.
+  it('★ each pasted body keeps its OWN record pointer — sharing one was measured and broke it', () => {
+    // ★★ THIS IS THE STEP T3 DID NOT FINISH, and the test says so rather than pretending.
+    //
+    // Three bodies pasted into one loop round all hold `blobs[i]`, so one pointer should do:
+    // main's demand falls from ten bytes to four, every pointer keeps the zero page, and that
+    // is precisely the budget the plan asked for. It was built and measured — and the game
+    // comes up with all three blobs dead from the first sample, while nothing in the generated
+    // C writes `hp` at all. Memory corruption, cause not yet understood.
+    //
+    // So each site keeps its own, which costs main its budget (five register variables, two
+    // spilled) and still measures 4.837 cycles against 5.676. The parameter binding below is
+    // real and stays: a parameter the body only READS, handed a plain name, IS that name.
     const src = [
       'Type Blob',
+      '  Field bx.w',
       '  Field hp.b',
       'EndType',
       'Dim blobs.Blob[3]',
-      'Function Tot.b(idx.b)',
-      '  Return blobs[idx]\\hp',
+      'Function Schub(idx.b)',
+      '  blobs[idx]\\bx = blobs[idx]\\bx + 1',
       'EndFunction',
-      'x.b = Tot(0)'
+      'Function Heil(idx.b)',
+      '  blobs[idx]\\hp = blobs[idx]\\hp + 1',
+      'EndFunction',
+      'For i.b = 0 To 2',
+      '  Schub i',
+      '  Heil i',
+      'Next'
     ].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('Tot(0)')
+    // TWO declarations, one per paste, each named after the element AND the site…
+    const decls = code.match(/register struct Blob \*bc_i\d+_bc_p_blobs_i = 0;/g) ?? []
+    expect(decls.length).toBe(2)
+    // …each set for this round before it is read
+    const sets = code.match(/bc_i\d+_bc_p_blobs_i = &blobs\[i\];/g) ?? []
+    expect(sets.length).toBe(2)
+    expect(code).toMatch(/bc_i\d+_bc_p_blobs_i->bx = \(bc_i\d+_bc_p_blobs_i->bx \+ 1\);/)
+    // ★ the parameter is NOT copied — `idx` IS the caller's `i`, which is what makes the
+    //   element the same element in both bodies, and what the sharing step will build on
+    expect(code).not.toMatch(/bc_i\d+_idx = i;/)
+  })
+
+  it('…but a parameter the body ASSIGNS is still a copy — CRUMB passes by value', () => {
+    // The one thing binding straight through must never do. `Zaehl` moves its parameter; if
+    // that were the caller's variable, the caller would find its own number changed.
+    // (The caller's variable is deliberately NOT called `n`: an argument that names one of the
+    // body's own names keeps its call anyway, by an older rule, and then this would prove
+    // nothing about binding.)
+    const src = [
+      'Function Zaehl.b(n.b)',
+      '  n = n + 1',
+      '  Return n',
+      'EndFunction',
+      'zaehler.b = 5',
+      'x.b = Zaehl(zaehler)'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toMatch(/bc_i\d+_n = zaehler;/)
+    expect(code).toMatch(/bc_i\d+_n = \(unsigned char\)\(bc_i\d+_n \+ 1\);/)
+    // and the caller's own number is not what the body counted on
+    expect(code).not.toContain('zaehler = (unsigned char)(zaehler + 1);')
   })
 })
 
@@ -2975,6 +3051,6 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: dropping a definition nobody c
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
     expect(code).toContain('void Gross(unsigned char n) {')
-    expect(code).toContain('Gross(n);')
+    expect(code).toMatch(/Gross\((bc_i\d+_)?n\);/)
   })
 })
