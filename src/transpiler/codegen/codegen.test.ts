@@ -4,6 +4,7 @@ import { buildVocabulary } from '@shared/vocabulary'
 import type { Ssot, VocabItem } from '@shared/ssot-types'
 import { compile, tokenize, parse, generate } from '../index'
 import type { AssetContext } from '../codegen'
+import { INLINE_MAX_STMTS } from './inline'
 
 const vocab: VocabItem[] = buildVocabulary(rawSsot as unknown as Ssot)
 
@@ -868,7 +869,12 @@ describe('codegen: constants that do not fit (TYPEN-PLAN T5)', () => {
    */
   it('a parameter without a suffix is a byte, like everything else without a suffix', () => {
     const { code } = gen(['Function F(p)', '  q.b = p', 'EndFunction', 'F(1)'].join('\n'))
-    expect(code).toContain('void F(unsigned char p)')
+    // The parameter shows up in the C signature — or, if the INLINE_PLAN T1 pass is ever armed
+    // again, as the first declaration of the body written where the call stood. Byte either way;
+    // that is the rule being asserted, not the shape.
+    expect(code).toContain(
+      INLINE_MAX_STMTS === 0 ? 'void F(unsigned char p)' : 'unsigned char p = 1;'
+    )
   })
 
   it('warns when the value handed to a byte parameter does not fit', () => {
@@ -1106,6 +1112,11 @@ describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
     expect(code).toContain('void Heal(unsigned char menge) {')
   })
 
+  // A call is a call — which is worth saying twice, because for a while today it was not. The
+  // INLINE_PLAN T1 pass can write a small body where its call stood; measured on real hardware
+  // it turned out to be a wash on cc65 (see inline.ts) and it is switched off. These two hold
+  // the behaviour that ships; the pasted shape is pinned down in the sleeping block below, and
+  // both sets of expectations exist so that re-arming the pass flips exactly one of them.
   it('a value call in an expression maps to a C call', () => {
     const src = [
       'Function Dbl.b(n.b)',
@@ -1115,14 +1126,14 @@ describe('codegen: functions (P1.T3, Sprachdef §C.1)', () => {
     ].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('x = Dbl(5);')
+    expect(code).toContain(INLINE_MAX_STMTS === 0 ? 'x = Dbl(5);' : 'x = bc_r1;')
   })
 
   it('a statement call (no parens) maps to a C call statement', () => {
     const src = ['Function Ping()', '  BorderColor 0', 'EndFunction', 'Ping'].join('\n')
     const { code, errors } = gen(src)
     expect(errors).toEqual([])
-    expect(code).toContain('Ping();')
+    expect(code).toContain(INLINE_MAX_STMTS === 0 ? 'Ping();' : 'do {   /* Ping(')
   })
 
   it('record param → const-pointer, field access via -> , call passes address (no copy)', () => {
@@ -2610,5 +2621,360 @@ describe('codegen: UseImage / DrawImage (BRONZE B2.T3+T4) — a painted picture 
     expect(errors).toEqual([])
     expect(code.match(/const unsigned char tileset_main\[2048\]/g)?.length).toBe(1)
     expect(code.match(/BC_CHARSET\[_i\] = tileset_main\[_i\]/g)?.length).toBe(2)
+  })
+})
+
+// ===========================================================================================
+//  Pasting small functions into their call sites (INLINE_PLAN T1)
+//
+//  WHY IT EXISTS, in one measurement: on a real C64 a call costs about 115 cycles before the
+//  body does anything (cc65 pushes the argument, jumps, saves and restores its register bank),
+//  and Into The Deep's blob loop drops 18,4 % when its three called bodies are written where
+//  the calls were. Nothing about the language changes — this is a translation decision.
+//
+//  Every rule below is a way the paste could have gone WRONG. Each test is the wrong version.
+// ===========================================================================================
+// ★ ASLEEP, NOT GONE. `INLINE_MAX_STMTS` is 0 — the pass is switched off because measuring it
+// on real hardware showed a wash (30 cycles a frame for 733 bytes; see inline.ts for the table
+// and the reason). These tests stay exactly as they are and skip themselves, so re-arming the
+// pass re-arms its proof at the same moment. The rules that say "this keeps its call" are the
+// ones that still run below, since with the pass off everything keeps its call.
+describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: pasting small functions into their call sites (INLINE_PLAN T1)', () => {
+  it('a body too big stays a call — the win per site is fixed, the size is not', () => {
+    // Sized from the RULE, not from a number that happened to be over the line the day this
+    // was written: one statement more than the ceiling allows.
+    const big = [
+      'Function Fett(n.b)',
+      ...Array.from({ length: INLINE_MAX_STMTS + 1 }, (_, i) => `  hp${i}.b = n + ${i}`),
+      'EndFunction',
+      'Fett 3'
+    ].join('\n')
+    const { code, errors } = gen(big)
+    expect(errors).toEqual([])
+    expect(code).toContain('Fett(3);')
+  })
+
+  it('Return in the middle of a pasted body becomes break, not return', () => {
+    // A C `return` here would leave the CALLER. That is the whole reason for the do/while(0).
+    const src = [
+      'Function Sicher.b(n.b)',
+      '  If n = 0 Then Return 0',
+      '  Return n',
+      'EndFunction',
+      'x.b = Sicher(7)'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    const pasted = code.slice(code.indexOf('int main'))
+    expect(pasted).toContain('break;')
+    expect(pasted).not.toMatch(/\breturn [^0;]/)
+  })
+
+  it('two functions in a call cycle keep their calls (a paste would need itself)', () => {
+    const src = [
+      'Function Ping(n.b)',
+      '  Pong n',
+      'EndFunction',
+      'Function Pong(n.b)',
+      '  Ping n',
+      'EndFunction',
+      'Ping 1'
+    ].join('\n')
+    const { code } = gen(src)
+    expect(code).toContain('Ping(1);')
+  })
+
+  it('a record parameter keeps the call: it travels as a pointer, not as a value', () => {
+    const src = [
+      'Type Slot',
+      '  Field item.b',
+      'EndType',
+      'Dim taschen.Slot[2]',
+      'Function Wert.b(s.Slot)',
+      '  Return s\\item',
+      'EndFunction',
+      'x.b = Wert(taschen[0])'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('Wert(&taschen[0])')
+  })
+
+  // ---- the positions where hoisting would change WHEN the body runs ----
+
+  it('a While condition keeps its call — it is asked again every round', () => {
+    const src = [
+      'Function Weiter.b(n.b)',
+      '  Return n',
+      'EndFunction',
+      'While Weiter(1)',
+      '  VWait',
+      'Wend'
+    ].join('\n')
+    const { code } = gen(src)
+    expect(code).toContain('while (Weiter(1))')
+  })
+
+  it('a Repeat…Until condition keeps its call', () => {
+    const src = [
+      'Function Fertig.b(n.b)',
+      '  Return n',
+      'EndFunction',
+      'Repeat',
+      '  VWait',
+      'Until Fertig(1)'
+    ].join('\n')
+    expect(gen(src).code).toContain('while (!(Fertig(1)))')
+  })
+
+  it('a For bound keeps its call — it lives in the C loop head', () => {
+    const src = [
+      'Function Grenze.b(n.b)',
+      '  Return n',
+      'EndFunction',
+      'For i.b = 0 To Grenze(5)',
+      '  VWait',
+      'Next'
+    ].join('\n')
+    expect(gen(src).code).toContain('<= Grenze(5)')
+  })
+
+  it('an Else If condition keeps its call — its C is `} else if (…)`', () => {
+    const src = [
+      'Function Trifft.b(n.b)',
+      '  Return n',
+      'EndFunction',
+      'If a.b = 1',
+      '  BorderColor 1',
+      'Else If Trifft(2)',
+      '  BorderColor 2',
+      'End If'
+    ].join('\n')
+    expect(gen(src).code).toContain('} else if (Trifft(2))')
+  })
+
+  it('the right-hand side of And keeps its call — C may skip it, a pasted body could not', () => {
+    // `X And F()` never calls F when X is false. Pasted in front of the statement the body
+    // would run every time: a different cost, and with side effects a different program.
+    const src = [
+      'Function Trifft.b(n.b)',
+      '  Return n',
+      'EndFunction',
+      'If a.b = 1 And Trifft(2)',
+      '  BorderColor 2',
+      'End If'
+    ].join('\n')
+    const { code } = gen(src)
+    expect(code).toContain('Trifft(2)')
+    expect(code).not.toContain('do {   /* Trifft(')
+  })
+
+  it('…but the LEFT side of And is pasted: it is always evaluated', () => {
+    const src = [
+      'Function Trifft.b(n.b)',
+      '  Return n',
+      'EndFunction',
+      'If Trifft(2) And a.b = 1',
+      '  BorderColor 2',
+      'End If'
+    ].join('\n')
+    const { code } = gen(src)
+    expect(code).toContain('do {   /* Trifft(')
+  })
+
+  // ---- the two ways a NAME could come to mean something else ----
+
+  it('a body reading a global the caller keeps as a local: call, not paste', () => {
+    // `takt` is a global the body reads. In the caller it is a LOCAL of the same name, so
+    // inside the caller's block the pasted body would read the caller's variable.
+    const src = [
+      'Global takt.b = 7',
+      'Function Lies.b(n.b)',
+      '  Return takt + n',
+      'EndFunction',
+      'Function Ruf.b(n.b)',
+      '  takt.b = 1',
+      '  Return Lies(n)',
+      'EndFunction',
+      'x.b = Ruf(2)'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('Lies(n)')
+  })
+
+  it('an argument naming one of the pasted body own names: call, not paste', () => {
+    // Pasting would declare the parameter `idx` and then read `idx` for its own initial
+    // value — the caller's `idx` would be gone by then.
+    const src = [
+      'Function Doppel.b(idx.b)',
+      '  Return idx + idx',
+      'EndFunction',
+      'Function Ruf.b(n.b)',
+      '  idx.b = n',
+      '  Return Doppel(idx)',
+      'EndFunction',
+      'x.b = Ruf(2)'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('Doppel(idx)')
+  })
+
+  it('a local of the pasted body shadows the caller local of the same name (that is fine)', () => {
+    // The other direction is exactly what the block is for: the body's `t` is its own.
+    const src = [
+      'Function Klein.b(n.b)',
+      '  t.b = n + 1',
+      '  Return t',
+      'EndFunction',
+      't.b = 9',
+      'x.b = Klein(2)'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('do {   /* Klein(')
+    // the body declares its own t inside the block, and the outer t keeps its 9
+    expect(code).toMatch(/do \{[\s\S]*?unsigned char t = 0;/)
+    expect(code).toContain('t = 9;')
+  })
+
+  it('a too-big number handed to a pasted parameter still warns', () => {
+    const src = [
+      'Function Heil(menge.b)',
+      '  hp.b = menge',
+      'EndFunction',
+      'Heil 300'
+    ].join('\n')
+    // A warning, and exactly ONE: the check runs where the argument is read, and a pasted
+    // call reads it once — the same as a real call. (Saying it twice would be the giveaway
+    // that the paste kept the call's check as well as its own.)
+    const { errors, warnings } = gen(src)
+    expect(errors).toEqual([])
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toMatch(/300/)
+  })
+
+  it('★ a body that reaches into a record array KEEPS its call — the call buys a zero page', () => {
+    // This one was measured the hard way. cc65 gives every FUNCTION its own six-byte register
+    // bank in the zero page, and that is where S1.B5.T3 keeps the pointer to `blobs[idx]`. A
+    // pasted body has no bank of its own: it shares the caller's, `main`'s is already spent,
+    // and cc65 quietly moves the pointer onto the software stack — where every field access
+    // needs a `jsr ldptr10sp` first. On the real machine ITD's blob loop went 5.676 → 7.341
+    // cycles, 29 % WORSE, because pasting had undone the project's biggest win.
+    //
+    // So the call is not pure overhead for these functions. It is how they get a zero page.
+    const src = [
+      'Type Blob',
+      '  Field bx.w',
+      '  Field hp.b',
+      'EndType',
+      'Dim blobs.Blob[3]',
+      'Function Schub(idx.b)',
+      '  blobs[idx]\\bx = blobs[idx]\\bx + 1',
+      'EndFunction',
+      'Schub 0'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('Schub(0);')
+    expect(code).toContain('void Schub(unsigned char idx) {')
+    // …and inside the function, the pointer is exactly where T3 put it.
+    expect(code).toMatch(/register struct Blob \*bc_p_blobs_idx = &blobs\[idx\];/)
+  })
+
+  it('…a body touching a record array ONCE keeps its call too (the rule is deliberately blunt)', () => {
+    // One access would not earn a pointer today, so this one could in principle be pasted.
+    // It is not: the rule asks "does this body reach into a record array at all", which needs
+    // no second copy of planRecordPointers' threshold to stay in step with. A blunt rule that
+    // cannot drift beats a sharp one that can.
+    const src = [
+      'Type Blob',
+      '  Field hp.b',
+      'EndType',
+      'Dim blobs.Blob[3]',
+      'Function Tot.b(idx.b)',
+      '  Return blobs[idx]\\hp',
+      'EndFunction',
+      'x.b = Tot(0)'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('Tot(0)')
+  })
+})
+
+// ===========================================================================================
+//  Dropping a definition nobody calls any more (INLINE_PLAN T2)
+//
+//  T1 buys speed with bytes: the body now exists at every call site AND as a C function. On a
+//  6502 with 38 KB that is not a rounding error — measured on Into The Deep, +2.538 bytes of
+//  code. When every call to a function became a pasted body there is no `jsr` left, and the
+//  definition is dead weight the RAM bar already promised away.
+//
+//  It is deliberately the NARROWEST rule that pays that bill back, and the tests below are
+//  the three ways a wider one would have been wrong.
+// ===========================================================================================
+// ★ ASLEEP, NOT GONE. `INLINE_MAX_STMTS` is 0 — the pass is switched off because measuring it
+// on real hardware showed a wash (30 cycles a frame for 733 bytes; see inline.ts for the table
+// and the reason). These tests stay exactly as they are and skip themselves, so re-arming the
+// pass re-arms its proof at the same moment. The rules that say "this keeps its call" are the
+// ones that still run below, since with the pass off everything keeps its call.
+describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: dropping a definition nobody calls any more (INLINE_PLAN T2)', () => {
+  it('a function pasted at its only call site loses its definition, and the C says why', () => {
+    const src = ['Function Ping()', '  BorderColor 0', 'EndFunction', 'Ping'].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).not.toContain('void Ping(void) {')
+    expect(code).toContain('Nicht mehr aufgerufen')
+    expect(code).toContain('Ping')
+  })
+
+  it('a function nobody ever calls KEEPS its definition — that is not this step’s business', () => {
+    // Never called is not the same as no longer called. Dropping it would be a separate
+    // decision, and a user who writes a function before its first call should not watch it
+    // vanish from the build.
+    const src = ['Function Ungenutzt(n.b)', '  hp.b = n', 'EndFunction'].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('void Ungenutzt(unsigned char n) {')
+    expect(code).not.toContain('Nicht mehr aufgerufen')
+  })
+
+  it('one pasted site and one real call: the definition stays', () => {
+    // `Mal2` is pasted where it can be and called where it cannot (the right-hand side of
+    // And, which C may skip). One surviving call is enough to need the function.
+    const src = [
+      'Function Mal2.b(n.b)',
+      '  Return n + n',
+      'EndFunction',
+      'x.b = Mal2(3)',
+      'If x = 6 And Mal2(2)',
+      '  BorderColor 1',
+      'End If'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('unsigned char Mal2(unsigned char n) {')
+    expect(code).toContain('Mal2(2)')
+    expect(code).not.toContain('Nicht mehr aufgerufen')
+  })
+
+  it('a function only reached from inside another pasted body still counts as called', () => {
+    // `Gross` is too big to paste, so the call inside the pasted `Klein` is a real one — and
+    // it has to keep its definition even though nothing in main mentions it.
+    const src = [
+      'Function Gross(n.b)',
+      ...Array.from({ length: INLINE_MAX_STMTS + 1 }, (_, i) => `  hp${i}.b = n + ${i}`),
+      'EndFunction',
+      'Function Klein(n.b)',
+      '  Gross n',
+      'EndFunction',
+      'Klein 2'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    expect(code).toContain('void Gross(unsigned char n) {')
+    expect(code).toContain('Gross(n);')
   })
 })

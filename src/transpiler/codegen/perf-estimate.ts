@@ -2,6 +2,7 @@ import type { Program, Statement, Expr, FunctionDecl, ForStmt, WhileStmt } from 
 import type { PerfInfo, PerfWorld, Region } from '@shared/ipc'
 import { DEFAULT_REGION } from '@shared/ipc'
 import type { ColorModel } from '@shared/level-cost'
+import { planInlining } from './inline'
 
 // Per-frame CPU-cost ESTIMATE, extrapolated from the .crumb AST — a guess, never a
 // runtime measurement (the BASSM approach the user chose). The point is the RELATIVE
@@ -194,6 +195,12 @@ export function estimateFramePerf(
     else if (s.kind === 'FunctionDecl') funcs.set(s.name, s)
   }
 
+  // ★ WHICH CALLS THE GENERATED C NO LONGER MAKES (INLINE_PLAN T1). The codegen writes a
+  // small function's body where the call stood, so charging COST.call for it would price a
+  // `jsr` that is not in the program. Same pure decision, asked from the same module — the
+  // bar and the C cannot drift apart, which is the one thing a health bar may never do.
+  const pasted = planInlining(program).fit
+
   const funcCostCache = new Map<string, number>()
   const computing = new Set<string>()
   function costOfFunc(name: string): number {
@@ -245,6 +252,14 @@ export function estimateFramePerf(
     return funcs.has(name) ? costOfFunc(name) : DEFAULT_CALL
   }
 
+  /** What reaching this function costs on top of its body: a call, or nothing when the
+   *  codegen pastes the body in. The estimate stays on the optimistic side of the site rules
+   *  (a paste can still be refused at a particular call site — see the codegen), which is the
+   *  right way round for a bar that must never cry wolf. */
+  function callCost(callee: string): number {
+    return pasted.has(callee) ? 0 : COST.call
+  }
+
   function exprCost(e: Expr): number {
     switch (e.kind) {
       case 'NumberLit':
@@ -264,7 +279,7 @@ export function estimateFramePerf(
       case 'FieldExpr':
         return COST.field + exprCost(e.base)
       case 'CallExpr':
-        return COST.call + calleeCost(e.callee) + e.args.reduce((a, x) => a + exprCost(x), 0)
+        return callCost(e.callee) + calleeCost(e.callee) + e.args.reduce((a, x) => a + exprCost(x), 0)
     }
   }
 
@@ -294,7 +309,7 @@ export function estimateFramePerf(
       case 'CommandStmt':
         return calleeCost(s.name) + s.args.reduce((a, x) => a + exprCost(x), 0)
       case 'CallStmt':
-        return COST.call + calleeCost(s.callee) + s.args.reduce((a, x) => a + exprCost(x), 0)
+        return callCost(s.callee) + calleeCost(s.callee) + s.args.reduce((a, x) => a + exprCost(x), 0)
       case 'AssignStmt':
         return COST.assign + exprCost(s.target) + exprCost(s.value)
       case 'GlobalStmt':

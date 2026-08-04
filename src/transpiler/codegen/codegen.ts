@@ -24,6 +24,8 @@ import type {
   CallStmt
 } from '../parser/ast'
 import { pos } from '../parser/ast'
+import { recordSuffixName } from './suffix'
+import { planInlining, ownNames, identifiersIn, INLINE_MAX_DEPTH, type InlinePlan } from './inline'
 import {
   resolveCharset,
   resolveTilemap,
@@ -240,18 +242,9 @@ function suffixType(suffix: string | undefined): VarType | undefined {
 }
 
 /** The scalar (non-record) suffixes — used to tell a record suffix (.Slot) apart. */
-const SCALAR_SUFFIXES = new Set(['$', '.b', '.s', '.w', '.i'])
-
-/**
- * The record type name in a suffix like `.Slot`, or undefined for a scalar suffix
- * (`.b`/`.w`/`.i`/`$`) or none. The lexer only attaches `.Name` when Name is a known
- * record, so any `.x` that isn't a scalar suffix is a record type.
- */
-function recordSuffixName(suffix: string | undefined): string | undefined {
-  if (!suffix || SCALAR_SUFFIXES.has(suffix)) return undefined
-  if (suffix.startsWith('.')) return suffix.slice(1)
-  return undefined
-}
+// SCALAR_SUFFIXES / recordSuffixName moved to ./suffix so the inlining decision can ask the
+// same question without importing the whole codegen (a record param or return travels as a
+// pointer, which is precisely why such a function cannot be pasted into its call site).
 
 /** BreadCraft color constant → cc65 COLOR_* macro. */
 const COLOR_MACRO: Record<string, string> = {
@@ -456,6 +449,32 @@ class Generator {
   /** Record-array elements this FUNCTION holds a pointer to: `array#index` → C pointer
    *  name (S1.B5.T3). Filled per function by planRecordPointers, empty at top level. */
   private recordPtrs = new Map<string, string>()
+
+  // ---- pasting small functions into their call sites (INLINE_PLAN T1) ----
+  /** Which functions are fit to paste, decided once from the AST (see ./inline). The perf
+   *  model asks the same question, so the bar never prices a call the codegen removed. */
+  private inlinePlan: InlinePlan = { fit: new Map(), free: new Map() }
+  /** Running number, so every pasted site gets names nobody else has. */
+  private inlineSeq = 0
+  /** How many pasted bodies we are currently inside (INLINE_MAX_DEPTH is the ceiling). */
+  private inlineDepth = 0
+  /** > 0 while generating an expression whose position cannot take hoisted statements
+   *  (a loop condition, a `For` bound, an `Else If`, the short-circuited side of And/Or).
+   *  A value call there stays a real call — see UNSAFE_FOR_VALUE_INLINE. */
+  private inlineBan = 0
+  /** Blocks produced by value calls hoisted OUT of the statement being generated. They are
+   *  emitted before it, which is only correct in the positions the ban above protects. */
+  private pendingInline: string[] = []
+  /** Declarations the hoisted blocks need (their result variables), emitted at the start of
+   *  a fresh C block wrapped around the statement — C89 wants declarations first. */
+  private inlineTemps: string[] = []
+  /** > 0 while a pasted body is being generated: its diagnostics were already reported at the
+   *  definition, and repeating them per call site would invent problems. */
+  private diagSilent = 0
+  /** One entry per pasted body currently open: where its `Return` puts a value, if any.
+   *  `currentFunc` deliberately stays the ENCLOSING function so the recursion diagnostics
+   *  keep meaning what they meant. */
+  private inlineCtx: { result?: string }[] = []
   /** The `UseMap` STATEMENT has been walked — the world is entered from here ON. Separate
    *  from `levelWorld`, which the pre-scan sets before the walk (S1.B5): the two order
    *  diagnostics ("PlayField comes too late", "a second world") are about the statement
@@ -562,6 +581,18 @@ class Generator {
   private readonly functions = new Map<string, FuncInfo>()
   /** Emitted C for each function definition (before main). */
   private readonly funcDefs: string[] = []
+  /** Where each function's definition sits inside `funcDefs`, by name (INLINE_PLAN T2). A
+   *  definition whose every call site ended up PASTED is dead weight, and dead weight in a
+   *  6502's 38 KB is not a rounding error — so it is dropped when the walk is over and it is
+   *  known that nobody calls it. */
+  private readonly funcDefSpan = new Map<string, { from: number; to: number }>()
+  /** Functions something still CALLS in the emitted C (a real `jsr`, not a pasted body). */
+  private readonly stillCalled = new Set<string>()
+  /** Functions whose body was written out at least one call site. Only THESE may lose their
+   *  definition (T2): a function nobody ever calls keeps its C exactly as before, because
+   *  dropping it would be a different decision than the one being made here — and the user
+   *  who writes a function before its first call should not watch it disappear. */
+  private readonly pastedSomewhere = new Set<string>()
   /** The local scope while emitting a function body (params + locals); undefined in main. */
   private localScope: Map<string, LocalSym> | undefined
   /** Name of the function currently being emitted — to forbid direct recursion. */
@@ -606,6 +637,17 @@ class Generator {
   }
 
   private err(message: string, at: Pos, severity: Severity = 'error'): void {
+    // ★ A PASTED BODY MUST NOT SAY IT AGAIN (INLINE_PLAN T1). The body of a function is
+    // generated once per call site now, so every diagnostic inside it would be repeated once
+    // per site — the same warning about the same line of the user's file, two or three times,
+    // which reads like two or three problems. The definition is still generated (genFunction),
+    // and that is where the body's own diagnostics belong; it happens even when T2 later drops
+    // the definition from the output, because the walk came first.
+    //
+    // The CALL's own checks are deliberately outside this silence: `checkArgFits` runs before
+    // the paste begins, so "300 does not fit in p" is still reported per call site, where it
+    // is true.
+    if (this.diagSilent > 0) return
     this.errors.push({ message, severity, ...pos(at) })
   }
 
@@ -838,6 +880,12 @@ class Generator {
       if (s.kind === 'FunctionDecl') this.collectFunction(s)
       else this.collect(s)
     }
+
+    // Which functions are small and safe enough to paste into their call sites (INLINE_PLAN
+    // T1)? Decided here, from the whole program, because it needs every function's body and
+    // the call graph — and because the perf model asks the same pure function, so the bar
+    // cannot price calls that the generated C no longer makes.
+    this.inlinePlan = planInlining(program)
 
     // Does this program enter a scrolling world? Answered BEFORE any function body is
     // emitted (S1.B5) — a function written above the `UseMap` still runs after it, and
@@ -1155,7 +1203,41 @@ class Generator {
 
     // User function definitions (P1.T3) live between the globals and main, so they
     // can see file-scope globals/arrays/structs and be called from main.
-    const funcs = this.funcDefs.length > 0 ? [...this.funcDefs, ''] : []
+    //
+    // ★ INLINE_PLAN T2 — a definition nobody calls any more does not travel.
+    //
+    // Once small bodies are written where their calls were (T1), a function can end up with
+    // no `jsr` to it at all. cc65 has no way to know that: it compiles what it is given, and
+    // the dead body would sit in the .prg taking bytes the RAM bar promised the user. ITD's
+    // blob functions are called from exactly one place each, so this is the difference
+    // between "faster and 2,5 KB heavier" and "faster for nothing".
+    //
+    // The decision can only be made HERE, after the whole program is walked: whether a call
+    // remains is known only once every call site has been generated. `main` is never dropped,
+    // and a function still called from anywhere — including from inside another pasted body —
+    // keeps its definition.
+    const dropped: string[] = []
+    const keep = new Set<number>()
+    for (const [name, span] of this.funcDefSpan) {
+      if (this.stillCalled.has(name)) continue
+      // Conservative on purpose: only a function T1 declared FIT may vanish. Those have no
+      // record return and no record parameter, so the two call sites instrumented above are
+      // the only ways to reach them — anything else keeps its definition, always.
+      if (!this.inlinePlan.fit.has(name)) continue
+      // …and only one whose body actually went somewhere. A function nobody calls at all is
+      // not this step's business: it was emitted before and it is emitted now.
+      if (!this.pastedSomewhere.has(name)) continue
+      dropped.push(name)
+      for (let i = span.from; i < span.to; i++) keep.add(i)
+    }
+    const live = this.funcDefs.filter((_, i) => !keep.has(i))
+    const funcs = live.length > 0 ? [...live, ''] : []
+    if (dropped.length > 0) {
+      funcs.unshift(
+        `/* Nicht mehr aufgerufen, darum nicht mitgenommen (Rumpf steht an der Aufrufstelle): ${dropped.join(', ')} */`,
+        ''
+      )
+    }
 
     // The eight single-bit masks (TYPEN-PLAN T4). Built HERE, last, because the world
     // runtime above only asks for it while it is being assembled — after `header` was
@@ -2289,8 +2371,11 @@ class Generator {
     for (const st of s.body) this.genStatement(st)
     this.recordPtrs.clear()
 
-    // Assemble the function and append to funcDefs.
+    // Assemble the function and append to funcDefs, remembering where it landed so it can
+    // be dropped again if every call to it turned out to be a pasted body (INLINE_PLAN T2).
+    const from = this.funcDefs.length
     this.funcDefs.push(`${retC} ${info.cName}(${params}) {`, ...buf, '}', '')
+    this.funcDefSpan.set(s.name, { from, to: this.funcDefs.length })
 
     this.sink = savedSink
     this.indent = savedIndent
@@ -2301,6 +2386,18 @@ class Generator {
   /** `Return [expr]` — in a record-returning function it fills the out-pointer; in a
    *  value function it returns the value; otherwise a bare `return;`. */
   private genReturn(s: ReturnStmt): void {
+    // Inside a PASTED body (INLINE_PLAN T1) `Return` is not a C `return` — that would leave
+    // the caller. It leaves the `do { … } while (0)` the body sits in, which is exactly what
+    // the user's `Return` meant: stop doing THIS.
+    const inl = this.inlineCtx[this.inlineCtx.length - 1]
+    if (inl) {
+      // `Return 1` from a function that hands nothing back is still an error — but it is
+      // reported where the function is DEFINED (genFunction emits every definition), so
+      // saying it again at each pasted site would only multiply the same message.
+      if (s.value && inl.result) this.emit(`${inl.result} = ${this.expr(s.value)};`)
+      this.emit('break;')
+      return
+    }
     const info = this.currentFunc ? this.functions.get(this.currentFunc) : undefined
     if (info?.returnRecord && s.value) {
       this.emit(`*bc_out = ${this.expr(s.value)};`)
@@ -2333,7 +2430,8 @@ class Generator {
     else this.emit('return;')
   }
 
-  /** A statement-function call `Heal 5` → `heal(5);` (no return value used). */
+  /** A statement-function call `Heal 5` → `heal(5);`, or the body itself when it is small
+   *  enough to paste (INLINE_PLAN T1). */
   private genCallStatement(s: CallStmt): void {
     const info = this.functions.get(s.callee)
     if (!info) {
@@ -2343,8 +2441,127 @@ class Generator {
     }
     if (s.callee === this.currentFunc) {
       this.err(this.M.recursion(s.callee), s)
+      this.stillCalled.add(s.callee)
+      this.emit(`${info.cName}(${this.callArgs(info, s.args, s.callee)});`)
+      return
     }
+    if (this.canPasteHere(s.callee, s.args)) {
+      this.pasteBody(s.callee, s.args, undefined, (line) => this.emit(line))
+      return
+    }
+    this.stillCalled.add(s.callee)
     this.emit(`${info.cName}(${this.callArgs(info, s.args, s.callee)});`)
+  }
+
+  /**
+   * MAY THIS CALL BECOME ITS BODY, HERE?
+   *
+   * Being fit is a property of the function (./inline decides it once). Being safe is a
+   * property of the PLACE, and there are exactly two ways a place can spoil it — both about
+   * a name meaning something different once the body sits inside the caller:
+   *
+   *   1. the body reads a GLOBAL whose name the caller uses for a LOCAL. Inside the caller's
+   *      block that name would find the caller's local. (The other direction is fine and is
+   *      the point of using a block: the body's own locals shadow the caller's.)
+   *   2. an ARGUMENT mentions a name that the body uses for a parameter or a local. The
+   *      pasted parameter is declared before the argument's value is read, so `F(idx)` into
+   *      `Function F(idx.b)` would read the parameter it is in the middle of creating.
+   *
+   * Either way the answer is "leave it a call" — a slower line, never a wrong one.
+   */
+  private canPasteHere(callee: string, args: Expr[]): boolean {
+    const fn = this.inlinePlan.fit.get(callee)
+    if (!fn) return false
+    if (this.inlineDepth >= INLINE_MAX_DEPTH) return false
+    if (fn.params.length !== args.length) return false // an arity error is reported elsewhere
+
+    // (1) a free name of the body that the caller keeps as a local
+    const free = this.inlinePlan.free.get(callee)
+    if (free && this.localScope) {
+      for (const n of free) if (this.localScope.has(n)) return false
+    }
+    // (2) an argument mentioning one of the body's own names
+    const bodyNames = ownNames(fn)
+    for (const a of args) {
+      for (const n of identifiersIn(a)) if (bodyNames.has(n)) return false
+    }
+    return true
+  }
+
+  /**
+   * Write the function's body where the call was.
+   *
+   * The shape is `do { … } while (0)` for one reason: a `Return` in the middle of a
+   * BreadCraft function is an early exit, and inside a pasted body a C `return` would leave
+   * the CALLER. `break` leaves exactly the pasted body, which is what `Return` meant.
+   *
+   * Declarations come first (C89): the parameters, initialised from the arguments —
+   * evaluated in the CALLER's scope, before any of the body's names exist — and then the
+   * body's own locals.
+   */
+  private pasteBody(
+    callee: string,
+    args: Expr[],
+    resultVar: string | undefined,
+    emitLine: (line: string) => void
+  ): void {
+    const fn = this.inlinePlan.fit.get(callee)!
+    const info = this.functions.get(callee)!
+    this.pastedSomewhere.add(callee)
+
+    // Arguments FIRST, in the caller's scope. `callArgs` also runs the range check, so a
+    // pasted call warns about a too-big number exactly like a real one.
+    const argC = args.map((a, i) => {
+      const p = info.params[i]
+      this.checkArgFits(callee, p, a)
+      return this.expr(a)
+    })
+
+    const scope = new Map<string, LocalSym>()
+    for (const p of info.params) {
+      scope.set(p.name, { cName: cName(p.name), type: p.type ?? 'byte' })
+    }
+    const savedScope = this.localScope
+    const savedPtrs = this.recordPtrs
+    this.localScope = scope
+    // The pasted body finds its own record elements; the caller's plan is not its plan.
+    this.recordPtrs = new Map()
+    for (const st of fn.body) this.collect(st)
+
+    const decls: string[] = []
+    info.params.forEach((p, i) => {
+      const l = scope.get(p.name)!
+      decls.push(`${C_TYPE[l.type ?? 'byte']} ${l.cName} = ${argC[i] ?? '0'};`)
+    })
+    for (const [name, l] of scope) {
+      if (info.params.some((p) => p.name === name)) continue
+      if (l.recordType) decls.push(`struct ${cName(l.recordType)} ${l.cName};`)
+      else if (l.type === 'string') decls.push(`char ${l.cName}[${l.strSize ?? DEFAULT_STR_CAP}];`)
+      else decls.push(`${this.zeroPaged(l.type)}${C_TYPE[l.type ?? 'byte']} ${l.cName} = 0;`)
+    }
+
+    const savedSink = this.sink
+    const body: string[] = []
+    this.sink = body
+    const savedIndent = this.indent
+    this.indent = 1
+    for (const d of decls) this.emit(d)
+    for (const d of this.planRecordPointers(fn.body)) this.emit(d)
+    this.inlineCtx.push({ result: resultVar })
+    this.inlineDepth++
+    this.diagSilent++
+    for (const st of fn.body) this.genStatement(st)
+    this.diagSilent--
+    this.inlineDepth--
+    this.inlineCtx.pop()
+    this.indent = savedIndent
+    this.sink = savedSink
+    this.localScope = savedScope
+    this.recordPtrs = savedPtrs
+
+    emitLine(`do {   /* ${callee}(…) — der Rumpf steht hier statt eines Aufrufs */`)
+    for (const l of body) emitLine(l)
+    emitLine('} while (0);')
   }
 
   /** Render a call's argument list, passing record args by address (const-pointer
@@ -2597,7 +2814,64 @@ class Generator {
     this.indent--
   }
 
+  /**
+   * A statement, and in front of it whatever a pasted VALUE function had to become.
+   *
+   * A value call inside an expression cannot stay an expression once its body is pasted in —
+   * the body is statements. They have to run BEFORE the statement that wanted the value, and
+   * the value arrives in a variable. This wrapper is the whole mechanism:
+   *
+   *   1. the statement is generated into a buffer of its own;
+   *   2. `pendingInline` (filled while its expressions were generated) goes in FRONT of it;
+   *   3. if any of that needed a result variable, the lot is wrapped in `{ … }` with the
+   *      declarations at the top, because cc65 is a C89 compiler and C89 declares first.
+   *
+   * Compound statements need no special case: their bodies go through this same door, so a
+   * nested paste has already been placed by the time the outer one is written out.
+   *
+   * WHY THE ORDER IS RIGHT. Every generator builds its expression strings first and emits its
+   * line afterwards, so `pendingInline` at the end of this call belongs to THIS statement's
+   * own expressions. The positions where "before the statement" would be the wrong moment —
+   * a loop condition asked again each round, a `For` bound, an `Else If`, the side of And/Or
+   * that C may skip — are banned from pasting at all (`inlineBan`).
+   */
   private genStatement(s: Statement): void {
+    const savedPending = this.pendingInline
+    const savedTemps = this.inlineTemps
+    this.pendingInline = []
+    this.inlineTemps = []
+
+    const savedSink = this.sink
+    const buf: string[] = []
+    this.sink = buf
+    this.genStatementInner(s)
+    this.sink = savedSink
+
+    const pending = this.pendingInline
+    const temps = this.inlineTemps
+    this.pendingInline = savedPending
+    this.inlineTemps = savedTemps
+
+    if (pending.length === 0) {
+      for (const l of buf) this.sink.push(l)
+      return
+    }
+    if (temps.length === 0) {
+      // Statement calls need no result variable, so no block is needed either.
+      for (const l of pending) this.sink.push(l)
+      for (const l of buf) this.sink.push(l)
+      return
+    }
+    this.emit('{')
+    this.indent++
+    for (const t of temps) this.emit(t)
+    for (const l of pending) this.sink.push('  ' + l)
+    for (const l of buf) this.sink.push('  ' + l)
+    this.indent--
+    this.emit('}')
+  }
+
+  private genStatementInner(s: Statement): void {
     switch (s.kind) {
       case 'CommandStmt':
         this.genCommand(s)
@@ -3439,7 +3713,11 @@ class Generator {
       return
     }
     this.usesAnimTiles = true
-    this.animTileCount++
+    // Counted once per call site the USER wrote, not once per emitted copy: since INLINE_PLAN
+    // T1 a small function's body is written out at every call site, and counting those would
+    // let a program grow into this warning by being compiled differently rather than by
+    // registering more tiles. The definition's own emission is the one that counts.
+    if (this.diagSilent === 0) this.animTileCount++
     if (this.animTileCount === ANIM_TILE_MAX + 1) {
       // The call that tips over the table: warn once. Earlier calls stay silent, later
       // ones don't re-warn — one clear message, not a flood.
@@ -3962,7 +4240,12 @@ class Generator {
     this.emit(`if (${this.expr(s.cond)}) {`)
     this.genBlock(s.then)
     for (const e of s.elifs) {
-      this.emit(`} else if (${this.expr(e.cond)}) {`)
+      // An `Else If` condition may NOT have statements hoisted in front of it: the C reads
+      // `} else if (…)`, so anything placed before that line would sit inside the previous
+      // branch — and would run whether or not this branch is ever reached. A value call
+      // there stays a call (INLINE_PLAN T1, UNSAFE_FOR_VALUE_INLINE).
+      const cond = this.noInline(() => this.expr(e.cond))
+      this.emit(`} else if (${cond}) {`)
       this.genBlock(e.body)
     }
     if (s.else) {
@@ -3989,7 +4272,9 @@ class Generator {
       this.genBlock(s.body)
       this.emit('}')
     } else {
-      this.emit(`while (${this.expr(s.cond)}) {`)
+      // A loop condition is asked again every round, so its value call cannot become
+      // statements placed once in front of the loop (INLINE_PLAN T1).
+      this.emit(`while (${this.noInline(() => this.expr(s.cond))}) {`)
       this.genBlock(s.body)
       this.emit('}')
     }
@@ -3998,7 +4283,19 @@ class Generator {
   private genRepeat(s: RepeatStmt): void {
     this.emit('do {')
     this.genBlock(s.body)
-    this.emit(`} while (!(${this.expr(s.until)}));`)
+    // Same as While: the question is asked at the end of every round.
+    this.emit(`} while (!(${this.noInline(() => this.expr(s.until))}));`)
+  }
+
+  /** Generate an expression in a position that cannot take hoisted statements: a value call
+   *  inside it stays a real call. Nests, so an inner ban cannot be lifted by an outer one. */
+  private noInline<T>(f: () => T): T {
+    this.inlineBan++
+    try {
+      return f()
+    } finally {
+      this.inlineBan--
+    }
   }
 
   /** Evaluate a compile-time-constant integer (number literal, possibly negated or
@@ -4060,7 +4357,12 @@ class Generator {
         return
       }
       const mag = Math.abs(stepVal)
-      this.emit(`for (${v} = ${this.expr(s.from)}; ${v} >= ${this.expr(s.to)}; ${v} -= ${mag}) {`)
+      // `To` and `Step` live in the C loop head and are re-read every round, so no value
+      // call in them may become statements hoisted in front of the loop (INLINE_PLAN T1).
+      this.emit(
+        `for (${v} = ${this.expr(s.from)}; ` +
+          `${v} >= ${this.noInline(() => this.expr(s.to))}; ${v} -= ${mag}) {`
+      )
       this.genBlock(s.body)
       this.emit('}')
       return
@@ -4083,8 +4385,11 @@ class Generator {
       return
     }
 
-    const step = s.step ? this.expr(s.step) : '1'
-    this.emit(`for (${v} = ${this.expr(s.from)}; ${v} <= ${this.expr(s.to)}; ${v} += ${step}) {`)
+    const step = s.step ? this.noInline(() => this.expr(s.step!)) : '1'
+    this.emit(
+      `for (${v} = ${this.expr(s.from)}; ` +
+        `${v} <= ${this.noInline(() => this.expr(s.to))}; ${v} += ${step}) {`
+    )
     this.genBlock(s.body)
     this.emit('}')
   }
@@ -4145,7 +4450,16 @@ class Generator {
         // Always parenthesize — see Unary above. e.g. CRUMB `a + b Shl 2` parses as
         // `a + (b Shl 2)` (Shl binds like *); without parens C reads `(a + b) << 2`.
         const op = OP_C[e.op.toLowerCase()] ?? e.op
-        return this.narrowByteMath(e, `(${this.expr(e.left)} ${op} ${this.expr(e.right)})`)
+        // ★ And/Or SHORT-CIRCUIT in C: `X And F()` never calls F when X is false. Pasting F's
+        // body in FRONT of the statement would run it every time — different cost, and with
+        // side effects a different program. So the right-hand side of And/Or keeps its call
+        // (INLINE_PLAN T1). The left side is always evaluated and may be pasted.
+        const shortCircuit = op === '&&' || op === '||'
+        // Left before right, deliberately: a pasted body is hoisted in the order it was
+        // generated, and the user reads their line left to right.
+        const left = this.expr(e.left)
+        const right = shortCircuit ? this.noInline(() => this.expr(e.right)) : this.expr(e.right)
+        return this.narrowByteMath(e, `(${left} ${op} ${right})`)
       }
       case 'IndexExpr':
         return this.indexExpr(e)
@@ -4374,7 +4688,20 @@ class Generator {
           }
           if (e.callee === this.currentFunc) {
             this.err(this.M.recursion(e.callee), e)
+            this.stillCalled.add(e.callee)
+            return `${info.cName}(${this.callArgs(info, e.args, e.callee)})`
           }
+          // Small enough to paste, and in a position where statements may go in front of
+          // this one (INLINE_PLAN T1)? Then the body runs here and hands its value over in a
+          // variable. `inlineBan` guards the positions where "in front" is the wrong moment.
+          if (this.inlineBan === 0 && info.returnType && this.canPasteHere(e.callee, e.args)) {
+            const result = `bc_r${++this.inlineSeq}`
+            this.inlineTemps.push(`${C_TYPE[info.returnType]} ${result} = 0;`)
+            const pad = '  '.repeat(this.indent)
+            this.pasteBody(e.callee, e.args, result, (line) => this.pendingInline.push(pad + line))
+            return result
+          }
+          this.stillCalled.add(e.callee)
           return `${info.cName}(${this.callArgs(info, e.args, e.callee)})`
         }
         this.err(this.M.funcNoMapping(e.callee), e)
