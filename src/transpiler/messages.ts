@@ -105,6 +105,8 @@ export interface CodegenMessages {
   drawMapNoProject(id: string): string
   drawMapNoTileset(id: string): string
   drawMapTooWide(id: string, width: number, screenW: number): string
+  /** Two different assets flatten to the same C name (see bakeOnce). */
+  assetNameClash(id: string, other: string, cName: string): string
   playFieldArgs(): string
   playFieldRange(rows: number): string
   playFieldAfterMap(): string
@@ -396,6 +398,10 @@ const DE_CODEGEN: CodegenMessages = {
   drawMapNoProject: (id) =>
     `DrawMap "${id}": kein Projekt-Kontext — Karten können nur in einem Projekt aufgelöst werden`,
   drawMapNoTileset: (id) => `DrawMap "${id}": kein Tileset aktiv — vorher UseTileset "…" aufrufen`,
+  assetNameClash: (id, other, cName) =>
+    `Die Namen '${id}' und '${other}' sind für BreadCraft dieselben: intern werden alle ` +
+    `Sonderzeichen zu '_', und beide werden zu '${cName}'. Benenne eines der beiden Assets um ` +
+    `(z. B. eine Ziffer anhängen) — sonst könnte das falsche gezeichnet werden.`,
   drawMapTooWide: (id, width, screenW) =>
     `DrawMap "${id}": diese Karte ist ${width} Spalten breit, auf den Bildschirm passen ${screenW}. ` +
     `DrawMap legt ein Bild hin, das auf einen Schirm passt — eine Karte, die breiter ist als der ` +
@@ -575,6 +581,10 @@ const EN_CODEGEN: CodegenMessages = {
   drawMapNoProject: (id) =>
     `DrawMap "${id}": no project context — maps can only be resolved inside a project`,
   drawMapNoTileset: (id) => `DrawMap "${id}": no tileset active — call UseTileset "…" first`,
+  assetNameClash: (id, other, cName) =>
+    `the names '${id}' and '${other}' are the same to BreadCraft: internally every special ` +
+    `character becomes '_', and both end up as '${cName}'. Rename one of the two assets ` +
+    `(add a digit, say) — otherwise the wrong one could be drawn.`,
   drawMapTooWide: (id, width, screenW) =>
     `DrawMap "${id}": this map is ${width} columns wide, the screen fits ${screenW}. ` +
     `DrawMap lays down a picture that fits one screen — a map wider than the screen is a ` +

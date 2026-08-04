@@ -470,6 +470,12 @@ class Generator {
   /** Record-array elements this FUNCTION holds a pointer to: `array#index` → C pointer
    *  name (S1.B5.T3). Filled per function by planRecordPointers, empty at top level. */
   private recordPtrs = new Map<string, string>()
+  /** C name of a baked data block → the asset id it holds, so the same asset is baked at
+   *  most once and two different assets can never claim one name (see bakeOnce). */
+  private bakedNames = new Map<string, string>()
+  /** Asset pairs whose name clash was already reported (a map clashes twice — tiles and
+   *  colours — for one and the same reason). */
+  private reportedClashes = new Set<string>()
 
   // ---- pasting small functions into their call sites (INLINE_PLAN T1) ----
   /** Which functions are fit to paste, decided once from the AST (see ./inline). The perf
@@ -3285,6 +3291,43 @@ class Generator {
     return `(${colorExpr})`
   }
 
+  /**
+   * BAKE A DATA BLOCK UNDER A C NAME — AT MOST ONCE.
+   *
+   * An asset's bytes belong to the ASSET, not to the statement that happens to use them.
+   * `genDrawMap` baked them per CALL, so drawing the same map twice — the most ordinary
+   * thing in the world, "build the level, and build it again when the player dies" —
+   * emitted the array twice and cc65 refused the program:
+   *
+   *     Error: Global variable 'map_level01' has already been defined
+   *
+   * An English error about a line of C the user never wrote, for a perfectly reasonable
+   * program. Baking once and copying twice is also the cheaper answer: the second copy
+   * costs nothing but the loop that was there anyway.
+   *
+   * ★ AND IT REFUSES TO CONFUSE TWO ASSETS. C names come from `safeAssetName`, which
+   * flattens anything that is not a letter or digit to `_` — so `level-1` and `level 1`
+   * both become `level_1`. Silently skipping the second bake would then draw the FIRST
+   * map under the second map's name: a wrong picture instead of a failed build, which is
+   * far worse. Same name from a different asset is an honest error.
+   */
+  private bakeOnce(cName: string, assetId: string, lines: string[], at: Pos): boolean {
+    const already = this.bakedNames.get(cName)
+    if (already !== undefined) {
+      // Once per PAIR of assets, not once per block: a map brings a tile block and a colour
+      // block, and both collide for the same reason. Two messages would read as two problems.
+      const pair = `${assetId}>${already}`
+      if (already !== assetId && !this.reportedClashes.has(pair)) {
+        this.reportedClashes.add(pair)
+        this.err(this.M.assetNameClash(assetId, already, cName), at)
+      }
+      return false
+    }
+    this.bakedNames.set(cName, assetId)
+    this.bakedData.push(...lines)
+    return true
+  }
+
   /** Report a missing argument for a string function (S8.T3) and yield a safe 0/"". */
   private stringFnArgErr(e: CallExpr): string {
     this.err(this.M.stringFnArg(e.callee), e)
@@ -3337,15 +3380,20 @@ class Generator {
     // Bake ONCE per id, but emit the copy + $D018 on EVERY call: a program that switches
     // modes (a bitmap title screen, then back to the tile game) calls UseTileset again to
     // point the VIC back at text — re-baking would emit a second identical `const` and cc65
-    // would reject the redefinition. Same shape as genUseImage.
+    // would reject the redefinition.
+    //
+    // ★ The guard used to be `activeTileset !== id`, which only catches the SAME charset
+    //   twice in a row. `UseTileset "a"` → `"b"` → `"a"` walked straight past it and cc65
+    //   refused the program ("Global variable 'tileset_a' has already been defined") — the
+    //   same defect DrawMap had, found while fixing that one. `bakeOnce` remembers every
+    //   name, so the order no longer matters.
     const dataName = `tileset_${safeAssetName(id)}`
-    if (this.activeTileset !== id) {
-      this.bakedData.push(
-        `static const unsigned char ${dataName}[${bytes.length}] = {`,
-        byteRows(bytes),
-        '};'
-      )
-    }
+    this.bakeOnce(
+      dataName,
+      id,
+      [`static const unsigned char ${dataName}[${bytes.length}] = {`, byteRows(bytes), '};'],
+      s
+    )
     this.activeTileset = id
 
     this.emit(`/* UseTileset "${id}" */`)
@@ -3519,18 +3567,26 @@ class Generator {
 
     const cName = `map_${safeAssetName(id)}`
     const colName = `mapcol_${safeAssetName(id)}`
-    this.bakedData.push(
-      `static const unsigned char ${cName}[${tiles.length}] = {`,
-      byteRows(tiles),
-      '};'
+    // Once per MAP, not once per DrawMap: the same level may be drawn from several places
+    // (start it, and build it again after a death) and each of those is just a copy.
+    this.bakeOnce(
+      cName,
+      id,
+      [`static const unsigned char ${cName}[${tiles.length}] = {`, byteRows(tiles), '};'],
+      s
     )
     // Bake the per-cell Color-RAM colours with bit 3 set (multicolor in MC-text) right
     // in the table, so the copy loop is a plain memcpy — the colour the editor painted
     // per 8×8 cell reaches the VIC (no longer a fixed grey).
-    this.bakedData.push(
-      `static const unsigned char ${colName}[${colors.length}] = {`,
-      byteRows(colors.map((c) => (c & 0x0f) | 8)),
-      '};'
+    this.bakeOnce(
+      colName,
+      id,
+      [
+        `static const unsigned char ${colName}[${colors.length}] = {`,
+        byteRows(colors.map((c) => (c & 0x0f) | 8)),
+        '};'
+      ],
+      s
     )
 
     this.emit(`/* DrawMap "${id}" */`)

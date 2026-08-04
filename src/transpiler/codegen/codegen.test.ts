@@ -3228,3 +3228,133 @@ describe('codegen: recursion round a ring is caught before the machine finds it'
     expect(errors).toEqual([])
   })
 })
+
+// ===========================================================================================
+//  Dieselbe Karte zweimal zeichnen (2026-08-04)
+//
+//  An asset's bytes belong to the ASSET, not to the statement that uses them. DrawMap baked
+//  them per CALL, so the most ordinary program in the world —
+//
+//      DrawMap "level01"                   ; Level aufbauen
+//      If tot = 1 Then DrawMap "level01"   ; …und nach dem Tod nochmal
+//
+//  — emitted the array twice, and cc65 refused it:
+//
+//      Error: Global variable 'map_level01' has already been defined
+//
+//  An English error about a line of C the user never wrote. Found by the user asking a plain
+//  design question ("how would I switch levels?"), which is where this class of bug lives:
+//  not in the clever path, in the obvious one.
+// ===========================================================================================
+describe('codegen: eine Karte wird EINMAL gebacken, beliebig oft gezeichnet', () => {
+  // Ein Testprojekt mit mehreren bildschirmgroßen Karten.  hat nur eine —
+  // die anderen dort sind absichtlich zu breit für DrawMap (das ist eine WELT).
+  const screenMap = (tile: number): string =>
+    JSON.stringify({
+      format: 'breadcraft.tilemap',
+      layers: [
+        {
+          type: 'grafik',
+          tiles: Array.from({ length: 1000 }, () => tile),
+          colors: Array.from({ length: 1000 }, () => 1)
+        }
+      ]
+    })
+  const charset = JSON.stringify({
+    format: 'breadcraft.petscii',
+    charCount: 256,
+    chars: Array.from({ length: 256 }, () => [0, 0, 0, 0, 0, 0, 0, 0])
+  })
+  const mapsNamed = (names: string[]): AssetContext => {
+    const files: Record<string, string> = { 'main.petscii': charset }
+    names.forEach((n, i) => (files[n + '.tilemap'] = screenMap(i + 1)))
+    return {
+      manifest: {
+        palette: null,
+        charsets: ['main.petscii'],
+        tilemaps: names.map((n) => n + '.tilemap'),
+        sprites: [],
+        images: []
+      },
+      readFile: (rel: string) => (rel in files ? files[rel] : null)
+    }
+  }
+  const twoMapAssets = (): AssetContext => mapsNamed(['level1', 'zwei'])
+  const clashingAssets = (): AssetContext => mapsNamed(['karte-1', 'karte 1'])
+
+  it('dieselbe Karte zweimal gezeichnet: ein Datenblock, zwei Kopien', () => {
+    const src = [
+      'UseTileset "main"',
+      'DrawMap "level1"',
+      'tot.b = 1',
+      'If tot = 1 Then DrawMap "level1"'
+    ].join('\n')
+    const { code, errors } = gen(src, fakeAssets())
+    expect(errors).toEqual([])
+    // EINE Deklaration je Datenblock — sonst lehnt cc65 das ganze Programm ab …
+    expect(code.match(/static const unsigned char map_level1\[/g) ?? []).toHaveLength(1)
+    expect(code.match(/static const unsigned char mapcol_level1\[/g) ?? []).toHaveLength(1)
+    // … und trotzdem wird zweimal gezeichnet.
+    expect(code.match(/BC_SCREEN\[_c\] = map_level1\[_c\]/g) ?? []).toHaveLength(2)
+  })
+
+  it('zwei verschiedene Karten bekommen jede ihren eigenen Block', () => {
+    // Der Level-Wechsel selbst: das muss weiter zwei Blöcke geben, nicht einen.
+    const src = [
+      'UseTileset "main"',
+      'level.b = 1',
+      'If level = 1',
+      '  DrawMap "level1"',
+      'Else',
+      '  DrawMap "zwei"',
+      'End If'
+    ].join('\n')
+    const { code, errors } = gen(src, twoMapAssets())
+    expect(errors).toEqual([])
+    expect(code.match(/static const unsigned char map_level1\[/g) ?? []).toHaveLength(1)
+    expect(code.match(/static const unsigned char map_zwei\[/g) ?? []).toHaveLength(1)
+  })
+
+  it('★ zwei Karten, deren Namen intern gleich werden, sind ein ehrlicher Fehler', () => {
+    // `karte-1` und `karte 1` werden beide zu `map_karte_1`. Den zweiten Bake still zu
+    // überspringen wäre SCHLIMMER als der Compilerfehler von vorher: gezeichnet würde die
+    // erste Karte unter dem Namen der zweiten — ein falsches Bild statt eines kaputten Builds.
+    const src = ['UseTileset "main"', 'DrawMap "karte-1"', 'DrawMap "karte 1"'].join('\n')
+    const { errors } = gen(src, clashingAssets())
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/karte-1|karte 1/)
+    expect(errors[0]).toMatch(/map_karte_1/)
+  })
+  it('derselbe Zeichensatz nach einem Wechsel: auch nur ein Datenblock', () => {
+    // Gefunden beim DrawMap-Fix: der alte Schutz fragte nur „ist es DASSELBE wie zuletzt?",
+    // also rutschte a → b → a durch und cc65 lehnte das Programm ab. Ein Titelbild mit
+    // eigenem Zeichensatz und danach zurück ins Spiel ist genau dieser Ablauf.
+    const src = ['UseTileset "main"', 'UseTileset "zweit"', 'UseTileset "main"'].join('\n')
+    const { code, errors } = gen(src, twoCharsetAssets())
+    expect(errors).toEqual([])
+    expect(code.match(/static const unsigned char tileset_main\[/g) ?? []).toHaveLength(1)
+    expect(code.match(/static const unsigned char tileset_zweit\[/g) ?? []).toHaveLength(1)
+    // …und der VIC wird trotzdem dreimal umgehängt
+    expect((code.match(/VIC\.addr = /g) ?? []).length).toBeGreaterThanOrEqual(3)
+  })
+
+  const twoCharsetAssets = (): AssetContext => {
+    const cs = (v: number): string =>
+      JSON.stringify({
+        format: 'breadcraft.petscii',
+        charCount: 256,
+        chars: Array.from({ length: 256 }, () => [v, 0, 0, 0, 0, 0, 0, 0])
+      })
+    const files: Record<string, string> = { 'main.petscii': cs(1), 'zweit.petscii': cs(2) }
+    return {
+      manifest: {
+        palette: null,
+        charsets: ['main.petscii', 'zweit.petscii'],
+        tilemaps: [],
+        sprites: [],
+        images: []
+      },
+      readFile: (rel: string) => (rel in files ? files[rel] : null)
+    }
+  }
+})

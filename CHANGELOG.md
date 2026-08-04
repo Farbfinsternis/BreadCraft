@@ -8,6 +8,19 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Behoben
+- **★ Dieselbe Karte zweimal zeichnen ging nicht — jetzt schon.** Ein Level aufbauen und es
+  nach dem Tod des Spielers noch einmal aufbauen ist das Normalste der Welt:
+  `DrawMap "level01"` am Anfang, `DrawMap "level01"` nochmal im Spielverlauf. Bisher hat
+  BreadCraft die Kartendaten bei **jedem** Aufruf neu in Dein Programm gelegt — und der
+  C64-Übersetzer hat abgebrochen, mit einer englischen Meldung über eine Datei, die Du nie
+  geschrieben hast. Jetzt liegt jede Karte **einmal** im Speicher, egal wie oft Du sie
+  zeichnest. Das kostet nebenbei weniger Platz: viermal zeichnen auf zwei Karten braucht
+  jetzt genau so viel wie zweimal.
+  Dasselbe galt für Zeichensätze: `UseTileset "a"`, dann `"b"`, dann wieder `"a"` — etwa ein
+  Titelbild mit eigener Schrift und danach zurück ins Spiel. Auch das geht jetzt.
+  Und falls zwei Deiner Assets Namen haben, die sich nur in Sonder- oder Leerzeichen
+  unterscheiden (`karte-1` und `karte 1`), sagt BreadCraft das jetzt **in Deiner Sprache**,
+  statt heimlich die falsche Karte zu zeichnen.
 - **Dein Projektordner ist jetzt eine Wand: gespeichert wird nur noch darin.** Beim Speichern
   einer Datei, eines Assets oder beim Anlegen eines Ordners hat BreadCraft bisher nicht
   nachgesehen, wohin der Pfad eigentlich zeigt. Ein Pfad wie `../…` führt aus dem Projekt
