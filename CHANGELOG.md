@@ -8,6 +8,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Behoben
+- **Dein Projektordner ist jetzt eine Wand: gespeichert wird nur noch darin.** Beim Speichern
+  einer Datei, eines Assets oder beim Anlegen eines Ordners hat BreadCraft bisher nicht
+  nachgesehen, wohin der Pfad eigentlich zeigt. Ein Pfad wie `../…` führt aus dem Projekt
+  heraus — und wäre dort gelandet, wo er hinzeigt, statt in Deinem Projekt. Aufgefallen ist es
+  niemandem, weil BreadCraft solche Pfade selbst nie erzeugt; genau deshalb ist jetzt der
+  richtige Zeitpunkt, die Tür zuzumachen. Ein Projekt mit einem krummen Eintrag lässt sich
+  weiterhin **öffnen** — die betroffene Datei kommt leer, so wie eine verschwundene, und Du
+  siehst sie im Explorer.
 - **★ Wenn zwei Funktionen sich gegenseitig aufrufen, sagt BreadCraft das jetzt — vorher fror
   das Spiel einfach ein.** Dass eine Funktion sich *selbst* aufruft, hat BreadCraft schon immer
   abgefangen. Der Umweg nicht: ruft `Prüfe` die Funktion `Melde`, und `Melde` ruft wieder

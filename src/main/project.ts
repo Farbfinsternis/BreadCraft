@@ -1,5 +1,5 @@
 import { app, dialog, BrowserWindow } from 'electron'
-import { join, basename, dirname } from 'path'
+import { join, basename, dirname, resolve, sep } from 'path'
 import {
   existsSync,
   mkdirSync,
@@ -163,10 +163,20 @@ function readProject(dir: string, temporary: boolean): OpenedProject {
   const breadPath = breadPathFor(dir)
   const bread = readBread(dir)
 
-  const files: ProjectFile[] = bread.crumbs.map((rel) => ({
-    rel,
-    content: existsSync(join(dir, rel)) ? readFileSync(join(dir, rel), 'utf-8') : ''
-  }))
+  // The crumb list comes out of the `.bread` — a file on disk, so its paths get the same
+  // check as anything arriving over IPC (B-12). A crooked entry must not stop the project
+  // from OPENING, though: it reads as an empty file, exactly like one that has gone missing,
+  // and the user can see and fix it in the explorer.
+  const files: ProjectFile[] = bread.crumbs.map((rel) => {
+    let content = ''
+    try {
+      const abs = resolveInside(dir, rel)
+      if (existsSync(abs)) content = readFileSync(abs, 'utf-8')
+    } catch {
+      // outside the project → treated as not there
+    }
+    return { rel, content }
+  })
 
   // Remember this as the project to restore on next startup (every open funnels
   // through here). Persistence rule: survives restarts. Permanent projects also
@@ -320,9 +330,49 @@ function slugify(name: string): string {
   return slug || 'projekt'
 }
 
+/**
+ * A project-relative path, resolved to an absolute one INSIDE the project — or an error
+ * (Review #1, B-12).
+ *
+ * Every path that reaches the main process comes over IPC as a plain string: the renderer
+ * asks to save `crumbs/physics.crumb`, and the main process joins it onto the project
+ * directory and writes. Nothing checked where that string pointed. `../../.bashrc` is a
+ * perfectly good relative path, and `join` resolves it happily — so a bug in the renderer,
+ * a hand-edited `.bread`, or a pasted asset id could write outside the project the user
+ * thinks they are working in. Nothing in BreadCraft sends such a path today; that is the
+ * reason to close it now, while the answer is still "nothing legitimate breaks".
+ *
+ * ★ THE CHECK IS `dir + separator`, NOT `dir`. Comparing against the bare directory string
+ * is the classic hole: for a project at `…/projects/held`, the path `../heldenreise/x`
+ * resolves to `…/projects/heldenreise/x`, which starts with `…/projects/held` and would
+ * sail through — a different project, silently written into.
+ *
+ * Honest about its limit: this is a LEXICAL check. It does not follow symlinks, because the
+ * target of a write usually does not exist yet, so `realpath` has nothing to resolve. It
+ * stops the accident and the pasted path, not an attacker who can already plant symlinks in
+ * the project folder.
+ */
+export function resolveInside(dir: string, rel: string): string {
+  const cleaned = String(rel ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+  if (!cleaned) throw new Error('Pfad fehlt.')
+  // An absolute path is never project-relative — POSIX (`/etc`), Windows drive (`C:/…`)
+  // and UNC (`//server/share`) alike. `resolve` would silently discard `dir` for these.
+  if (/^([/\\]|[A-Za-z]:)/.test(cleaned)) {
+    throw new Error(`Pfad muss innerhalb des Projekts liegen: ${rel}`)
+  }
+  const root = resolve(dir)
+  const target = resolve(root, cleaned)
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw new Error(`Pfad muss innerhalb des Projekts liegen: ${rel}`)
+  }
+  return target
+}
+
 /** Write a single crumb file's content back to disk. */
 export function saveFile(dir: string, rel: string, content: string): void {
-  const target = join(dir, rel)
+  const target = resolveInside(dir, rel)
   if (!existsSync(dir)) throw new Error('Projektverzeichnis fehlt.')
   mkdirSync(dirname(target), { recursive: true }) // support crumbs in sub-folders
   writeFileSync(target, content, 'utf-8')
@@ -333,7 +383,7 @@ export function createFile(dir: string, rawName: string): ProjectFile {
   let rel = rawName.trim().replace(/\\/g, '/')
   if (!rel) throw new Error('Dateiname fehlt.')
   if (!rel.endsWith('.crumb')) rel += '.crumb'
-  const target = join(dir, rel)
+  const target = resolveInside(dir, rel)
   if (existsSync(target)) throw new Error(`Datei existiert bereits: ${rel}`)
 
   mkdirSync(dirname(target), { recursive: true }) // support crumbs in sub-folders
@@ -358,7 +408,7 @@ export function createFile(dir: string, rawName: string): ProjectFile {
 
 /** Read an asset file's text content; null if it doesn't exist. */
 export function readAsset(dir: string, rel: string): string | null {
-  const target = join(dir, rel)
+  const target = resolveInside(dir, rel)
   if (!existsSync(target)) return null
   return readFileSync(target, 'utf-8')
 }
@@ -370,7 +420,7 @@ export function readAsset(dir: string, rel: string): string | null {
  */
 export function writeAsset(dir: string, kind: AssetKind, rel: string, content: string): string {
   if (!existsSync(dir)) throw new Error('Projektverzeichnis fehlt.')
-  const target = join(dir, rel)
+  const target = resolveInside(dir, rel)
   mkdirSync(dirname(target), { recursive: true }) // create assets/sprites/… if needed
   writeFileSync(target, content, 'utf-8')
 
@@ -445,7 +495,7 @@ export function createFolder(dir: string, rawRel: string): string {
   const rel = rawRel.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   if (!rel) throw new Error('Ordnername fehlt.')
   if (!existsSync(dir)) throw new Error('Projektverzeichnis fehlt.')
-  mkdirSync(join(dir, rel), { recursive: true })
+  mkdirSync(resolveInside(dir, rel), { recursive: true })
   return rel
 }
 
