@@ -4533,6 +4533,22 @@ class Generator {
    *
    * cc65's register bank is six bytes (`--register-space`, left at its default). Three
    * 16-bit locals fill it; anything beyond stays on the stack, which cc65 handles by itself.
+   *
+   * ★ Recounted 2026-08-04 (`_intern/regbank.test.ts`), because the inline pass left the
+   * suspicion that this hands out more than there is. Two things came out of it:
+   *
+   *   1. cc65 grants the three slots in DECLARATION ORDER, not by use. A hot variable
+   *      written down fourth loses its zero page to three cold ones — so today the order
+   *      of the lines in the user's .crumb decides. In ITD nothing is over budget (the
+   *      fullest function asks four bytes of six, and `main` asks none: every ITD name is
+   *      `Global`, and a global is file scope, never `register`). So there is no win
+   *      waiting here — only a trap for a program written without `Global`.
+   *   2. ★★ `register` only counts AT FUNCTION SCOPE. In a nested block cc65 ignores it
+   *      silently: same variable, same accesses, twelve `regbank` references become zero
+   *      and every touch turns back into a `jsr`. That — not a full budget — is why the
+   *      pasted bodies of the inline pass lost their zero page, and it is the thing
+   *      INLINE_PLAN T3 has to solve (hoist a pasted body's locals to the caller's own
+   *      scope) before any budget arithmetic means anything.
    */
   private zeroPaged(type: VarType | undefined): string {
     return type === 'word' || type === 'sint' ? 'register ' : ''
