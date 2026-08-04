@@ -71,6 +71,8 @@ export interface CodegenMessages {
   paramUnknownRecord(fn: string, rec: string, param: string): string
   unknownFunction(callee: string): string
   recursion(name: string): string
+  /** Indirect recursion (B-6): `ring` is the way round, in call order, e.g. ['Pruefe','Melde']. */
+  recursionRing(ring: string[]): string
   narrowing(where: string, reason: string): string
   narrowByteReason(): string
   narrowWordReason(): string
@@ -332,6 +334,10 @@ const DE_CODEGEN: CodegenMessages = {
   unknownFunction: (callee) => `Unbekannte Funktion '${callee}' — fehlt eine 'Function ${callee}…'?`,
   recursion: (name) =>
     `Rekursion ist nicht erlaubt (Funktion '${name}' ruft sich selbst auf) — der 6502 hat keinen echten Variablen-Stack; formuliere es iterativ`,
+  recursionRing: (ring) =>
+    `Rekursion über Umwege ist nicht erlaubt: ${ring
+      .map((n, i) => `'${n}' ruft '${ring[(i + 1) % ring.length]}'`)
+      .join(', ')} — damit ruft sich '${ring[0]}' am Ende wieder selbst auf. Der 6502 hat keinen echten Variablen-Stack; formuliere den Ring iterativ`,
   narrowing: (where, reason) => `Verkleinerung beim Schreiben in ${where}: ${reason}`,
   narrowByteReason: () => `der Wert passt nicht in ein Byte (.b, 0…255) — höhere Bits gehen verloren`,
   narrowWordReason: () =>
@@ -508,6 +514,10 @@ const EN_CODEGEN: CodegenMessages = {
   unknownFunction: (callee) => `unknown function '${callee}' — is a 'Function ${callee}…' missing?`,
   recursion: (name) =>
     `recursion is not allowed (function '${name}' calls itself) — the 6502 has no real variable stack; rewrite it iteratively`,
+  recursionRing: (ring) =>
+    `recursion round a ring is not allowed: ${ring
+      .map((n, i) => `'${n}' calls '${ring[(i + 1) % ring.length]}'`)
+      .join(', ')} — so '${ring[0]}' ends up calling itself. The 6502 has no real variable stack; rewrite the ring iteratively`,
   narrowing: (where, reason) => `narrowing when writing to ${where}: ${reason}`,
   narrowByteReason: () => `the value doesn't fit in a byte (.b, 0–255) — the high bits are lost`,
   narrowWordReason: () =>

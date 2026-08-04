@@ -25,7 +25,14 @@ import type {
 } from '../parser/ast'
 import { pos } from '../parser/ast'
 import { recordSuffixName } from './suffix'
-import { planInlining, ownNames, identifiersIn, INLINE_MAX_DEPTH, type InlinePlan } from './inline'
+import {
+  planInlining,
+  callCycles,
+  ownNames,
+  identifiersIn,
+  INLINE_MAX_DEPTH,
+  type InlinePlan
+} from './inline'
 import {
   resolveCharset,
   resolveTilemap,
@@ -468,6 +475,11 @@ class Generator {
   /** Which functions are fit to paste, decided once from the AST (see ./inline). The perf
    *  model asks the same question, so the bar never prices a call the codegen removed. */
   private inlinePlan: InlinePlan = { fit: new Map(), free: new Map() }
+  /** Function → the call ring it sits on (B-6). Same array for every member of a ring, so a
+   *  ring can be reported once instead of once per call in it. */
+  private callRings = new Map<string, string[]>()
+  /** Rings already reported, keyed by the ring itself. */
+  private reportedRings = new Set<string>()
   /** Running number, so every pasted site gets names nobody else has. */
   private inlineSeq = 0
   /**
@@ -928,6 +940,8 @@ class Generator {
     // the call graph — and because the perf model asks the same pure function, so the bar
     // cannot price calls that the generated C no longer makes.
     this.inlinePlan = planInlining(program)
+    // Rings in the call graph, for the indirect-recursion diagnostic (B-6).
+    this.callRings = callCycles(program)
 
     // Does this program enter a scrolling world? Answered BEFORE any function body is
     // emitted (S1.B5) — a function written above the `UseMap` still runs after it, and
@@ -2507,6 +2521,11 @@ class Generator {
       this.emit(`${info.cName}(${this.callArgs(info, s.args, s.callee)});`)
       return
     }
+    if (this.reportRing(s.callee, s)) {
+      this.stillCalled.add(s.callee)
+      this.emit(`${info.cName}(${this.callArgs(info, s.args, s.callee)});`)
+      return
+    }
     if (this.canPasteHere(s.callee, s.args)) {
       this.pasteBody(s.callee, s.args, undefined, (line) => this.emit(line))
       return
@@ -2531,6 +2550,34 @@ class Generator {
    *
    * Either way the answer is "leave it a call" — a slower line, never a wrong one.
    */
+  /**
+   * IS THIS CALL A STEP ROUND A RING? (Review #1, B-6.)
+   *
+   * `A` calling `A` has been an honest error for a long time. `A → B → A` was not: cc65
+   * compiles it without complaint and the 6502 walks its stack into the ground at runtime,
+   * which reaches the user as a game that freezes with nothing to read. On a machine with no
+   * real variable stack that is not a subtle failure, it is the failure.
+   *
+   * Reported ONCE per ring, not once per call in it: a two-function ring has two call sites
+   * that are equally to blame, and two errors describing the same circle read as two
+   * problems. The first site the walk reaches gets the message, and the message names the
+   * whole way round so it can be acted on from wherever it is read.
+   *
+   * Returns true when this call belongs to a ring — the caller then emits a real call, so the
+   * C stays honest about what the program said, and cc65 never sees a paste that needs itself.
+   */
+  private reportRing(callee: string, at: Pos): boolean {
+    if (!this.currentFunc) return false
+    const ring = this.callRings.get(callee)
+    if (!ring || ring !== this.callRings.get(this.currentFunc)) return false
+    const key = ring.join('>')
+    if (!this.reportedRings.has(key)) {
+      this.reportedRings.add(key)
+      this.err(this.M.recursionRing(ring), at)
+    }
+    return true
+  }
+
   private canPasteHere(callee: string, args: Expr[]): boolean {
     const fn = this.inlinePlan.fit.get(callee)
     if (!fn) return false
@@ -4850,8 +4897,8 @@ class Generator {
             this.err(this.M.recordReturnInExpr(e.callee, info.returnRecord), e)
             return `/* ${e.callee}(): Record-Rückgabe nur als direkte Zuweisung */ 0`
           }
-          if (e.callee === this.currentFunc) {
-            this.err(this.M.recursion(e.callee), e)
+          if (e.callee === this.currentFunc || this.reportRing(e.callee, e)) {
+            if (e.callee === this.currentFunc) this.err(this.M.recursion(e.callee), e)
             this.stillCalled.add(e.callee)
             return `${info.cName}(${this.callArgs(info, e.args, e.callee)})`
           }

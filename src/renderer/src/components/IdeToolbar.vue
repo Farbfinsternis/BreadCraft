@@ -103,12 +103,12 @@ async function offerViceSetup(): Promise<void> {
   else output.append({ level: 'info', text: t('build.viceLater') })
 }
 
-/** Toolbar "Build": produce the .prg from the active file, no VICE launch. */
+/** Toolbar "Build": produce the .prg from the project's ENTRY crumb, no VICE launch. */
 function build(): Promise<void> {
   return runBuild(false)
 }
 
-/** Toolbar "Build & Run": build the active file and launch it in VICE if configured. */
+/** Toolbar "Build & Run": build the ENTRY crumb and launch it in VICE if configured. */
 function buildAndRun(): Promise<void> {
   return runBuild(true)
 }

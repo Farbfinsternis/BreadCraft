@@ -8,6 +8,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Behoben
+- **★ Wenn zwei Funktionen sich gegenseitig aufrufen, sagt BreadCraft das jetzt — vorher fror
+  das Spiel einfach ein.** Dass eine Funktion sich *selbst* aufruft, hat BreadCraft schon immer
+  abgefangen. Der Umweg nicht: ruft `Prüfe` die Funktion `Melde`, und `Melde` ruft wieder
+  `Prüfe`, dann ist das genauso ein Kreis — nur einen Schritt weiter. Bisher lief so ein
+  Programm durch, und der C64 lief beim Spielen langsam seinen Speicher leer: das Spiel blieb
+  irgendwann stehen, ohne dass irgendwo etwas zu lesen war. Der Hinweis **nennt jetzt den
+  ganzen Kreis** („'Prüfe' ruft 'Melde', 'Melde' ruft 'Prüfe'"), damit Du ihn von jeder der
+  beteiligten Funktionen aus auflösen kannst — und er kommt **einmal**, nicht einmal pro
+  Beteiligtem.
 - **Eine Funktion ohne Kürzel, die trotzdem etwas zurückgibt, erklärt BreadCraft jetzt selbst.**
   Schreibt man `Function Punkte()` (ohne Kürzel am Namen) und darin `Return 1`, dann ist das
   ein Widerspruch: eine Funktion ohne Kürzel *tut* etwas, sie *liefert* nichts. Bisher lief so

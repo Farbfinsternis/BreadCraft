@@ -179,23 +179,44 @@ export interface InlinePlan {
 }
 
 /**
- * Decide, once per program, which functions are fit to paste. Being "fit" is a property of
- * the function; whether a given CALL is pasted also depends on the site (see the codegen:
- * a name collision, or a position where hoisting statements would change when they run).
+ * EVERY RING IN THE CALL GRAPH: function name → the ring it sits on, in call order.
+ *
+ * Two customers, and they want the same fact for opposite reasons:
+ *
+ *   - the inline pass, because a function on a ring can never be pasted (the paste would
+ *     need itself);
+ *   - the RECURSION DIAGNOSTIC (Review #1, B-6), because `A → B → A` is a program the 6502
+ *     cannot run. cc65 will compile it happily and the machine will walk its stack into the
+ *     ground at runtime — which reaches the user as a game that freezes, with nothing to
+ *     read. The direct case (`A` calls `A`) has been an honest error for a long time; going
+ *     one step round the ring was enough to slip past it.
+ *
+ * The ring is kept, not just the membership, because a diagnostic that can NAME the way
+ * round ("Prüfe ruft Melde, und Melde ruft Prüfe") is one the user can act on, and a bare
+ * "recursion is not allowed" on a function that plainly does not call itself is not.
+ *
+ * Each member maps to the SAME rotated array, so a ring can be reported once instead of once
+ * per member: rotated to start at the alphabetically first name, which makes the identity
+ * stable no matter which function the walk happened to enter from.
  */
-export function planInlining(program: Program): InlinePlan {
+export function callCycles(program: Program): Map<string, string[]> {
   const decls = new Map<string, FunctionDecl>()
   for (const s of program.body) if (s.kind === 'FunctionDecl') decls.set(s.name, s)
 
-  // A function in a call CYCLE can never be pasted: the paste would need itself. Direct
-  // self-calls are already an error elsewhere; this catches A→B→A.
-  const inCycle = new Set<string>()
+  const rings = new Map<string, string[]>()
   const state = new Map<string, 'open' | 'done'>()
   const visit = (name: string, stack: string[]): void => {
     if (state.get(name) === 'done') return
     if (state.get(name) === 'open') {
-      // Everything from the first sighting of `name` onwards is on the cycle.
-      for (let i = stack.indexOf(name); i >= 0 && i < stack.length; i++) inCycle.add(stack[i])
+      // Everything from the first sighting of `name` onwards IS the ring.
+      const at = stack.indexOf(name)
+      if (at < 0) return
+      const ring = stack.slice(at)
+      // Rotate to a canonical start so every member agrees on one identity.
+      let lo = 0
+      for (let i = 1; i < ring.length; i++) if (ring[i] < ring[lo]) lo = i
+      const canon = [...ring.slice(lo), ...ring.slice(0, lo)]
+      for (const m of canon) if (!rings.has(m)) rings.set(m, canon)
       return
     }
     state.set(name, 'open')
@@ -204,6 +225,20 @@ export function planInlining(program: Program): InlinePlan {
     state.set(name, 'done')
   }
   for (const name of decls.keys()) visit(name, [])
+  return rings
+}
+
+/**
+ * Decide, once per program, which functions are fit to paste. Being "fit" is a property of
+ * the function; whether a given CALL is pasted also depends on the site (see the codegen:
+ * a name collision, or a position where hoisting statements would change when they run).
+ */
+export function planInlining(program: Program): InlinePlan {
+  const decls = new Map<string, FunctionDecl>()
+  for (const s of program.body) if (s.kind === 'FunctionDecl') decls.set(s.name, s)
+
+  // A function in a call CYCLE can never be pasted: the paste would need itself.
+  const inCycle = callCycles(program)
 
   const fit = new Map<string, FunctionDecl>()
   const free = new Map<string, Set<string>>()

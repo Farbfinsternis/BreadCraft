@@ -3053,3 +3053,178 @@ describe.skipIf(INLINE_MAX_STMTS === 0)('codegen: dropping a definition nobody c
     expect(code).toMatch(/Gross\((bc_i\d+_)?n\);/)
   })
 })
+
+// ===========================================================================================
+//  Names that mean something to C, but nothing to you (Review #1, B-5)
+//
+//  `punkte.b = 1` is a variable. So is `main.b = 1` — to the person writing it. To the C
+//  underneath, `main` is the program's entry point, `int` is a type and `register` is a
+//  storage class, and handing any of them to cc65 as a variable produces an error about a
+//  line of C the user never wrote, in a file they are not meant to read. That is the exact
+//  failure the translation doctrine exists to prevent ([[breadcraft-translation-doctrine]]).
+//
+//  `cName()` already carried the fix; nothing pinned it. These tests do, because a rename
+//  rule is precisely the sort of thing a later refactor drops without noticing — the program
+//  still compiles, it just stops compiling for the one user who names a variable `char`.
+// ===========================================================================================
+describe('codegen: a name that is a C keyword is still the user’s name', () => {
+  // Each of these is a plain, reasonable thing to call a variable in a game.
+  const cases: [string, string][] = [
+    ['main', 'the entry point'],
+    ['int', 'a type'],
+    ['char', 'a type'],
+    ['register', 'a storage class'],
+    ['switch', 'a statement'],
+    ['NULL', 'a macro'],
+    ['true', 'a C99 macro']
+  ]
+
+  for (const [name, what] of cases) {
+    it(`\`${name}\` (in C: ${what}) becomes a variable of its own`, () => {
+      const { code, errors } = gen([`${name}.b = 7`, `${name} = ${name} + 1`].join('\n'))
+      expect(errors).toEqual([])
+      // It is renamed…
+      expect(code).toMatch(new RegExp(`unsigned char ${name}_+ = 0;`))
+      expect(code).toMatch(new RegExp(`${name}_+ = 7;`))
+      // …and the bare word never appears as a declaration, which is what cc65 would choke on.
+      expect(code).not.toMatch(new RegExp(`unsigned char ${name} = 0;`))
+    })
+  }
+
+  it('a FUNCTION may be called `main` too — the same rule, or the C has two of them', () => {
+    // Kept too big to paste (INLINE_PLAN), or there is no definition left to look at: a small
+    // body is written where it is called and its definition dropped. That is also correct —
+    // one entry point, the user's code running — but it proves the T2 rule, not this one.
+    const src = [
+      'Function main()',
+      ...Array.from({ length: INLINE_MAX_STMTS + 1 }, (_, i) => `  BorderColor ${i % 16}`),
+      'EndFunction',
+      'main'
+    ].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    // exactly one real entry point…
+    expect(code.match(/int main\(void\) \{/g) ?? []).toHaveLength(1)
+    // …and the user's function is a different one, called from it
+    expect(code).toMatch(/void main_+\(void\)/)
+    expect(code).toMatch(/^\s*main_+\(\);/m)
+  })
+
+  it('a name in BreadCraft’s own `bc_` namespace is lifted out of it, not left to collide', () => {
+    // `bc_camx` is a real generated global in a scrolling world. A user variable of that name
+    // would quietly become the same storage — the world would jump when the score changed.
+    const { code, errors } = gen(['bc_camx.b = 3', 'bc_camx = bc_camx + 1'].join('\n'))
+    expect(errors).toEqual([])
+    expect(code).toContain('unsigned char v_bc_camx = 0;')
+    expect(code).not.toMatch(/unsigned char bc_camx = 0;/)
+  })
+
+  it('the renaming is deterministic — the same name is the same variable everywhere', () => {
+    // A rule that renamed per occurrence would compile and then behave wrongly, which is
+    // worse than not compiling at all.
+    const src = ['int.b = 1', 'Function Zaehl()', '  int = int + 1', 'EndFunction', 'Zaehl'].join('\n')
+    const { code, errors } = gen(src)
+    expect(errors).toEqual([])
+    const names = [...code.matchAll(/\bint_+\b/g)].map((m) => m[0])
+    expect(names.length).toBeGreaterThan(1)
+    expect(new Set(names).size).toBe(1)
+  })
+})
+
+// ===========================================================================================
+//  Recursion that goes the long way round (Review #1, B-6)
+//
+//  `A` calling `A` has been an honest error for a long time. `A → B → A` was not: cc65
+//  compiles it without a word and the 6502 walks its stack into the ground at RUNTIME. What
+//  reaches the user is a game that freezes, with nothing to read anywhere — the worst kind of
+//  failure this project can produce, because there is no thread to pull.
+//
+//  The ring detector these use is the one the inline pass already needed (a function on a
+//  ring can never be pasted), so this diagnostic cost a call, not a second implementation.
+// ===========================================================================================
+describe('codegen: recursion round a ring is caught before the machine finds it', () => {
+  it('A calls B, B calls A — reported, and the message names the way round', () => {
+    const src = [
+      'Function Pruefe()',
+      '  Melde',
+      'EndFunction',
+      'Function Melde()',
+      '  Pruefe',
+      'EndFunction',
+      'Pruefe'
+    ].join('\n')
+    const { errors } = gen(src)
+    expect(errors).toHaveLength(1)
+    // Both legs are named: the user can act on it from whichever function they are reading.
+    expect(errors[0]).toMatch(/'Melde' ruft 'Pruefe'/)
+    expect(errors[0]).toMatch(/'Pruefe' ruft 'Melde'/)
+  })
+
+  it('a ring is reported ONCE, not once per call in it', () => {
+    // Two call sites are equally to blame for one circle. Two errors would read as two
+    // problems and send the user looking for a second one that does not exist.
+    const src = [
+      'Function A1()',
+      '  B1',
+      'EndFunction',
+      'Function B1()',
+      '  C1',
+      'EndFunction',
+      'Function C1()',
+      '  A1',
+      'EndFunction',
+      'A1'
+    ].join('\n')
+    const { errors } = gen(src)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/A1.*B1.*C1|B1.*C1.*A1|C1.*A1.*B1/)
+  })
+
+  it('a ring through a VALUE call counts too', () => {
+    const src = [
+      'Function Wert.b()',
+      '  Return Hilf()',
+      'EndFunction',
+      'Function Hilf.b()',
+      '  Return Wert()',
+      'EndFunction',
+      'x.b = Wert()'
+    ].join('\n')
+    const { errors } = gen(src)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/Wert|Hilf/)
+  })
+
+  it('a direct self-call still gets its own, more precise message', () => {
+    // The older diagnostic is better for the simple case — it does not make the user read a
+    // ring of one — so the ring check must not swallow it.
+    const src = ['Function Endlos()', '  Endlos', 'EndFunction', 'Endlos'].join('\n')
+    const { errors } = gen(src)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/ruft sich selbst auf/)
+  })
+
+  it('a diamond is NOT a ring — two ways down to the same helper are fine', () => {
+    // The shape most likely to produce a false alarm: A calls B and C, both call D. Nothing
+    // returns to A, so nothing recurses, and a detector that confused "seen twice" with "on a
+    // ring" would reject a perfectly ordinary program.
+    const src = [
+      'Function D2()',
+      '  BorderColor 1',
+      'EndFunction',
+      'Function B2()',
+      '  D2',
+      'EndFunction',
+      'Function C2()',
+      '  D2',
+      'EndFunction',
+      'Function A2()',
+      '  B2',
+      '  C2',
+      'EndFunction',
+      'A2'
+    ].join('\n')
+    const { errors } = gen(src)
+    expect(errors).toEqual([])
+  })
+})
