@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { Region } from '@shared/ipc'
+import type { ProjectTemplate, Region } from '@shared/ipc'
 
 export type CollapsiblePanel = 'explorer' | 'outliner' | 'console'
 
@@ -11,12 +11,23 @@ export interface RegionChoice {
   hint?: string
 }
 
-/** A New-Project dialog request (name + region + boilerplate toggle). No screen-mode
- *  choice: the mode is a runtime `SetMode` switch, not a project identity (ScreenMode block). */
+/** One selectable starter template in the New-Project dialog. NOT a screen mode — it only
+ *  decides what the first `main.crumb` (and, for a picture project, the first asset) hold. */
+export interface TemplateChoice {
+  value: ProjectTemplate
+  label: string
+  hint?: string
+}
+
+/** A New-Project dialog request (name + template + region + boilerplate toggle). Still no
+ *  screen-MODE choice: the mode is a runtime `SetMode` switch, not a project identity
+ *  (ScreenMode block) — the template just writes the `SetMode` line that fits it. */
 export interface NewProjectRequest {
   title: string
   nameLabel: string
   namePlaceholder?: string
+  templateLabel: string
+  templates: TemplateChoice[]
   regionLabel: string
   regions: RegionChoice[]
   boilerplateLabel: string
@@ -27,6 +38,7 @@ export interface NewProjectRequest {
 export interface NewProjectResult {
   name: string
   region: Region
+  template: ProjectTemplate
   withBoilerplate: boolean
 }
 

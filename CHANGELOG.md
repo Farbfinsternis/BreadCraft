@@ -8,6 +8,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Behoben
+- **★ Bitmap-Modus zeigt keinen Müll mehr.** Schaltest Du mit `SetMode BITMAP, MULTICOLOR` auf
+  den Bild-Schirm um, ohne ein Bild mitzubringen, dann hat der C64 bisher irgendeinen
+  Speicherbereich als Bild dargestellt — in Wahrheit Dein eigenes Programm, als Pixel gemalt.
+  Es sah kaputt aus, und es war nicht zu reparieren, weil dieser „Müll" das laufende Programm
+  selbst war. Jetzt bekommt der Bild-Schirm einen **eigenen, reservierten Platz** im Speicher,
+  und BreadCraft räumt ihn beim Umschalten auf: Du siehst eine saubere, einfarbige Fläche.
+  Dazu sagt Dir die Bauen-Konsole in Deiner Sprache, was los ist („das Programm backt kein
+  Bild ein — der Schirm wird leer"), samt dem Hinweis, wie Du eins hinbekommst. Der Platz
+  kostet ehrlich: die RAM-Anzeige zeigt weniger Raum für Code, sobald ein Programm den
+  Bild-Schirm benutzt — genau das, was ein Bild auf dieser Maschine wert ist.
 - **★ Dieselbe Karte zweimal zeichnen ging nicht — jetzt schon.** Ein Level aufbauen und es
   nach dem Tod des Spielers noch einmal aufbauen ist das Normalste der Welt:
   `DrawMap "level01"` am Anfang, `DrawMap "level01"` nochmal im Spielverlauf. Bisher hat
@@ -71,6 +81,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   eine frische Karte. Jetzt ist nach dem Leeren wieder genau ein Bildschirm da.
 
 ### Hinzugefügt
+- **★ Ein neues Projekt kann jetzt mit einem gemalten Bild anfangen.** Im „Neues Projekt"-
+  Fenster steht eine neue Frage: *Womit fängst du an?* Wählst Du **„Mit einem gemalten Bild"**,
+  bekommt Dein Projekt ein fertiges Startbild (`main.image`) und ein `main.crumb`, das es auch
+  wirklich zeigt — Bitmap-Modus, `UseImage`, `DrawImage`. Einmal auf Bauen, und da steht es:
+  ein weißer Rahmen um ein blaues Feld. Kein leerer Schirm, bei dem man rätselt, ob es
+  geklappt hat. Von da an gehst Du in den Bild-Editor und malst einfach drüber — das Bild
+  im Spiel ist dasselbe. **„Leeres Projekt"** bleibt die Voreinstellung und ist unverändert
+  das, was Du bisher bekommen hast.
+
 - **Ohne Kürzel ist eine Zahl jetzt überall gleich groß — nämlich klein.** Bisher galt eine
   Ausnahme, die niemand im Kopf behalten konnte: Schreibst Du `Function Heile(menge)` ohne
   Kürzel, war `menge` als Einziges in der ganzen Sprache die *große* Sorte Zahl, während

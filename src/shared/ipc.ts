@@ -151,6 +151,24 @@ export type Region = 'PAL' | 'NTSC'
  *  PAL: the European retro scene's default and the historical BreadCraft assumption. */
 export const DEFAULT_REGION: Region = 'PAL'
 
+/**
+ * What a fresh project is SEEDED with — the guided starter.
+ *
+ * Not a project identity and never stored: the template only decides what `main.crumb`
+ * (and, for `image`, the first asset) look like on the very first day. Everything it
+ * writes is ordinary source the user can change or delete.
+ *
+ * - `plain` — the historical starter: `SetMode TEXT, MULTICOLOR` + a frame loop.
+ * - `image` — a title-picture project: a starter `.image` on disk plus the three lines
+ *   that put it on screen (`SetMode BITMAP, MULTICOLOR` / `UseImage` / `DrawImage`).
+ *   Without those, entering bitmap mode shows an empty screen and nothing to paint on;
+ *   with them the first build already shows the user's own picture.
+ */
+export type ProjectTemplate = 'plain' | 'image'
+
+/** Default template for a new project (and for temp projects, which ask nothing). */
+export const DEFAULT_PROJECT_TEMPLATE: ProjectTemplate = 'plain'
+
 /** The `.bread` asset manifest (paths relative to the project dir). */
 export interface BreadAssets {
   palette: string | null

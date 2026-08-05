@@ -90,6 +90,15 @@ export interface MemoryUse {
   /** A picture is baked (`UseImage`) → the bank makes room for the 8000-byte bitmap
    *  matrix, and everything else moves below it (B2.T3). */
   usesImage: boolean
+  /** The program switches into BITMAP mode at all (`SetMode BITMAP, …`), with or without
+   *  a picture. The bitmap matrix must EXIST in the bank either way: the VIC draws 8000
+   *  bytes of *something*, and if the plan reserved nothing, `$D018` keeps pointing at the
+   *  bank's start — which in bank 0 is the zero page, the stack and the program itself.
+   *  That is the "fresh bitmap project shows garbage" bug, and it is unfixable at runtime
+   *  (clearing that area would erase the running program). So a program that enters BITMAP
+   *  mode takes the image layout even with nothing to show, and `SetMode` blanks the
+   *  reserved matrix. Defaults to `usesImage` when omitted. */
+  usesBitmap?: boolean
 }
 
 export interface MemoryMap {
@@ -135,17 +144,19 @@ export interface MemoryMap {
   cfg: string
 }
 
-/** Plan the C64 memory map for a project from what it actually uses. A picture takes the
- *  bank-1 IMAGE layout (the bitmap owns the bank's top half, B2.T3); a custom charset alone
- *  takes the plain bank-1 layout (the big-RAM move, B1.T4); otherwise bank 0. */
+/** Plan the C64 memory map for a project from what it actually uses. BITMAP mode — with a
+ *  picture or without one — takes the bank-1 IMAGE layout (the bitmap owns the bank's top
+ *  half, B2.T3); a custom charset alone takes the plain bank-1 layout (the big-RAM move,
+ *  B1.T4); otherwise bank 0. */
 export function planMemory(use: MemoryUse): MemoryMap {
-  if (use.usesImage) return planBank1Image(use)
+  if (use.usesImage || use.usesBitmap) return planBank1Image(use)
   return use.usesCharset ? planBank1(use) : planBank0(use)
 }
 
-/** Bank-1 with a picture: bitmap $6000–$7F3F (linked in place), everything else pushed
- *  below it. MAIN caps under the LOWEST thing the bank holds — charset, else sprites,
- *  else the screen page. */
+/** Bank-1 with a bitmap: matrix $6000–$7F3F, everything else pushed below it. MAIN caps
+ *  under the LOWEST thing the bank holds — charset, else sprites, else the screen page.
+ *  A baked picture is LINKED into the matrix; without one the area is merely reserved
+ *  (nothing to load, so the .prg stays compact) and `SetMode` blanks it at runtime. */
 function planBank1Image(use: MemoryUse): MemoryMap {
   const charsetAddr = use.usesCharset ? B1_IMG_CHARSET : null
   const spritesAddr = use.usesSprites ? B1_IMG_SPRITES : null
@@ -168,7 +179,7 @@ function planBank1Image(use: MemoryUse): MemoryMap {
     mainCeiling: ceiling,
     highBase: B1_BSS,
     highCeiling: HIGH_CEILING,
-    cfg: buildCfgBank1Image(ceiling)
+    cfg: buildCfgBank1Image(ceiling, !!use.usesImage)
   }
 }
 
@@ -392,23 +403,31 @@ function buildCfgBank1(charsetAddr: number): string {
  *  where a charset silently landed ~3KB below its address. So every byte from the end of
  *  the code up to the bitmap must exist in the file: MAIN's `fill` covers its own tail, and
  *  GFXGAP covers the charset/sprite/screen area (runtime RAM, no segments of its own). Both
- *  cost file size only — never RAM. */
-function buildCfgBank1Image(ceilingAddr: number): string {
+ *  cost file size only — never RAM.
+ *
+ *  WITHOUT a picture (`linked = false`) none of that applies: the program enters BITMAP mode
+ *  but has nothing to load into the matrix, so the area is only RESERVED — MAIN caps under
+ *  the graphics exactly the same way, but there is no BC_BITMAP segment, no filler and no
+ *  fill. The .prg then ends where the code ends (a few KB instead of ~31), and `SetMode`
+ *  blanks the matrix at runtime. */
+function buildCfgBank1Image(ceilingAddr: number, linked: boolean): string {
   const memory = [
     ...CFG_HEAD,
-    `    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = ${hex(ceilingAddr)} - __HEADER_LAST__, fill = yes;`,
-    `    GFXGAP:   file = %O,               start = ${hex(ceilingAddr)},           size = ${hex(B1_BITMAP - ceilingAddr)}, fill = yes;`,
-    `    BITMAP:   file = %O, define = yes, start = ${hex(B1_BITMAP)},           size = ${hex(BITMAP_BYTES)};`,
+    `    MAIN:     file = %O, define = yes, start = __HEADER_LAST__, size = ${hex(ceilingAddr)} - __HEADER_LAST__${linked ? ', fill = yes' : ''};`
+  ]
+  if (linked) {
+    memory.push(
+      `    GFXGAP:   file = %O,               start = ${hex(ceilingAddr)},           size = ${hex(B1_BITMAP - ceilingAddr)}, fill = yes;`,
+      `    BITMAP:   file = %O, define = yes, start = ${hex(B1_BITMAP)},           size = ${hex(BITMAP_BYTES)};`
+    )
+  }
+  memory.push(
     `    HIGH:     file = "", define = yes, start = ${hex(B1_BSS)},           size = __HIMEM__ - __STACKSIZE__ - ${hex(B1_BSS)};`,
     '}'
-  ]
-  const segments = [
-    'SEGMENTS {',
-    ...CFG_SEGMENTS_MAIN,
-    '    BC_BITMAP: load = BITMAP,   type = ro;',
-    '    BSS:      load = HIGH,     type = bss, define = yes;',
-    '}'
-  ]
+  )
+  const segments = ['SEGMENTS {', ...CFG_SEGMENTS_MAIN]
+  if (linked) segments.push('    BC_BITMAP: load = BITMAP,   type = ro;')
+  segments.push('    BSS:      load = HIGH,     type = bss, define = yes;', '}')
   return [...CFG_TAIL.slice(0, 9), ...memory, ...segments, ...CFG_TAIL.slice(9), ''].join('\n')
 }
 

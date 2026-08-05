@@ -2,14 +2,15 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUiStore } from '@renderer/stores/ui'
-import type { Region } from '@shared/ipc'
+import type { ProjectTemplate, Region } from '@shared/ipc'
 
 /**
- * The New-Project dialog: name + target region + boilerplate toggle. There is no
- * screen-mode choice — the mode is a runtime `SetMode` switch, not a project identity
- * (ScreenMode block); new projects start in TEXT, MULTICOLOR, freely changed in the
- * starter. Driven by ui.newProject; mounted once in App.vue. Mirrors PromptModal's
- * overlay (scrim + card, @click.self cancels; Enter confirms, Esc cancels).
+ * The New-Project dialog: name + starter template + target region + boilerplate toggle.
+ * The template is NOT a screen-mode choice — the mode stays a runtime `SetMode` switch,
+ * not a project identity (ScreenMode block); the template only decides what the first
+ * `main.crumb` (and, for a picture project, the first asset) contain. Driven by
+ * ui.newProject; mounted once in App.vue. Mirrors PromptModal's overlay (scrim + card,
+ * @click.self cancels; Enter confirms, Esc cancels).
  */
 
 const { t } = useI18n()
@@ -17,10 +18,11 @@ const ui = useUiStore()
 
 const name = ref('')
 const region = ref<Region>('PAL')
+const template = ref<ProjectTemplate>('plain')
 const boilerplate = ref(true)
 const inputRef = ref<HTMLInputElement | null>(null)
 
-// On open: seed fields, default region to the first listed (PAL), focus name.
+// On open: seed fields, default region/template to the first listed, focus name.
 watch(
   () => ui.newProject,
   async (req) => {
@@ -28,6 +30,7 @@ watch(
     name.value = ''
     boilerplate.value = true
     if (req.regions[0]) region.value = req.regions[0].value
+    if (req.templates[0]) template.value = req.templates[0].value
     await nextTick()
     inputRef.value?.focus()
   }
@@ -44,6 +47,7 @@ function confirm(): void {
   ui.resolveNewProject({
     name: trimmed,
     region: region.value,
+    template: template.value,
     withBoilerplate: boilerplate.value
   })
 }
@@ -74,6 +78,25 @@ function cancel(): void {
         @keydown.enter="confirm"
         @keydown.esc="cancel"
       />
+
+      <span class="bc-label np-field-label">{{ ui.newProject.templateLabel }}</span>
+      <ul class="np-modes">
+        <li v-for="tpl in ui.newProject.templates" :key="tpl.value">
+          <label class="np-mode">
+            <input
+              type="radio"
+              name="np-template"
+              :value="tpl.value"
+              :checked="template === tpl.value"
+              @change="template = tpl.value"
+            />
+            <span class="np-mode-text">
+              <span class="np-mode-name">{{ tpl.label }}</span>
+              <span v-if="tpl.hint" class="np-mode-hint">{{ tpl.hint }}</span>
+            </span>
+          </label>
+        </li>
+      </ul>
 
       <span class="bc-label np-field-label">{{ ui.newProject.regionLabel }}</span>
       <ul class="np-modes">

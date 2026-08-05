@@ -11,13 +11,20 @@ import {
 import { readConfig, writeConfig } from './config'
 import { TEMP_DIRNAME, PROJECTS_DIRNAME } from './workspace'
 import rawSsot from '../shared/breadcraft.lang.json'
-import { DEFAULT_SETTINGS, DEFAULT_GRAPHICS_MODE, DEFAULT_REGION } from '../shared/ipc'
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_GRAPHICS_MODE,
+  DEFAULT_REGION,
+  DEFAULT_PROJECT_TEMPLATE
+} from '../shared/ipc'
 import { graphicsCommandFor } from '../shared/graphics-mode'
+import { serializeImage } from '../shared/asset-formats/image'
 import type { Ssot } from '../shared/ssot-types'
 import type {
   AssetKind,
   BreadAssets,
   GraphicsMode,
+  ProjectTemplate,
   Region,
   OpenedProject,
   ProjectFile,
@@ -112,14 +119,42 @@ function normalizeAssets(raw: unknown): BreadAssets {
   }
 }
 
+/** The image template's starter asset. The name matches the image editor's own default
+ *  (`IMAGE_FILE` in the renderer's assetIo), so opening the Bild-Editor in a fresh image
+ *  project lands on exactly this file — the picture the first build already showed. */
+const STARTER_IMAGE_REL = 'main.image'
+/** …and its asset id in source: the manifest matches by filename stem. */
+const STARTER_IMAGE_ID = 'main'
+
 /** The starter main.crumb — opens with a `SetMode …` line (the runtime screen-mode
  *  switch, spelled from the SSOT, never hardcoded). New projects start in the common
- *  TEXT, MULTICOLOR mode; it's a runtime switch the user flips freely (ScreenMode block). */
-export function sampleMain(graphicsMode: GraphicsMode): string {
+ *  TEXT, MULTICOLOR mode; it's a runtime switch the user flips freely (ScreenMode block).
+ *
+ *  The `image` template starts in BITMAP, MULTICOLOR instead and brings the two lines a
+ *  picture needs — `UseImage` bakes it into the .prg, `DrawImage` puts it on screen. Both
+ *  are needed: bitmap mode on its own has nothing to show. */
+export function sampleMain(template: ProjectTemplate = DEFAULT_PROJECT_TEMPLATE): string {
+  if (template === 'image') {
+    return `; main.crumb — neues BreadCraft-Projekt mit einem gemalten Bild
+; Setup-Phase
+
+${graphicsCommandFor(SSOT, 'BITMAP_MULTICOLOR')}
+
+; Das Bild kommt aus dem Bild-Editor (${STARTER_IMAGE_REL}). UseImage backt es beim Bauen
+; an seinen Platz im Speicher, DrawImage zeigt es an — male einfach drauflos und baue neu.
+UseImage "${STARTER_IMAGE_ID}"
+DrawImage "${STARTER_IMAGE_ID}"
+
+; --- Frame-Schleife ---
+While 1
+    VWait
+Wend
+`
+  }
   return `; main.crumb — neues BreadCraft-Projekt
 ; Setup-Phase
 
-${graphicsCommandFor(SSOT, graphicsMode)}
+${graphicsCommandFor(SSOT, DEFAULT_GRAPHICS_MODE)}
 
 ; --- Frame-Schleife ---
 While 1
@@ -128,10 +163,58 @@ Wend
 `
 }
 
-/** The bare main.crumb when boilerplate is opted out: just the opening `SetMode …`
- *  line so the project transpiles, nothing more. */
-function bareMain(graphicsMode: GraphicsMode): string {
-  return `${graphicsCommandFor(SSOT, graphicsMode)}\n`
+/** The bare main.crumb when boilerplate is opted out: the fewest lines that still DO what
+ *  the template promises. Plain = just the opening `SetMode …` so the project transpiles;
+ *  image = the picture on screen and a loop to hold it there (a title screen that falls
+ *  back to BASIC after one frame would not be a starter, it would be a flicker). */
+function bareMain(template: ProjectTemplate = DEFAULT_PROJECT_TEMPLATE): string {
+  if (template === 'image') {
+    return [
+      graphicsCommandFor(SSOT, 'BITMAP_MULTICOLOR'),
+      `UseImage "${STARTER_IMAGE_ID}"`,
+      `DrawImage "${STARTER_IMAGE_ID}"`,
+      'While 1',
+      '    VWait',
+      'Wend',
+      ''
+    ].join('\n')
+  }
+  return `${graphicsCommandFor(SSOT, DEFAULT_GRAPHICS_MODE)}\n`
+}
+
+/**
+ * The starter picture: a blue field inside a white frame, in the C64's own byte planes.
+ *
+ * Deliberately NOT an empty canvas. A blank image builds to a single flat colour, which
+ * looks exactly like a broken build — the very confusion this starter exists to remove.
+ * A frame is unmistakably A PICTURE: it proves the mode, the bake and the four-colour cell
+ * all work, and it is one fill-tool click away from gone.
+ *
+ * Multicolor packing: each bitmap byte is four 2-bit pixels of one cell row, and the cell's
+ * `%01` colour lives in the high nibble of its screen byte. A frame cell is therefore eight
+ * rows of %01010101 ($55) with white ($1) in that nibble; every other pixel stays %00, the
+ * shared background ($D021).
+ */
+export function starterImage(): string {
+  const COLS = 40
+  const ROWS = 25
+  const BACKGROUND = 6 // blue — the C64's own screen colour
+  const FRAME = 1 // white
+  const SOLID_ROW = 0x55 // %01 %01 %01 %01 — four pixels of the cell's first colour
+
+  const bitmap = new Array<number>(COLS * ROWS * 8).fill(0)
+  const screen = new Array<number>(COLS * ROWS).fill(0)
+  const color = new Array<number>(COLS * ROWS).fill(0)
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      if (row !== 0 && row !== ROWS - 1 && col !== 0 && col !== COLS - 1) continue
+      const cell = row * COLS + col
+      for (let y = 0; y < 8; y++) bitmap[cell * 8 + y] = SOLID_ROW
+      screen[cell] = FRAME << 4
+    }
+  }
+  return serializeImage(bitmap, screen, color, BACKGROUND)
 }
 
 function workspaceRootOrThrow(): string {
@@ -217,21 +300,30 @@ export function recentProjects(): RecentProject[] {
 
 /** Scaffold a fresh project (dir + .bread + entry crumb) and return it opened.
  *  `withBoilerplate` (default true, A.8) writes the commented frame-loop starter;
- *  off writes a bare `SetMode …` stub. New projects open in TEXT, MULTICOLOR — a
- *  runtime switch, not a project identity, so no mode is stored in the `.bread`. */
+ *  off writes the bare minimum. `template` decides WHAT is seeded — plain text-mode
+ *  scaffold, or a picture project that also gets a starter `.image` on disk and the
+ *  manifest entry to go with it. Neither is stored: the screen mode is a runtime
+ *  `SetMode` switch, not a project identity. */
 function scaffold(
   dir: string,
   name: string,
   temporary: boolean,
   withBoilerplate = true,
-  region: Region = DEFAULT_REGION
+  region: Region = DEFAULT_REGION,
+  template: ProjectTemplate = DEFAULT_PROJECT_TEMPLATE
 ): OpenedProject {
   mkdirSync(dir, { recursive: true })
   const entry = 'main.crumb'
-  const content = withBoilerplate
-    ? sampleMain(DEFAULT_GRAPHICS_MODE)
-    : bareMain(DEFAULT_GRAPHICS_MODE)
+  const content = withBoilerplate ? sampleMain(template) : bareMain(template)
   writeFileSync(join(dir, entry), content, 'utf-8')
+  const assets: BreadAssets = { ...EMPTY_ASSETS }
+  // The picture the starter's `UseImage` names has to EXIST, or the very first build fails
+  // on an unknown asset — the opposite of a guided start. Written before the manifest so
+  // both always agree.
+  if (template === 'image') {
+    writeFileSync(join(dir, STARTER_IMAGE_REL), starterImage(), 'utf-8')
+    assets.images = [STARTER_IMAGE_REL]
+  }
   writeBread(dir, {
     $format: 'bread',
     $version: BREAD_VERSION,
@@ -239,7 +331,7 @@ function scaffold(
     entry,
     region,
     crumbs: [entry],
-    assets: { ...EMPTY_ASSETS }
+    assets
   })
   return readProject(dir, temporary)
 }
@@ -298,11 +390,13 @@ export async function openProjectViaDialog(
 /** Create a new permanent project under <workspace>/projects. No screen mode is chosen
  *  up front (ScreenMode block): a project has no single mode — `SetMode` switches it at
  *  runtime. The boilerplate flag (default on, A.8) chooses starter vs. bare main.crumb;
+ *  `template` chooses what is seeded (plain, or a picture project with a starter image);
  *  region (STAHL S5c) is still a real target choice and is persisted. */
 export function createProject(
   name: string,
   withBoilerplate = true,
-  region: Region = DEFAULT_REGION
+  region: Region = DEFAULT_REGION,
+  template: ProjectTemplate = DEFAULT_PROJECT_TEMPLATE
 ): OpenedProject {
   const projectsRoot = join(workspaceRootOrThrow(), PROJECTS_DIRNAME)
   mkdirSync(projectsRoot, { recursive: true })
@@ -315,7 +409,7 @@ export function createProject(
   let dir = join(projectsRoot, slug)
   let n = 2
   while (existsSync(dir)) dir = join(projectsRoot, `${slug}-${n++}`)
-  return scaffold(dir, display, false, withBoilerplate, normalizeRegion(region))
+  return scaffold(dir, display, false, withBoilerplate, normalizeRegion(region), template)
 }
 
 /** A filesystem-safe project slug: lowercase, spaces/underscores → hyphens, drop any

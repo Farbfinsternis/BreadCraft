@@ -93,6 +93,7 @@ export interface CodegenMessages {
   graphicsFirstArg(): string
   graphicsSecondArg(): string
   graphicsBitmapHires(): string
+  graphicsBitmapNoImage(): string
   useTilesetName(): string
   useTilesetNoProject(id: string): string
   useImageName(): string
@@ -380,6 +381,9 @@ const DE_CODEGEN: CodegenMessages = {
   graphicsSecondArg: () => `SetMode: zweites Argument muss HIRES oder MULTICOLOR sein`,
   graphicsBitmapHires: () =>
     `SetMode BITMAP, HIRES ist in Phase 1 nicht vorgesehen (nur TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)`,
+  graphicsBitmapNoImage: () =>
+    `SetMode BITMAP, MULTICOLOR: das Programm backt kein Bild ein — der Schirm wird leer (Hintergrundfarbe). ` +
+    `Ein Bild malst du im Bild-Editor und zeigst es mit UseImage "name" + DrawImage "name"`,
   useTilesetName: () =>
     `UseTileset erwartet einen Tileset-Namen in Anführungszeichen, z. B. UseTileset "main"`,
   useTilesetNoProject: (id) =>
@@ -564,6 +568,9 @@ const EN_CODEGEN: CodegenMessages = {
   graphicsSecondArg: () => `SetMode: the second argument must be HIRES or MULTICOLOR`,
   graphicsBitmapHires: () =>
     `SetMode BITMAP, HIRES isn't planned for Phase 1 (only TEXT,HIRES | TEXT,MULTICOLOR | BITMAP,MULTICOLOR)`,
+  graphicsBitmapNoImage: () =>
+    `SetMode BITMAP, MULTICOLOR: the program bakes no image — the screen stays blank (the background colour). ` +
+    `Paint one in the image editor and show it with UseImage "name" + DrawImage "name"`,
   useTilesetName: () => `UseTileset expects a tileset name in quotes, e.g. UseTileset "main"`,
   useTilesetNoProject: (id) =>
     `UseTileset "${id}": no project context — assets can only be resolved inside a project`,

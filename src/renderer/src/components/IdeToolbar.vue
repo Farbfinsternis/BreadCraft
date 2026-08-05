@@ -144,7 +144,8 @@ async function newProject(): Promise<void> {
   const opened = await window.breadcraft.project.create(
     choice.name,
     choice.withBoilerplate,
-    choice.region
+    choice.region,
+    choice.template
   )
   project.load(opened)
   if (router.currentRoute.value.name !== 'code') router.push({ name: 'code' })

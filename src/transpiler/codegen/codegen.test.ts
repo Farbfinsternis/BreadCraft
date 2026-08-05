@@ -551,6 +551,56 @@ describe('codegen: SetMode + VWait (Stufe 2, §E/§F)', () => {
     const { errors } = gen('SetMode BITMAP, HIRES')
     expect(errors.some((e) => /nicht vorgesehen/.test(e))).toBe(true)
   })
+
+  // A BLANK CANVAS INSTEAD OF GARBAGE (the guided-starter block). Entering BITMAP mode with
+  // no picture used to leave $D018 wherever it stood — in bank 0 that points the VIC at
+  // $0000 and it draws the zero page, the stack and the program itself as pixels. The
+  // planner now reserves a real matrix for the mode, so there is an honest place to point at
+  // and something safe to wipe.
+  describe('BITMAP mode without a picture', () => {
+    it('points the VIC at a RESERVED matrix and blanks it', () => {
+      const { code, errors } = gen('SetMode BITMAP, MULTICOLOR')
+      expect(errors).toEqual([])
+      // The bank-1 image layout: bitmap $6000, screen $5C00 → $D018 = $78.
+      expect(code).toContain('#define BC_BITMAP  ((unsigned char*)0x6000)')
+      expect(code).toContain('VIC.addr = 0x78;')
+      expect(code).toContain('bc_blank_bitmap();')
+      expect(code).toContain('for (_i = 0; _i < 8000; ++_i) BC_BITMAP[_i] = 0;')
+      // …and the bank switch comes with the layout, or the VIC reads bank 0 regardless.
+      expect(code).toContain('CIA2.ddra |= 0x03;')
+    })
+
+    it('says so — a blank screen is a result, not a surprise', () => {
+      const { warnings } = gen('SetMode BITMAP, MULTICOLOR')
+      expect(warnings.some((w) => /backt kein Bild ein/.test(w))).toBe(true)
+    })
+
+    it('leaves a program that never enters BITMAP mode alone', () => {
+      const { code } = gen('SetMode TEXT, MULTICOLOR')
+      expect(code).not.toContain('BC_BITMAP')
+      expect(code).not.toContain('bc_blank_bitmap')
+      expect(code).not.toContain('CIA2.ddra') // still bank 0, no switch
+    })
+
+    it('does NOT wipe the matrix when a picture is baked — the linker put it there', () => {
+      const { code, warnings } = gen(
+        'UseImage "titel"\nSetMode BITMAP, MULTICOLOR\nDrawImage "titel"',
+        fakeAssets()
+      )
+      expect(code).not.toContain('bc_blank_bitmap')
+      expect(warnings.some((w) => /backt kein Bild ein/.test(w))).toBe(false)
+      // DrawImage still owns $D018 + the colour planes.
+      expect(code).toContain('VIC.addr = 0x78;')
+      expect(code).toContain('BC_COLOR_RAM[_i] = imgcol_titel[_i];')
+    })
+
+    // The picture may be baked further down the file (or inside a function) — the pre-scan
+    // decides, not walk order, exactly like DrawImage's own check.
+    it('sees a UseImage that comes AFTER the SetMode', () => {
+      const { code } = gen('SetMode BITMAP, MULTICOLOR\nUseImage "titel"', fakeAssets())
+      expect(code).not.toContain('bc_blank_bitmap')
+    })
+  })
 })
 
 describe('codegen: honest failure (no crash)', () => {

@@ -34,7 +34,7 @@ import { downloadAndInstallVice } from './vice-download'
 import { resolveLanguage } from './config'
 import { buildAndRun } from './build'
 import { savedWindowOptions, shouldStartMaximized, trackWindowState } from './window-state'
-import type { AssetKind, Region, SettingsPatch } from '../shared/ipc'
+import type { AssetKind, ProjectTemplate, Region, SettingsPatch } from '../shared/ipc'
 
 function registerIpc(): void {
   // First-run / workspace handshake. The renderer asks for status on boot and,
@@ -54,8 +54,8 @@ function registerIpc(): void {
   ipcMain.handle('project:createTemp', () => createTempProject())
   ipcMain.handle(
     'project:create',
-    (_event, name: string, withBoilerplate: boolean, region: Region) =>
-      createProject(name, withBoilerplate, region)
+    (_event, name: string, withBoilerplate: boolean, region: Region, template?: ProjectTemplate) =>
+      createProject(name, withBoilerplate, region, template)
   )
   ipcMain.handle('project:open', (_event, breadPath: string) => openProject(breadPath))
   ipcMain.handle('project:openDialog', async (event) => {

@@ -127,6 +127,37 @@ describe('memory-map: the IMAGE layout (BRONZE B2.T3)', () => {
     expect(m.cfg).toContain('HIGH:     file = "", define = yes, start = $8000,') // big arrays still high
   })
 
+  // BITMAP MODE ALONE BUYS THE LAYOUT (the guided-starter block). Without a reserved matrix
+  // the VIC keeps whatever $D018 held — in bank 0 that is $0000, and the screen fills with
+  // the zero page, the stack and the running program drawn as pixels. Nothing can fix that
+  // at runtime, because the garbage IS the program; the map has to be right first.
+  describe('BITMAP mode with no picture: reserved, not linked', () => {
+    it('takes the image layout so the matrix exists at all', () => {
+      const m = planMemory({ usesCharset: false, usesSprites: false, usesImage: false, usesBitmap: true })
+      expect(m.bank).toBe(1)
+      expect(m.bitmapAddr).toBe(0x6000)
+      expect(m.d018Bitmap).toBe(0x78)
+      expect(m.mainCeiling).toBe(0x5c00) // the same honest price as a picture project
+    })
+
+    it('reserves the area without loading anything into it — the .prg stays compact', () => {
+      const m = planMemory({ usesCharset: false, usesSprites: false, usesImage: false, usesBitmap: true })
+      // No bytes to place → no segment, no filler, and no fill on MAIN. A .prg padded up to
+      // $7F3F for an EMPTY bitmap would be ~31KB of nothing.
+      expect(m.cfg).not.toContain('BC_BITMAP')
+      expect(m.cfg).not.toContain('GFXGAP')
+      expect(m.cfg).not.toContain('fill = yes')
+      expect(m.cfg).toContain('start = __HEADER_LAST__, size = $5C00 - __HEADER_LAST__;')
+      expect(m.cfg).toContain('HIGH:     file = "", define = yes, start = $8000,')
+    })
+
+    it('a baked picture still wins: usesImage links the matrix', () => {
+      const m = planMemory({ usesCharset: false, usesSprites: false, usesImage: true, usesBitmap: true })
+      expect(m.cfg).toContain('BC_BITMAP: load = BITMAP,   type = ro;')
+      expect(m.cfg).toContain('GFXGAP:')
+    })
+  })
+
   it('sprite blocks shrink honestly: the island now runs $5800–$5C00 (16 blocks)', () => {
     const m = planMemory({ usesCharset: true, usesSprites: true, usesImage: true })
     expect(m.spriteBlocksAvail).toBe(16)

@@ -9,6 +9,7 @@ import type {
   Locale,
   OpenedProject,
   ProjectFile,
+  ProjectTemplate,
   RecentProject,
   SettingsPatch,
   TreeNode,
@@ -29,6 +30,7 @@ export type {
   Locale,
   OpenedProject,
   ProjectFile,
+  ProjectTemplate,
   RecentProject,
   SettingsPatch,
   TreeNode,
@@ -57,9 +59,10 @@ const api = {
     create: (
       name: string,
       withBoilerplate: boolean,
-      region: Region
+      region: Region,
+      template: ProjectTemplate
     ): Promise<OpenedProject> =>
-      ipcRenderer.invoke('project:create', name, withBoilerplate, region),
+      ipcRenderer.invoke('project:create', name, withBoilerplate, region, template),
     open: (breadPath: string): Promise<OpenedProject> =>
       ipcRenderer.invoke('project:open', breadPath),
     openDialog: (): Promise<OpenedProject | null> =>

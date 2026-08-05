@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 import rawSsot from '@shared/breadcraft.lang.json'
 import { buildVocabulary } from '@shared/vocabulary'
 import type { Ssot, VocabItem } from '@shared/ssot-types'
-import { DEFAULT_GRAPHICS_MODE } from '@shared/ipc'
+import type { ProjectTemplate } from '@shared/ipc'
 import { tokenize } from '../transpiler/lexer'
 import { TokenType } from '../transpiler/lexer/token'
 import { createFile, sampleMain } from './project'
@@ -39,7 +39,11 @@ describe('fresh .crumb content lexes clean (M1.T3, Befund 2)', () => {
     expect(errorTokens(onDisk)).toEqual([])
   })
 
-  it('sampleMain boilerplate lexes clean', () => {
-    expect(errorTokens(sampleMain(DEFAULT_GRAPHICS_MODE))).toEqual([])
+  // Every starter, not just the default one — a template that ships broken source would
+  // greet its user with a lexer error on the very first build.
+  it('sampleMain boilerplate lexes clean, in every template', () => {
+    for (const template of ['plain', 'image'] as ProjectTemplate[]) {
+      expect(errorTokens(sampleMain(template))).toEqual([])
+    }
   })
 })

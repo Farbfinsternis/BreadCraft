@@ -425,6 +425,10 @@ class Generator {
   private bakedImageId: string | undefined
   /** The baked picture's own background colour ($D021), kept for DrawImage to poke. */
   private imageBackground: number | undefined
+  /** Does the program enter BITMAP mode ANYWHERE (`SetMode BITMAP, …`)? Pre-scanned, like
+   *  the picture: it decides the memory layout, so it must be known before the walk emits
+   *  a single address. True with OR without a `UseImage` — see MemoryUse.usesBitmap. */
+  private entersBitmap = false
   /** The memory plan, computed UP FRONT (before the walk) from a pre-scan of the program.
    *  $D018 is emitted mid-walk by UseTileset/UseImage, but the addresses it encodes depend
    *  on whether the program bakes a picture (the bitmap pushes the charset/screen down) —
@@ -583,6 +587,9 @@ class Generator {
    *  $0400 in bank 0 (clrscr) but the relocated BC_SCREEN in bank 1 (B1.T4) — and the bank
    *  isn't known until the memory plan, so Cls goes through a helper resolved at the end. */
   private usesCls = false
+  /** `SetMode BITMAP` ran without a baked picture → emit the bc_blank_bitmap helper that
+   *  wipes the reserved matrix to the background colour (see genGraphics). */
+  private usesBlankBitmap = false
 
   // ---- sprites (M3.T2): Sprite / ShowSprite / HideSprite ----
   /** Any sprite command used. Sprites poke VIC registers directly (c64.h, always
@@ -751,6 +758,43 @@ class Generator {
    *  UseImage that may appear later in the file. Pre-scanned up front, like the charset. */
   private programUsesImage(program: Program): boolean {
     return this.programImageId(program) !== undefined
+  }
+
+  /**
+   * Does the program enter BITMAP mode anywhere (`SetMode BITMAP, …`)?
+   *
+   * Pre-scanned for the same reason as the picture, but it matters even when there is NO
+   * picture. In BITMAP mode the VIC reads 8000 bytes from the bank as pixels; `$D018` bit 3
+   * decides whether that is the bank's start or its middle. If the memory plan reserved no
+   * bitmap at all, the register keeps whatever it held — in bank 0 that points the VIC at
+   * $0000, and the screen fills with the zero page, the stack, BASIC's variables and the
+   * running program drawn as pixels. That is the "fresh bitmap project shows garbage" bug,
+   * and no amount of runtime clearing can fix it: the garbage IS the program.
+   *
+   * So the mode alone buys the bitmap layout. The price is honest and visible — MAIN caps
+   * under the graphics, and the RAM bar shows the smaller pool — which is exactly what a
+   * bitmap screen costs on this machine.
+   */
+  private programEntersBitmap(program: Program): boolean {
+    let found = false
+    const visit = (node: unknown): void => {
+      if (found || node === null || typeof node !== 'object') return
+      const rec = node as Record<string, unknown>
+      if (rec.kind === 'CommandStmt' && String(rec.name).toLowerCase() === 'setmode') {
+        const first = (rec.args as Expr[] | undefined)?.[0]
+        if (first && first.kind === 'ConstantRef' && first.name.toUpperCase() === 'BITMAP') {
+          found = true
+          return
+        }
+      }
+      for (const key of Object.keys(rec)) {
+        const v = rec[key]
+        if (Array.isArray(v)) v.forEach(visit)
+        else if (v && typeof v === 'object') visit(v)
+      }
+    }
+    program.body.forEach(visit)
+    return found
   }
 
   /** The id of the picture this program bakes (`UseImage "titel"`), or undefined.
@@ -924,10 +968,14 @@ class Generator {
     // Which picture the program bakes, up front: DrawImage checks against this, so it may
     // sit inside a function that the codegen emits before it ever reaches the UseImage.
     this.bakedImageId = this.programImageId(program)
+    // BITMAP mode reserves the matrix even with no picture to put in it — otherwise the VIC
+    // draws the program itself (see programEntersBitmap).
+    this.entersBitmap = this.programEntersBitmap(program)
     this.gfxMap = planMemory({
       usesCharset: this.programUsesCharset(program),
       usesSprites: true,
-      usesImage: this.bakedImageId !== undefined
+      usesImage: this.bakedImageId !== undefined,
+      usesBitmap: this.entersBitmap
     })
     this.spriteBlockBudget = this.gfxMap.spriteBlocksAvail
     // Slot → frame count, for the best-effort out-of-range warn on `Sprite n,x,y,frame` (SA4).
@@ -983,7 +1031,8 @@ class Generator {
     const map = planMemory({
       usesCharset: !!this.activeTileset,
       usesSprites: this.usesSpriteData,
-      usesImage: !!this.activeImage
+      usesImage: !!this.activeImage,
+      usesBitmap: this.entersBitmap
     })
 
     const header = [
@@ -1003,16 +1052,28 @@ class Generator {
     // BC_SCREEN is needed for the tile grid, for DrawText (which writes screen codes
     // straight into it) AND for a picture (in BITMAP mode the same page holds two of the
     // three cell colours). The geometry defines below are only the tile-collision origin.
-    if (this.activeTileset || this.usesTileWorld || this.usesDrawText || this.activeImage) {
+    // `entersBitmap` joins the list because the bitmap layout moves the program into bank 1,
+    // and the startup blank (bc_cls, below) writes the RELOCATED screen page — the KERNAL
+    // only pre-cleared $0400.
+    if (
+      this.activeTileset ||
+      this.usesTileWorld ||
+      this.usesDrawText ||
+      this.activeImage ||
+      this.entersBitmap
+    ) {
       header.push(`#define BC_SCREEN  ((unsigned char*)${hx(map.screenAddr)}) /* 40x25 screen RAM */`)
+    }
+    // The matrix address is needed by BOTH users of the bitmap area: `DrawImage` (a linked
+    // picture) and `SetMode BITMAP` with no picture, which blanks it.
+    if (this.activeImage || this.entersBitmap) {
+      const what = this.activeImage ? 'linked, not copied' : 'reserved, blanked by SetMode'
+      header.push(`#define BC_BITMAP  ((unsigned char*)${hx(map.bitmapAddr!)}) /* MC bitmap matrix (${what}) */`)
     }
     // A picture's third cell colour lives in Color-RAM, which is I/O at a FIXED address —
     // it moves with neither the VIC bank nor the memory plan (B2.T3).
     if (this.activeImage) {
-      header.push(
-        `#define BC_BITMAP  ((unsigned char*)${hx(map.bitmapAddr!)}) /* MC bitmap matrix (linked, not copied) */`,
-        '#define BC_COLOR_RAM ((unsigned char*)0xD800) /* Color RAM — I/O, fixed */'
-      )
+      header.push('#define BC_COLOR_RAM ((unsigned char*)0xD800) /* Color RAM — I/O, fixed */')
     }
     if (this.activeTileset || this.usesTileWorld) {
       header.push(
@@ -1243,6 +1304,16 @@ class Generator {
       } else {
         textDecls.push('static void bc_cls(void) { clrscr(); }')
       }
+    }
+    // Blank the reserved bitmap matrix (BITMAP mode with no picture baked). 8000 bytes to
+    // %00 — every pixel becomes the shared background colour, so the screen reads as one
+    // clean field rather than the RAM the VIC happened to be pointed at. Runs once per
+    // `SetMode BITMAP`, which is where a picture-less program would otherwise show garbage.
+    if (this.usesBlankBitmap) {
+      textDecls.push(
+        '/* no picture baked: wipe the bitmap to %00 (= the background colour), not garbage */',
+        'static void bc_blank_bitmap(void) { unsigned int _i; for (_i = 0; _i < 8000; ++_i) BC_BITMAP[_i] = 0; }'
+      )
     }
     if (textDecls.length > 0) textDecls.push('')
 
@@ -3250,6 +3321,21 @@ class Generator {
     // MCM bit (multicolor vs hires)
     if (color === 'MULTICOLOR') this.emit('VIC.ctrl2 |= 0x10;')
     else this.emit('VIC.ctrl2 &= ~0x10;')
+    // A BLANK CANVAS INSTEAD OF GARBAGE. Entering BITMAP mode with no picture baked used to
+    // show whatever the 8000 bytes under the VIC happened to be — in bank 0 that is the zero
+    // page, the stack and the program itself, drawn as pixels. The planner now reserves a
+    // real matrix for the mode (MemoryUse.usesBitmap), so there is somewhere honest to point
+    // at and something safe to clear. Blanked to %00 = the background colour, so the screen
+    // is one clean field the user can then paint into from the image editor.
+    //
+    // Only when NO picture is baked: with one, `DrawImage` owns $D018 and the matrix holds
+    // the picture — clearing it would erase what the linker just placed.
+    if (area === 'BITMAP' && !this.bakedImageId) {
+      this.err(this.M.graphicsBitmapNoImage(), s, 'warn')
+      this.usesBlankBitmap = true
+      this.emit(`VIC.addr = ${hx(this.gfxMap.d018Bitmap!, 2)};`)
+      this.emit('bc_blank_bitmap();')
+    }
     // COMING BACK TO A WORLD, the window has to be repainted (S1 Schritt 2, T4 — found by
     // porting Into The Deep). A full-screen image has no screen of its own: `DrawImage`
     // writes its colour layer into the very Screen-RAM the band lives in, so a game that
