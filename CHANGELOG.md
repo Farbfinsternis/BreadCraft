@@ -7,6 +7,8 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-08-05
+
 ### Behoben
 - **★ Bitmap-Modus zeigt keinen Müll mehr.** Schaltest Du mit `SetMode BITMAP, MULTICOLOR` auf
   den Bild-Schirm um, ohne ein Bild mitzubringen, dann hat der C64 bisher irgendeinen
