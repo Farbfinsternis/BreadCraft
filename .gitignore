@@ -11,6 +11,11 @@ out
 # TypeScript incremental build cache (generated)
 *.tsbuildinfo
 
+# electron-vite writes a timestamped copy of the config next to it while loading,
+# and deletes it again straight after. An interrupted run leaves one behind — this
+# keeps that leftover out of a commit.
+electron.vite.config.*.mjs
+
 # Local Claude Code config / hooks — project-specific, not for end users
 .claude
 
