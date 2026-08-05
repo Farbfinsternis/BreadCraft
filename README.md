@@ -55,7 +55,7 @@ you paint here is what runs on the C64.*
 - **A working language pipeline:** `.crumb` source → C → bundled cc65 → a real
   `.prg`. A program (multicolor text mode, colours, a frame loop, `For`/`If`/
   `While`, variables) compiles and runs in an emulator.
-- **A type system:** byte/word/signed/string suffixes (`.b` / `.w` / `.i` / `$`),
+- **A type system:** byte/word/signed/string suffixes (`.b` / `.w` / `.i` / `.s` / `$`),
   `Global`, `Const`, fixed-size `Dim` arrays (1D and 2D), records
   (`Type` / `Field` / `EndType`), and user functions
   (`Function` … `EndFunction`). It warns, rather than fails silently, when a word
@@ -80,6 +80,10 @@ you paint here is what runs on the C64.*
   for a score, lives, or a "GAME OVER". (Richer string surgery — `Mid$`,
   `Left$`, … — is honestly deferred, not silently broken.)
 - **Joystick input** (`Joystick`).
+- **More than one source file:** `Include "physics"` pulls another `.crumb` in at
+  build time, so a game can grow into as many files and folders as you like
+  instead of one long one. It costs nothing at runtime — and an error still names
+  the file it actually came from, not the line it happened to land on.
 - **A runtime screen-mode switch** (`SetMode`) — flip between a bitmap title and a
   tile world whenever you like, not once at the top — plus frame sync (`VWait`) and
   a **PAL / NTSC choice** per project that sets both the per-frame budget the health
@@ -90,8 +94,10 @@ you paint here is what runs on the C64.*
   editor. Assets live on disk as `.petscii` / `.tilemap` / `.palette` / `.sprite`
   / `.image`, referenced from the `.bread` manifest; the editor and the build read
   them through one shared format.
-- **Health bars:** live RAM usage (read from the linker map — exact) and a rough
-  per-frame cost estimate, so you can feel the budget while you write.
+- **Health bars:** RAM usage read from the linker map — exact, and split into the
+  two pools the C64 actually has (code/data low, big game arrays high), because
+  filling one does not free the other. Next to it, a rough per-frame cost
+  estimate, so you can feel the budget while you write.
 - **German and English UI** — and the compiler's error messages now follow the
   UI language too.
 
@@ -108,6 +114,14 @@ This is the honest part.
   collect / win / lose, and restart — but the goal is that a platformer, a
   Sokoban-style puzzle, *and* a Maniac-Mansion-style adventure can all be built.
   Only the platformer stands so far.
+- **Scrolling exists, but it is too slow to build on.** A map may be wider than
+  the screen, and the words for moving a window across it are all there and
+  working — `PlayField`, `UseMap`, `SetCameraX`, `CameraX()`, `Follow`,
+  `SetMapTile`. The test platformer really does scroll. But in its current shape
+  it eats far too much of the frame to hang a game off, so treat it as a
+  foundation that is laid rather than a feature you can use. Making it fast is a
+  block of work of its own, deliberately deferred rather than half-done in a
+  hurry.
 - **No sound.** There is a placeholder sound editor, but the language has no
   sound commands and the SID is not driven yet.
 - **Keyboard input is deferred.** Only the joystick can be read today;
@@ -118,9 +132,13 @@ This is the honest part.
   multicolor, so `SetMode TEXT, HIRES` has no first-class authoring path yet.
 - **More than 8 sprites needs assembly.** There is an `Asm` … `EndAsm` escape
   hatch, but no built-in sprite multiplexer yet.
-- **The embedded emulator is not wired up.** To run a `.prg`, BreadCraft
-  currently shells out to [VICE](https://vice-emu.sourceforge.io/), which you
-  install yourself and point BreadCraft at in the settings.
+- **The emulator stays a separate program — on purpose.** To run a `.prg`,
+  BreadCraft hands it to [VICE](https://vice-emu.sourceforge.io/) rather than
+  emulating a C64 itself. That was a real decision, not a gap: VICE gives a true
+  raster beam and a debug monitor, which a built-in emulator would have had to
+  earn from scratch. You do not have to fetch it by hand, though — BreadCraft
+  looks for an installed VICE on its own and can download and verify one for you
+  on a single click. And **building** needs no VICE at all; only running does.
 - Rough edges throughout. Expect things to be missing or to change.
 
 ## The refinement ladder
@@ -138,10 +156,10 @@ state; *Platin* is the far end, where only polish is left to do.
 The stage BreadCraft stands on today:
 
 <p align="center">
-  <img src="STAHL.png" alt="Stahl — current stage" width="200">
+  <img src="BRONZE.png" alt="Bronze — current stage" width="200">
 </p>
 
-<p align="center"><i>Stahl — tempered: the hardware reality underneath now bears a growing game.</i></p>
+<p align="center"><i>Bronze — the game begins to shine: room to grow, a painted picture on the screen, and a program that may span several files.</i></p>
 
 ## Building it
 
@@ -156,8 +174,9 @@ npm run test     # run the unit tests
 npm run build    # production build
 ```
 
-To actually run a generated `.prg`, install VICE separately and set its path in
-BreadCraft's settings. VICE is not bundled (see Licensing).
+To actually run a generated `.prg` you need VICE, which is **not** bundled (see
+Licensing). BreadCraft finds an installed one by itself, and offers to download
+and verify one for you on first run if it does not. Building works without it.
 
 ## Licensing
 
